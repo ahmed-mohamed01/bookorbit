@@ -25,14 +25,14 @@ import { EDITION_SYNC_ADMIN_POLL_MS, useEditionSyncAdmin } from '../useEditionSy
 function makeStatus(active: boolean): EditionSyncAdminStatus {
   return {
     worker: { configured: true, state: 'ok', version: '1', device: 'cpu', rebuildSupported: true },
-    schedule: { cronExpression: '0 2 * * *', runHours: 8, onFilesChanged: 'next_run', updatedAt: null, nextRunAt: null },
+    schedule: { enabled: true, cronExpression: '0 2 * * *', runHours: 8, onFilesChanged: 'next_run', updatedAt: null, nextRunAt: null },
     run: { active, trigger: active ? 'manual' : null, startedAt: null, windowUntil: null, current: null },
     counts: { indexed: 1, queued: 2, failed: 0, stale: 0, unusedIndexes: 4, unusedBytes: 100 },
     backlogEstimate: { books: 2, hoursAtRecentRate: null },
   }
 }
 
-const SETTINGS: EditionSyncAdminSettings = { cronExpression: '0 2 * * *', runHours: 8, onFilesChanged: 'next_run', updatedAt: null }
+const SETTINGS: EditionSyncAdminSettings = { enabled: true, cronExpression: '0 2 * * *', runHours: 8, onFilesChanged: 'next_run', updatedAt: null }
 
 function setup() {
   const scope = effectScope()

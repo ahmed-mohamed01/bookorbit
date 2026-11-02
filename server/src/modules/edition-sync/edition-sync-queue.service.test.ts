@@ -9,6 +9,7 @@ import { EditionSyncQueueService } from './edition-sync-queue.service';
 function setup() {
   vi.mocked(checkEditionSyncSources).mockResolvedValue({ valid: true });
   const repo = {
+    isServerEnabled: vi.fn().mockResolvedValue(true),
     findNextQueuedBook: vi.fn().mockResolvedValue({ bookId: 4, pinned: true }),
     findIndexRow: vi.fn().mockResolvedValue(null),
     claimIndexRow: vi.fn().mockResolvedValue({ bookId: 4, status: 'running' }),
@@ -226,4 +227,15 @@ it('defaults book-state reads to no content budget', async () => {
   expect(await service.ensureValid(4)).toBe(false);
   expect(indexStore.checkContent).not.toHaveBeenCalled();
   expect(repo.flagRecheck).toHaveBeenCalledWith(4);
+});
+
+it('clears only the rows the repository reports unused, whatever the server switch', async () => {
+  const { service, repo, indexStore } = setup();
+  repo.isServerEnabled.mockResolvedValue(false);
+  repo.findUnused.mockResolvedValueOnce([{ bookId: 3, status: 'ready', indexPath: '/c', indexBytes: 7, workerJobId: null }]);
+  indexStore.removeIndexFile.mockResolvedValue(7);
+  await expect(service.clearUnused()).resolves.toEqual({ deleted: 1, freedBytes: 7 });
+  expect(repo.deleteUnusedIndexRow).toHaveBeenCalledTimes(1);
+  expect(repo.deleteUnusedIndexRow).toHaveBeenCalledWith(3, { status: 'ready', indexPath: '/c' });
+  expect(repo.isServerEnabled).not.toHaveBeenCalled();
 });

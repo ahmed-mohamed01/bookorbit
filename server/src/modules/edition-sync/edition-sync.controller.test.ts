@@ -1,9 +1,10 @@
+import { ValidationPipe } from '@nestjs/common';
 import { Permission } from '@bookorbit/types';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 
 import { PERMISSION_KEY } from '../../common/decorators/require-permission.decorator';
-import { UpdateEditionSyncAdminSettingsDto, UpdateEditionSyncBookStateDto, UpsertEditionSyncSettingsDto } from './dto';
+import { EditionSyncBookListQueryDto, UpdateEditionSyncAdminSettingsDto, UpdateEditionSyncBookStateDto, UpsertEditionSyncSettingsDto } from './dto';
 import { EditionSyncController } from './edition-sync.controller';
 
 type Handler = keyof EditionSyncController;
@@ -39,7 +40,7 @@ describe('EditionSyncController', () => {
       retry: vi.fn().mockResolvedValue(state),
     };
     const user = { id: 7 } as never;
-    const controller = new EditionSyncController({} as never, bookState as never, {} as never, {} as never);
+    const controller = new EditionSyncController({} as never, bookState as never, {} as never, {} as never, {} as never);
 
     await controller.getBookState(user, 3);
     await controller.updateBookState(user, 3, { syncEnabled: true });
@@ -73,4 +74,27 @@ describe('edition-sync DTOs', () => {
     expect(await errors(UpdateEditionSyncAdminSettingsDto, { runHours: 25 })).toEqual(['runHours']);
     expect(await errors(UpdateEditionSyncAdminSettingsDto, { runHours: 1.5 })).toEqual(['runHours']);
   });
+});
+
+it('validates the optional server switch as a boolean', async () => {
+  for (const enabled of [true, false]) expect(await errors(UpdateEditionSyncAdminSettingsDto, { enabled })).toEqual([]);
+  for (const enabled of [null, 'true', 1]) expect(await errors(UpdateEditionSyncAdminSettingsDto, { enabled })).toEqual(['enabled']);
+  expect(await errors(UpdateEditionSyncAdminSettingsDto, {})).toEqual([]);
+});
+
+it('validates the books query through the global validation pipe', async () => {
+  const pipe = new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true });
+  const metadata = { type: 'query' as const, metatype: EditionSyncBookListQueryDto };
+  for (const value of [{ filter: 'bad' }, { page: '0' }, { page: '100001' }]) {
+    await expect(pipe.transform(value, metadata)).rejects.toMatchObject({ status: 400 });
+  }
+  expect(await pipe.transform({ q: ' text ', page: '2' }, metadata)).toMatchObject({ q: 'text', page: 2, filter: 'all' });
+  const list = { list: vi.fn().mockResolvedValue({ items: [] }) };
+  const controller = new EditionSyncController({} as never, {} as never, {} as never, {} as never, list as never);
+  const user = { id: 7 } as never;
+  const query = new EditionSyncBookListQueryDto();
+  await controller.listBooks(user, query);
+  expect(list.list).toHaveBeenCalledWith(user, query);
+  expect(Reflect.getMetadata('path', EditionSyncController.prototype.listBooks)).toBe('books');
+  expect(permissionOf('listBooks')).toBe(Permission.EditionSync);
 });

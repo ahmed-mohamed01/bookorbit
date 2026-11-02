@@ -6,6 +6,7 @@ import { Cpu, Eraser, Loader2, Play, Save, Square } from '@lucide/vue'
 import type { EditionSyncFilesChangedMode } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
+import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import { formatBytes } from '@/lib/formatting'
 import { formatDate, formatNumber, formatPercent } from '@/i18n/formatters'
 import { stageLabelKey } from '@/features/read-aloud/lib/read-aloud'
@@ -15,6 +16,7 @@ import EditionSyncScheduleField from './EditionSyncScheduleField.vue'
 const { t } = useI18n()
 const { status, settings, loading, saving, acting, error, load, saveSchedule, runNow, stop, clearUnused } = useEditionSyncAdmin()
 
+const enabled = ref(false)
 const cronExpression = ref<string | null>(null)
 const runHours = ref(8)
 const onFilesChanged = ref<EditionSyncFilesChangedMode>('next_run')
@@ -24,6 +26,7 @@ const clearConfirmOpen = ref(false)
 
 watch(settings, (value) => {
   if (!value) return
+  enabled.value = value.enabled
   cronExpression.value = value.cronExpression
   runHours.value = value.runHours
   onFilesChanged.value = value.onFilesChanged
@@ -34,7 +37,8 @@ onMounted(load)
 const dirty = computed(
   () =>
     !!settings.value &&
-    (settings.value.cronExpression !== cronExpression.value ||
+    (settings.value.enabled !== enabled.value ||
+      settings.value.cronExpression !== cronExpression.value ||
       settings.value.runHours !== runHours.value ||
       settings.value.onFilesChanged !== onFilesChanged.value),
 )
@@ -80,7 +84,12 @@ function handleScheduleValid(value: boolean) {
 }
 
 async function handleSaveSchedule() {
-  const ok = await saveSchedule({ cronExpression: cronExpression.value, runHours: runHours.value, onFilesChanged: onFilesChanged.value })
+  const ok = await saveSchedule({
+    enabled: enabled.value,
+    cronExpression: cronExpression.value,
+    runHours: runHours.value,
+    onFilesChanged: onFilesChanged.value,
+  })
   if (ok) toast.success(t('editionSync.admin.toast.scheduleSaved'))
   else toast.error(t('editionSync.admin.toast.scheduleFailed'), { description: error.value ?? undefined })
 }
@@ -134,6 +143,18 @@ async function confirmClear() {
       </section>
 
       <section v-if="settings" class="divide-y divide-border rounded-xl border border-border bg-card">
+        <div class="flex flex-col gap-2 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+          <div class="min-w-0">
+            <p id="edition-sync-enabled-label" class="text-sm">{{ t('editionSync.admin.enabled.title') }}</p>
+            <p id="edition-sync-enabled-help" class="mt-0.5 text-xs text-muted-foreground">{{ t('editionSync.admin.enabled.description') }}</p>
+          </div>
+          <ToggleSwitch
+            v-model="enabled"
+            aria-labelledby="edition-sync-enabled-label"
+            aria-describedby="edition-sync-enabled-help"
+            data-testid="edition-sync-admin-enabled"
+          />
+        </div>
         <EditionSyncScheduleField v-model:cron-expression="cronExpression" v-model:run-hours="runHours" @update:valid="handleScheduleValid" />
         <div class="flex flex-col gap-2 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <div class="min-w-0">
@@ -168,7 +189,7 @@ async function confirmClear() {
               <Square class="size-3.5" />
               {{ t('editionSync.admin.run.stop') }}
             </Button>
-            <Button v-else size="sm" type="button" :disabled="acting || !workerOk" @click="handleRunNow">
+            <Button v-else size="sm" type="button" :disabled="acting || !workerOk || !settings?.enabled" @click="handleRunNow">
               <Play class="size-3.5" />
               {{ t('editionSync.admin.run.start') }}
             </Button>

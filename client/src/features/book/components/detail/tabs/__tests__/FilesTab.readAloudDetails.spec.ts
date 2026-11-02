@@ -4,7 +4,7 @@ import { ref } from 'vue'
 import type { BookDetail } from '@bookorbit/types'
 import ReadAloudJobCard from '@/features/read-aloud/components/ReadAloudJobCard.vue'
 import { makeJob } from '@/features/read-aloud/__tests__/fixtures'
-import { createReadAloudState } from '@/features/book/composables/__tests__/sync-chain-panel-mocks'
+import { createReadAloudState } from '@/features/book/composables/__tests__/read-aloud-create-mocks'
 
 const mocks = vi.hoisted(() => ({
   query: {} as Record<string, string>,

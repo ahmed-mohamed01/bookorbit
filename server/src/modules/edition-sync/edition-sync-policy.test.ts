@@ -10,8 +10,8 @@ import {
   resolveEditionSyncSettings,
 } from './edition-sync-policy';
 
-const on = resolveEditionSyncSettings({ hasPermission: true, enabled: true, bookSyncMode: 'all_eligible' });
-const selectedOnly = resolveEditionSyncSettings({ hasPermission: true, enabled: true, bookSyncMode: 'selected_only' });
+const on = resolveEditionSyncSettings({ serverEnabled: true, hasPermission: true, enabled: true, bookSyncMode: 'all_eligible' });
+const selectedOnly = resolveEditionSyncSettings({ serverEnabled: true, hasPermission: true, enabled: true, bookSyncMode: 'selected_only' });
 
 describe('resolveEditionSyncSettings', () => {
   it.each([
@@ -20,7 +20,7 @@ describe('resolveEditionSyncSettings', () => {
     [true, false, false, 'user_disabled'],
     [true, true, true, null],
   ] as const)('permission=%s enabled=%s -> effective=%s reason=%s', (hasPermission, enabled, effectiveEnabled, disabledReason) => {
-    expect(resolveEditionSyncSettings({ hasPermission, enabled, bookSyncMode: 'all_eligible' })).toEqual({
+    expect(resolveEditionSyncSettings({ serverEnabled: true, hasPermission, enabled, bookSyncMode: 'all_eligible' })).toEqual({
       effectiveEnabled,
       disabledReason,
       bookSyncMode: 'all_eligible',
@@ -32,7 +32,7 @@ describe('resolveEditionSyncDecision', () => {
   it.each([
     [
       'permission denied',
-      resolveEditionSyncSettings({ hasPermission: false, enabled: true, bookSyncMode: 'all_eligible' }),
+      resolveEditionSyncSettings({ serverEnabled: true, hasPermission: false, enabled: true, bookSyncMode: 'all_eligible' }),
       true,
       'included',
       false,
@@ -40,7 +40,7 @@ describe('resolveEditionSyncDecision', () => {
     ],
     [
       'user disabled',
-      resolveEditionSyncSettings({ hasPermission: true, enabled: false, bookSyncMode: 'all_eligible' }),
+      resolveEditionSyncSettings({ serverEnabled: true, hasPermission: true, enabled: false, bookSyncMode: 'all_eligible' }),
       true,
       'included',
       false,
@@ -104,5 +104,12 @@ describe('run window', () => {
     expect(isWindowOpen(until, new Date('2026-11-01T09:59:59Z'))).toBe(true);
     expect(isWindowOpen(until, until)).toBe(false);
     expect(isWindowOpen(null, new Date('2030-01-01T00:00:00Z'))).toBe(true);
+  });
+});
+
+it('prioritizes the server switch over permission and user settings', () => {
+  expect(resolveEditionSyncSettings({ serverEnabled: false, hasPermission: false, enabled: false, bookSyncMode: 'all_eligible' })).toMatchObject({
+    effectiveEnabled: false,
+    disabledReason: 'server_disabled',
   });
 });

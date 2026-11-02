@@ -7589,16 +7589,6 @@
         "searching": "Searching...",
         "noResults": "No matches found.",
         "searchFailed": "Couldn't search for a match. Try again."
-      },
-      "readingAlignment": {
-        "title": "Position alignment",
-        "unalignableHint": "Position alignment isn't available for this book pair.",
-        "buildFailed": "Failed to start alignment build.",
-        "buildBlocked": {
-          "disabled": "Reading alignment is turned off for this server.",
-          "unavailable": "Reading alignment isn't configured on this server yet.",
-          "busy": "The server is busy aligning other books. Try again shortly."
-        }
       }
     },
     "table": {

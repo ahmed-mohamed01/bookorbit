@@ -5,7 +5,7 @@ import { ConflictException, Logger } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { EDITION_SYNC_CRON_JOB_NAME, EDITION_SYNC_UPSTREAM_WAIT_MS } from './edition-sync.constants';
+import { EDITION_SYNC_CRON_JOB_NAME, EDITION_SYNC_SERVER_DISABLED_MESSAGE, EDITION_SYNC_UPSTREAM_WAIT_MS } from './edition-sync.constants';
 import { EditionSyncSchedulerService } from './edition-sync-scheduler.service';
 import type { EditionSyncClaim, EditionSyncIndexOutcome } from './edition-sync.types';
 
@@ -32,8 +32,10 @@ function claimFor(bookId: number, pinned = false): EditionSyncClaim {
 
 function setup(options: { runHours?: number; cron?: string | null; onFilesChanged?: 'next_run' | 'immediate' } = {}) {
   const repo = {
+    isServerEnabled: vi.fn().mockResolvedValue(true),
     findAdminSettings: vi.fn().mockResolvedValue({
       id: 1,
+      enabled: true,
       onFilesChanged: options.onFilesChanged ?? 'next_run',
       cronExpression: options.cron ?? null,
       runHours: options.runHours ?? 8,
@@ -228,9 +230,14 @@ describe('EditionSyncSchedulerService', () => {
 
   it('cancels a leftover index job of ours still running on the worker', async () => {
     const { service, repo, workerClient, queue, finished } = setup();
-    workerClient.healthState
-      .mockResolvedValueOnce({ state: 'ok', health: { ...okHealth.health, activeJobId: 'old-job', activeJobs: 1 } })
-      .mockResolvedValue(okHealth);
+    let leftover = true;
+    workerClient.healthState.mockImplementation((force?: boolean) => {
+      if (force && leftover) {
+        leftover = false;
+        return Promise.resolve({ state: 'ok', health: { ...okHealth.health, activeJobId: 'old-job', activeJobs: 1 } });
+      }
+      return Promise.resolve(okHealth);
+    });
     repo.findIndexRowByWorkerJobId.mockResolvedValueOnce({ bookId: 4 });
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
 
@@ -274,10 +281,10 @@ describe('EditionSyncSchedulerService', () => {
 
   it('registers the cron job in the system time zone and removes it for Never', () => {
     const { service, registry } = setup();
-    expect(service.syncSchedule('0 2 * * *')).toBe(true);
+    expect(service.syncSchedule('0 2 * * *', true)).toBe(true);
     expect(registry.doesExist('cron', EDITION_SYNC_CRON_JOB_NAME)).toBe(true);
     expect(service.nextRunAt()).toBeInstanceOf(Date);
-    expect(service.syncSchedule(null)).toBe(true);
+    expect(service.syncSchedule(null, true)).toBe(true);
     expect(registry.doesExist('cron', EDITION_SYNC_CRON_JOB_NAME)).toBe(false);
     expect(service.nextRunAt()).toBeNull();
     service.onModuleDestroy();
@@ -408,4 +415,20 @@ it('shares one time budget across the batch and defers rows after ten seconds', 
   } finally {
     vi.useRealTimers();
   }
+});
+
+it('does not register, pin or start runs when the server switch is off', async () => {
+  const { service, repo, registry, indexer } = setup({ cron: '0 2 * * *', onFilesChanged: 'immediate' });
+  repo.findAdminSettings.mockResolvedValue({ enabled: false, cronExpression: '0 2 * * *', updatedAt: new Date() } as never);
+  repo.isServerEnabled.mockResolvedValue(false);
+  await service.onApplicationBootstrap();
+  expect(registry.doesExist('cron', EDITION_SYNC_CRON_JOB_NAME)).toBe(false);
+  await service.tick();
+  expect(repo.findNextQueuedBook).not.toHaveBeenCalled();
+  expect(repo.pinFilesChangedBooks).not.toHaveBeenCalled();
+  (service as unknown as { onCronTick(): void }).onCronTick();
+  await expect(service.startManualRun()).rejects.toThrow(EDITION_SYNC_SERVER_DISABLED_MESSAGE);
+  expect(repo.createRun).not.toHaveBeenCalled();
+  expect(indexer.indexBook).not.toHaveBeenCalled();
+  await expect(service.stop()).resolves.toMatchObject({ run: { active: false }, counts: { queued: 0 }, backlogEstimate: { books: 0 } });
 });

@@ -1,9 +1,7 @@
-import type { AudiobookshelfBookSyncLive, AudiobookshelfReconcileDirection } from '@bookorbit/types'
+import type { AudiobookshelfBookSyncLive } from '@bookorbit/types'
 import { AudiobookshelfReconcileError } from '@/features/audiobookshelf/api/audiobookshelf.api'
 import { formatRelativeTimeFromNow } from '@/i18n/formatters'
-import type { ChainActionId, ChainConnectorState } from './sync-chain'
-
-type Translate = (key: string, params?: Record<string, unknown>) => string
+import type { Translate } from '@/lib/sync-issue'
 
 const ABS = 'book.detail.editionLink.abs.'
 
@@ -16,7 +14,7 @@ export function displayPercentage(value: number | undefined, finished: boolean):
 }
 
 /** The hint the live status adds: when a newer position landed, and why both sides diverged. */
-function absStatusHint(live: AudiobookshelfBookSyncLive | null, t: Translate): string | null {
+export function absStatusHint(live: AudiobookshelfBookSyncLive | null, t: Translate): string | null {
   switch (live?.status) {
     case 'receiving': {
       const lastUpdate = live.progress?.lastUpdate
@@ -33,32 +31,6 @@ function absStatusHint(live: AudiobookshelfBookSyncLive | null, t: Translate): s
     default:
       return null
   }
-}
-
-/** The states whose live hint replaces the chain's static note: it carries the time or the reason. */
-const LIVE_HINT_STATES = new Set<ChainConnectorState>(['absReceiving', 'absDiverged'])
-
-export function absConnectorHint(
-  state: ChainConnectorState,
-  live: AudiobookshelfBookSyncLive | null,
-  fallback: string | null,
-  t: Translate,
-): string | null {
-  if (!LIVE_HINT_STATES.has(state)) return fallback
-  return absStatusHint(live, t) ?? fallback
-}
-
-type AbsReconcileActionId = Extract<ChainActionId, 'absPush' | 'absPull' | 'retryAbs'>
-
-/** Which reconcile each chain action runs; a retry has no direction and only asks for a fresh live check. */
-export const ABS_RECONCILE_ACTIONS: Record<AbsReconcileActionId, AudiobookshelfReconcileDirection | 'retry'> = {
-  absPush: 'push',
-  absPull: 'pull',
-  retryAbs: 'retry',
-}
-
-export function isAbsReconcileAction(id: ChainActionId): id is AbsReconcileActionId {
-  return id in ABS_RECONCILE_ACTIONS
 }
 
 export function reconcileFailureKey(error: unknown): string {

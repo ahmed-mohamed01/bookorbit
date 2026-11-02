@@ -1,4 +1,11 @@
-import type { EditionSyncInvalidatedReason, EditionSyncOverride, EditionSyncProvenance, ReadAloudErrorCode } from '@bookorbit/types';
+import type {
+  EditionSyncBookListItem,
+  EditionSyncBookSyncMode,
+  EditionSyncInvalidatedReason,
+  EditionSyncOverride,
+  EditionSyncProvenance,
+  ReadAloudErrorCode,
+} from '@bookorbit/types';
 
 import type { EditionSyncBookIndexRow, EditionSyncUserSettingsRow } from './schema/edition-sync.schema';
 
@@ -99,3 +106,28 @@ export interface EditionSyncCaptureResult {
 }
 
 export type EditionSyncVerification = { valid: true } | { valid: false; reason: EditionSyncInvalidatedReason; canCheckContent?: boolean };
+
+/** The user's resolved settings the books list needs. */
+export interface EditionSyncBookListSettings {
+  effectiveEnabled: boolean;
+  bookSyncMode: EditionSyncBookSyncMode;
+}
+
+/**
+ * A books-list row as the repository reads it; the service adds the cover version and the actions.
+ * A type alias rather than an interface so it satisfies drizzle's `execute<Record<string, unknown>>` bound.
+ */
+export type EditionSyncBookListRow = {
+  bookId: number;
+  title: string;
+  /** Computed in SQL from the user's effective setting, book sync mode and per-book override. */
+  syncEnabled: boolean;
+  syncOverride: EditionSyncOverride;
+  status: EditionSyncBookListItem['status'];
+  stage: EditionSyncBookListItem['stage'];
+  progress: number | null;
+  indexedAt: Date | string | null;
+  error: string | null;
+  whisperFallback: boolean;
+  formats: string[];
+};

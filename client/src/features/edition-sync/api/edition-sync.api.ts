@@ -2,6 +2,8 @@ import { api } from '@/lib/api'
 import type {
   EditionSyncAdminSettings,
   EditionSyncAdminStatus,
+  EditionSyncBookListQuery,
+  EditionSyncBookListResponse,
   EditionSyncBookState,
   EditionSyncClearUnusedResult,
   EditionSyncSettings,
@@ -30,6 +32,15 @@ export async function fetchEditionSyncSettings(): Promise<EditionSyncSettings> {
 
 export async function updateEditionSyncSettings(payload: UpsertEditionSyncSettingsPayload): Promise<EditionSyncSettings> {
   return readJson(await api(`${BASE}/settings`, jsonInit('PATCH', payload)))
+}
+
+export async function fetchEditionSyncBooks(query: EditionSyncBookListQuery = {}): Promise<EditionSyncBookListResponse> {
+  const params = new URLSearchParams()
+  if (query.filter) params.set('filter', query.filter)
+  if (query.q) params.set('q', query.q)
+  if (query.page) params.set('page', String(query.page))
+  const search = params.toString()
+  return readJson(await api(search ? `${BASE}/books?${search}` : `${BASE}/books`))
 }
 
 export async function fetchEditionSyncBookState(bookId: number): Promise<EditionSyncBookState> {

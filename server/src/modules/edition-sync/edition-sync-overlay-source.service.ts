@@ -1,4 +1,3 @@
-import { checkEditionSyncSources } from './edition-sync-source-check';
 import { Injectable, Logger } from '@nestjs/common';
 
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
@@ -6,6 +5,7 @@ import type { OverlaySourceCandidate, OverlaySourceResolver } from '../book/over
 import type { EpubDomSourceResolver } from '../position-converter/epub-dom-source-provider';
 import { EDITION_SYNC_INDEX_FORMAT, EDITION_SYNC_RESOLVER_CACHE_MS } from './edition-sync.constants';
 import { resolveEditionSyncDecision, resolveEditionSyncSettings } from './edition-sync-policy';
+import { checkEditionSyncSources } from './edition-sync-source-check';
 import { EditionSyncRepository } from './edition-sync.repository';
 
 type CachedSource =
@@ -20,6 +20,7 @@ const MAX_CACHE_ENTRIES = 5_000;
 @Injectable()
 export class EditionSyncOverlaySourceService implements OverlaySourceResolver, EpubDomSourceResolver {
   private readonly logger = new Logger(EditionSyncOverlaySourceService.name);
+  private cacheVersion = 0;
   private readonly cache = new Map<string, CachedSource>();
 
   constructor(private readonly repo: EditionSyncRepository) {}
@@ -52,7 +53,12 @@ export class EditionSyncOverlaySourceService implements OverlaySourceResolver, E
   }
 
   /** Drops cached decisions after a settings or toggle change; no book id drops all of the user's. */
-  invalidate(userId: number, bookId?: number): void {
+  invalidate(userId?: number, bookId?: number): void {
+    if (userId === undefined) {
+      this.cacheVersion++;
+      this.cache.clear();
+      return;
+    }
     if (bookId !== undefined) {
       this.cache.delete(`${userId}:${bookId}`);
       return;
@@ -68,15 +74,21 @@ export class EditionSyncOverlaySourceService implements OverlaySourceResolver, E
   }
 
   private async lookup(userId: number, bookId: number): Promise<CachedSource> {
+    const version = this.cacheVersion;
     const key = `${userId}:${bookId}`;
     const now = Date.now();
     const cached = this.cache.get(key);
     if (cached && cached.expiresAt > now) return cached;
 
-    const [inputs, hasPermission] = await Promise.all([this.repo.findResolverInputs(userId, bookId), this.repo.userHasEditionSyncPermission(userId)]);
+    const [inputs, hasPermission, serverEnabled] = await Promise.all([
+      this.repo.findResolverInputs(userId, bookId),
+      this.repo.userHasEditionSyncPermission(userId),
+      this.repo.isServerEnabled(),
+    ]);
     const settings = resolveEditionSyncSettings({
+      serverEnabled,
       hasPermission,
-      enabled: inputs.settings?.enabled ?? false,
+      enabled: inputs.settings?.enabled ?? true,
       bookSyncMode: inputs.settings?.bookSyncMode ?? 'all_eligible',
     });
     // Eligibility is implied: upstream only asks when there is no read-along, and the index exists.
@@ -97,6 +109,7 @@ export class EditionSyncOverlaySourceService implements OverlaySourceResolver, E
         ? { expiresAt, indexFileId: inputs.index.indexFileId, indexPath: inputs.index.indexPath }
         : { expiresAt, indexFileId: null, indexPath: null, off: true };
     if (this.cache.size >= MAX_CACHE_ENTRIES) this.evictExpired(now);
+    if (version !== this.cacheVersion) return this.lookup(userId, bookId);
     this.cache.set(key, entry);
     return entry;
   }

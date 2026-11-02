@@ -8548,10 +8548,8 @@
         "abs": {
           "library": "{name} library",
           "settings": "Settings",
-          "changeInSettings": "Change in settings",
           "external": "External",
           "opensNewTab": "(opens Audiobookshelf in a new tab)",
-          "checking": "Checking Audiobookshelf",
           "status": {
             "sendingHint": "Your newer position is on its way.",
             "receivingHint": "Picked up on the next sync.",
@@ -8565,163 +8563,82 @@
             }
           },
           "reconcile": {
-            "push": "Send to ABS",
-            "pull": "Use ABS",
             "useNow": "Use it now",
             "retry": "Retry",
             "failed": "Could not update the position. Try again.",
             "busy": "Sync is busy, try again in a moment.",
             "unreachable": "Could not reach Audiobookshelf."
+          },
+          "row": {
+            "label": "Audiobookshelf sync",
+            "toggle": "Sync this book with Audiobookshelf",
+            "settings": "Audiobookshelf settings",
+            "status": {
+              "notLinked": "Not linked",
+              "paused": "Paused",
+              "needsReview": "Needs review",
+              "offInSettings": "Off in settings",
+              "twoWay": "Two-way",
+              "oneWay": "One-way",
+              "toAbs": "To Audiobookshelf",
+              "fromAbs": "From Audiobookshelf",
+              "receiving": "Receiving",
+              "sending": "Sending",
+              "ahead": "Audiobookshelf is ahead",
+              "behind": "Audiobookshelf is behind",
+              "unreachable": "Can't reach"
+            },
+            "detail": {
+              "needsReview": "This match was found automatically. Confirm it is the right item, or pick another, before progress syncs.",
+              "offInSettings": "Position sync with Audiobookshelf is turned off in the Audiobookshelf settings.",
+              "unreachable": "Progress catches up when Audiobookshelf is back."
+            },
+            "explain": {
+              "twoWay": "Listening progress is exchanged with your Audiobookshelf server through its API.",
+              "fromAbs": "Listening progress comes from your Audiobookshelf server and nothing is sent back.",
+              "toAbs": "Listening progress is sent to your Audiobookshelf server and nothing is read back."
+            },
+            "action": {
+              "confirm": "Confirm match",
+              "change": "Change match",
+              "useAbs": "Use Audiobookshelf",
+              "sendThis": "Send this"
+            },
+            "search": {
+              "title": "Pick the Audiobookshelf item",
+              "label": "Search Audiobookshelf items",
+              "placeholder": "Search Audiobookshelf items…"
+            },
+            "confirmPause": {
+              "title": "Stop syncing with Audiobookshelf?",
+              "description": "Listening progress stops syncing with your Audiobookshelf server. Nothing is removed there.",
+              "confirm": "Stop syncing"
+            },
+            "toast": {
+              "resumed": "Syncing with Audiobookshelf.",
+              "paused": "Stopped syncing with Audiobookshelf.",
+              "changed": "Audiobookshelf item changed.",
+              "failed": "Couldn't update Audiobookshelf sync."
+            }
           }
         },
         "unknownTitle": "Untitled",
         "searching": "Searching...",
         "noResults": "No matches found.",
-        "syncCancelKeptRunning": "The position sync build couldn't be cancelled and keeps running.",
         "searchFailed": "Couldn't search for a match. Try again.",
-        "progressRead": "{percentage}% read",
         "progressListened": "{percentage}% listened",
-        "actions": {
-          "rebuild": "Rebuild"
-        },
-        "slot": {
-          "change": "Change"
-        },
-        "chain": {
-          "modify": "Modify",
-          "done": "Done",
-          "intro": {
-            "synced": "Synced files keep the same position as you switch between them.",
-            "notSynced": "Sync this book's files to keep them at the same position."
-          },
-          "header": {
-            "needsAttention": "Needs attention",
-            "checkSync": "Check sync",
-            "aligning": "Aligning",
-            "inSync": "{n} of {m} in sync",
-            "notSyncing": "Not syncing"
-          },
-          "short": {
-            "ebook": "Ebook",
-            "readAlong": "Read-aloud",
-            "audiobook": "Audiobook",
-            "abs": "ABS"
-          },
-          "kind": {
-            "abs": "Audiobookshelf"
-          },
-          "arrow": {
-            "both": "syncs both ways",
-            "left": "receives from",
-            "right": "sends to"
-          },
-          "switchLabel": "Sync {from} and {to}",
-          "cancelAlignment": "Cancel alignment",
-          "pill": {
-            "available": "Not linked",
-            "linked": "Linked",
-            "linkedViaWhisper": "Linked · via Whisper",
-            "aligning": "Aligning",
-            "rebuilding": "Rebuilding",
-            "alignmentFailed": "Alignment failed",
-            "outOfDate": "Out of date",
-            "notAligned": "Not aligned",
-            "cantAlign": "Can't align",
-            "cantReach": "Can't reach server",
-            "oneWay": "Linked · one way"
-          },
-          "qualifier": {
-            "viaWhisper": "via Whisper",
-            "viaTimings": "via timing index",
-            "direct": "direct",
-            "oneWay": "one way",
-            "twoWay": "two way"
-          },
-          "explainToggle": "Explain this link",
-          "reconcileToggle": "Show sync options",
-          "explain": {
-            "timings": "Two-way. A timing index built from the audiobook maps its audio onto the ebook's text, so your position carries in both directions.",
-            "whisper": "Two-way. Whisper maps the audiobook's audio onto the ebook's text, so your position carries in both directions.",
-            "readAlongAudio": "Two-way. The read-aloud narrates the audiobook's own audio, so positions map directly between them.",
-            "absTwoWay": "Two-way. Listening progress is exchanged with your Audiobookshelf server through its API.",
-            "absFromAbs": "One-way. Listening progress comes from your Audiobookshelf server through its API and nothing is sent back.",
-            "absToAbs": "One-way. Listening progress is sent to your Audiobookshelf server through its API and nothing is read back."
-          },
-          "note": {
-            "aligning": "The ebook and audiobook keep their own positions until it finishes.",
-            "alignmentFailed": "Whisper stopped while aligning, so the ebook and audiobook aren't syncing.",
-            "stale": "The audiobook file changed after this map was built. Syncing is paused until it's rebuilt.",
-            "absUnreachable": "Progress catches up when Audiobookshelf is back."
-          },
-          "mini": {
-            "aligning": "Aligning…",
-            "rebuilding": "Rebuilding alignment…",
-            "cantReach": "Can't reach Audiobookshelf",
-            "syncedWithAbs": "Synced with Audiobookshelf"
-          },
-          "action": {
-            "retry": "Retry",
-            "rebuildAlignment": "Rebuild alignment",
-            "alignNow": "Align now",
-            "match": "Match",
-            "confirm": "Confirm",
-            "cancel": "Cancel",
-            "review": "Review"
-          },
-          "slot": {
-            "notCreated": "Not created yet"
-          },
-          "ghost": {
-            "noMatchAbs": "No match in your libraries",
-            "absPositionSyncOff": "Position sync is off in Settings"
-          },
-          "chip": {
-            "paused": "Paused",
-            "needsReview": "Needs review"
-          },
-          "off": {
-            "syncPaused": "sync paused",
-            "needsReview": "needs review",
-            "notMatched": "not matched",
-            "syncOffInSettings": "sync off in Settings",
-            "noReadAlong": "no read-aloud yet"
-          },
-          "disabled": {
-            "nothingToLink": "There is nothing to link yet."
-          },
-          "absSearch": {
-            "title": "Pick the Audiobookshelf item",
-            "placeholder": "Search Audiobookshelf items…"
-          },
-          "confirm": {
-            "pauseAbs": {
-              "title": "Stop syncing with Audiobookshelf?",
-              "description": "Listening progress stops syncing with your Audiobookshelf server. Nothing is removed there.",
-              "confirm": "Stop syncing"
-            }
-          },
-          "toast": {
-            "absResumed": "Syncing with Audiobookshelf.",
-            "absPaused": "Stopped syncing with Audiobookshelf.",
-            "absChanged": "Audiobookshelf item changed.",
-            "absFailed": "Couldn't update Audiobookshelf sync."
-          },
-          "tooltip": "Position sync: {status}",
-          "fileSummary": "{format} · {count, plural, one {# file} other {# files}} · {size}",
-          "fileSummarySingle": "{format} · {size}"
+        "readAloud": {
+          "chip": "Read-aloud",
+          "notCreated": "Not created yet",
+          "create": "Create",
+          "moreOptions": "More create options",
+          "options": "Create with settings...",
+          "review": "Review",
+          "readyToReview": "Ready to review",
+          "failed": "Couldn't create",
+          "unavailable": "Read-aloud unavailable",
+          "running": "{stage} · {percent}"
         }
-      },
-      "readingAlignment": {
-        "title": "Position sync",
-        "unalignableHint": "Position sync isn't available for this ebook and audiobook.",
-        "idleHint": "Maps the audio to the text so your position carries between the ebook and the audiobook.",
-        "buildFailed": "Failed to start alignment build.",
-        "buildBlocked": {
-          "disabled": "Reading alignment is turned off for this server.",
-          "unavailable": "Reading alignment isn't configured on this server yet.",
-          "busy": "The server is busy aligning other books. Try again shortly."
-        },
-        "progressLabel": "Position sync progress"
       }
     },
     "table": {
@@ -11382,12 +11299,8 @@
         "tomorrow": "tomorrow {time}",
         "later": "{date} {time}"
       },
-      "failed": "Could not be indexed",
-      "failedFallback": "Could not be indexed · Whisper fallback active",
-      "stale": "Files changed · queued",
       "startingSoon": "Starting soon",
-      "runNow": "Run now",
-      "retry": "Retry"
+      "runNow": "Run now"
     },
     "errors": {
       "loadFailed": "Unable to load edition sync state.",
@@ -11408,8 +11321,8 @@
       "description": "Keep your position in step between the ebook, the audiobook and the read-aloud edition.",
       "info": "Position sync is automatic for the books you include. The timing data that makes it sentence accurate is built in the background and shared by every user.",
       "enable": {
-        "title": "Enable edition sync",
-        "description": "Turns edition sync on for your account."
+        "title": "Sync my books",
+        "description": "On by default. You can still turn it off for single books."
       },
       "scope": {
         "title": "Books to sync",
@@ -11425,7 +11338,8 @@
       "toast": {
         "saved": "Edition sync settings saved.",
         "saveFailed": "Failed to save edition sync settings."
-      }
+      },
+      "serverDisabled": "An admin has turned edition sync off for this server."
     },
     "admin": {
       "loadFailed": "Failed to load edition sync status.",
@@ -11495,13 +11409,69 @@
         }
       },
       "toast": {
-        "scheduleSaved": "Schedule saved.",
-        "scheduleFailed": "Failed to save the schedule.",
+        "scheduleSaved": "Settings saved.",
+        "scheduleFailed": "Failed to save the settings.",
         "runFailed": "Failed to start indexing.",
         "stopFailed": "Failed to stop indexing.",
         "cleared": "{count, plural, one {Removed # timing file} other {Removed # timing files}}, freed {size}.",
         "clearFailed": "Failed to clear unused timing data."
+      },
+      "enabled": {
+        "title": "Edition sync on this server",
+        "description": "Off: no indexing runs and users don't see the option."
       }
+    },
+    "header": {
+      "off": "Off",
+      "synced": "Synced",
+      "viaWhisper": "Synced via Whisper",
+      "running": "{stage} · {percent}",
+      "cantIndex": "Couldn't index",
+      "outOfDate": "Out of date",
+      "epubOnly": "EPUB only",
+      "reason": {
+        "durationMismatch": "Durations differ",
+        "missingDuration": "No duration",
+        "noAudioFiles": "No matching audio",
+        "noMediaOverlayEpub": "No read-aloud EPUB"
+      },
+      "detail": {
+        "whisperFallback": "Indexing failed, so the older Whisper alignment is used instead.",
+        "queued": "Indexing {when}. Positions stay separate until then.",
+        "queuedSoon": "Indexing starts soon. Positions stay separate until then.",
+        "waiting": "Waiting to be indexed. Positions stay separate until then.",
+        "stale": "This book's files changed. Sync pauses until it is indexed again.",
+        "staleAt": "This book's files changed. Sync pauses until it is indexed again, {when}.",
+        "staleSoon": "This book's files changed. Sync pauses until it is indexed again, which starts soon.",
+        "failed": "The ebook and audiobook keep their own positions until it is indexed."
+      },
+      "action": {
+        "retry": "Retry indexing"
+      }
+    },
+    "books": {
+      "title": "Books",
+      "description": "Books with an ebook and an audiobook, and where each one stands for you.",
+      "filterLabel": "Filter books",
+      "filters": {
+        "all": "All",
+        "problems": "Problems",
+        "queued": "Queued",
+        "synced": "Synced",
+        "off": "Off"
+      },
+      "search": "Search books",
+      "userDisabled": "Edition sync is off for your account. Turn on Sync my books to change single books.",
+      "loadFailed": "Failed to load the books.",
+      "retryLoad": "Try again",
+      "loading": "Loading books…",
+      "empty": "No books match.",
+      "offDetail": "Turned off for this book",
+      "indexedOn": "Indexed {date}",
+      "toggle": "Sync {title}",
+      "range": "{from}-{to} of {total}",
+      "previous": "Previous",
+      "next": "Next"
     }
   },
   "hardcover": {

@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import { defineComponent, ref } from 'vue'
-import type { BookDetail } from '@bookorbit/types'
+import { Permission, type BookDetail } from '@bookorbit/types'
 import DetailsTab from '../DetailsTab.vue'
 import BookReadingActivityCard from '../../details/BookReadingActivityCard.vue'
 import BookCoverStack from '../../details/BookCoverStack.vue'
 import BookCoverLightbox from '@/features/book/components/BookCoverLightbox.vue'
-import LinkBookControl from '../LinkBookControl.vue'
+import AudiobookshelfSyncRow from '../../details/AudiobookshelfSyncRow.vue'
+import EditionsReadAloudRow from '../../details/EditionsReadAloudRow.vue'
+import BookEditionsCard from '../../details/BookEditionsCard.vue'
 import { useDisplaySettings } from '@/composables/useDisplaySettings'
 import { useProviderLinkSettings } from '@/features/book/composables/useProviderLinkSettings'
 import ReadAloudInviteChip from '@/features/read-aloud/components/ReadAloudInviteChip.vue'
@@ -143,7 +145,7 @@ const RouterLinkStub = defineComponent({
 let mountedWrappers: Array<{ unmount: () => void }> = []
 let resizeObserverCallbacks: ResizeObserverCallback[] = []
 
-function mountDetails(book: BookDetail) {
+function mountDetails(book: BookDetail, extraStubs: Record<string, unknown> = {}) {
   const wrapper = shallowMount(DetailsTab, {
     props: { book },
     global: {
@@ -158,6 +160,7 @@ function mountDetails(book: BookDetail) {
         Tooltip: { template: '<div><slot /></div>' },
         TooltipTrigger: { template: '<div><slot /></div>' },
         TooltipContent: { template: '<div><slot /></div>' },
+        ...extraStubs,
       },
     },
   })
@@ -856,7 +859,7 @@ describe('DetailsTab cover surface', () => {
     expect(wrapper.find('button[aria-label="Edit date added"]').exists()).toBe(false)
   })
 
-  it('leaves read-aloud sync to the Position sync panel', async () => {
+  it('leaves read-aloud sync to the Editions card', async () => {
     const book = makeBook({
       files: [
         {
@@ -892,6 +895,24 @@ describe('DetailsTab cover surface', () => {
     expect(wrapper.find('[data-test="read-aloud-sync"]').exists()).toBe(false)
   })
 
+  it('keeps the read-aloud sync switch on the Editions card without the edition sync permission', async () => {
+    mocks.hasPermission.mockImplementation((perm) => perm !== Permission.EditionSync)
+    const readAlong = { ...makeBook().files[0]!, mediaOverlay: { available: true, durationSeconds: 3600 } }
+    const m4b = {
+      ...makeBook().files[0]!,
+      id: 102,
+      format: 'm4b',
+      role: 'content',
+      filename: 'a.m4b',
+      absolutePath: '/books/a.m4b',
+      durationSeconds: 3600,
+    }
+    const wrapper = mountDetails(makeBook({ files: [readAlong, m4b] }))
+    await flushPromises()
+
+    expect(wrapper.findComponent(BookEditionsCard).props('syncCount')).toBe(2)
+  })
+
   describe('read-aloud invitation and cover stack', () => {
     const epub = makeBook().files[0]!
     const m4b = { ...epub, id: 102, format: 'm4b', role: 'content', absolutePath: '/books/audio.m4b', filename: 'audio.m4b', durationSeconds: 3600 }
@@ -907,13 +928,21 @@ describe('DetailsTab cover surface', () => {
 
     const canCreate = { workerConfigured: true, eligible: true, reason: null, existingReadAlongs: [] }
 
-    it('offers a read-aloud beside the format chips, leaving the Position sync panel to its own slot', async () => {
+    it('offers a read-aloud beside the format chips and in the Editions card', async () => {
       answerCapability(canCreate)
-      const wrapper = mountDetails(makeBook({ files: [epub, m4b] }))
+      const wrapper = mountDetails(makeBook({ files: [epub, m4b] }), { BookEditionsCard: false })
       await flushPromises()
 
       expect(wrapper.findComponent(ReadAloudInviteChip).exists()).toBe(true)
-      expect(Object.keys(wrapper.findComponent(LinkBookControl).props())).not.toContain('readAloudInvite')
+      expect(wrapper.findComponent(EditionsReadAloudRow).props('state')).toMatchObject({ entry: { kind: 'available' }, job: null })
+    })
+
+    it('puts the Audiobookshelf row in the Details list and drops the Position sync button', async () => {
+      const wrapper = mountDetails(makeBook({ files: [epub, m4b] }))
+      await flushPromises()
+
+      expect(wrapper.findComponent(AudiobookshelfSyncRow).props('book').id).toBe(12)
+      expect(wrapper.find('button[aria-label="Position sync"]').exists()).toBe(false)
     })
 
     it('opens the read-aloud generator in one click from the chip', async () => {

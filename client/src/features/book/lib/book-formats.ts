@@ -78,6 +78,11 @@ export function bookFormatEntries<T extends FormatFile>(files: readonly T[], for
 }
 
 /** Every content file in edition order: what a Read, Download or Send menu lists. */
+/** A plain EPUB edition: no audio and no media overlay. */
+export function isPlainEpubEntry(entry: Pick<BookFormatEntry, 'key' | 'audio' | 'readAlong'>): boolean {
+  return !entry.audio && !entry.readAlong && entry.key === 'epub'
+}
+
 export function rankedContentFiles<T extends FormatFile>(files: readonly T[], formatPriority?: readonly string[] | null): T[] {
   return bookFormatEntries(files, formatPriority).flatMap((entry) => entry.files)
 }

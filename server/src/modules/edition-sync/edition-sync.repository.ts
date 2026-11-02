@@ -4,6 +4,8 @@ import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm'
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import {
   AUDIO_FORMAT_LIST,
+  EDITION_SYNC_BOOK_LIST_PAGE_SIZE,
+  type EditionSyncBookListFilter,
   EDITION_SYNC_DEFAULT_CRON,
   EDITION_SYNC_DEFAULT_RUN_HOURS,
   Permission,
@@ -16,6 +18,9 @@ import {
   type EditionSyncRunTrigger,
 } from '@bookorbit/types';
 
+import type { RequestUser } from '../../common/types/request-user';
+import { escapeLikePattern } from '../../common/utils/accent-insensitive-search.utils';
+import { buildContentFilterClauses } from '../../common/utils/content-filter-sql.utils';
 import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
@@ -31,13 +36,22 @@ import {
   type EditionSyncUserSettingsRow,
   type NewEditionSyncBookIndexRow,
 } from './schema/edition-sync.schema';
-import type { EditionSyncBookFileRef, EditionSyncEligibility, EditionSyncIndexSource, EditionSyncResolverInputs } from './edition-sync.types';
+import type {
+  EditionSyncBookFileRef,
+  EditionSyncBookListRow,
+  EditionSyncBookListSettings,
+  EditionSyncEligibility,
+  EditionSyncIndexSource,
+  EditionSyncResolverInputs,
+} from './edition-sync.types';
 
 import { EDITION_SYNC_FILE_CHANGE_REASONS, EDITION_SYNC_FILES_SETTLE_MS } from './edition-sync.constants';
 
 type Db = NodePgDatabase<typeof schema>;
 
 const RECENT_THROUGHPUT_RUNS = 10;
+/** The server switch is read on every tick, run step and resolver lookup; admin updates drop the cache. */
+const SERVER_ENABLED_CACHE_MS = 5_000;
 const AUDIO_FORMATS_SQL = sql.join(
   AUDIO_FORMAT_LIST.map((format) => sql`${format}`),
   sql`, `,
@@ -47,12 +61,15 @@ function rowsOf<T>(result: unknown): T[] {
   return (result as { rows: T[] }).rows;
 }
 
-/** Users whose edition sync is effectively on: active, permitted (or superuser), enabled. */
+/**
+ * Users whose edition sync is effectively on: active, permitted (or superuser), enabled. The server
+ * switch is deliberately not part of it: it pauses indexing but does not make indexes unused.
+ */
 const WANTING_USERS_CTE = sql`wanting AS (
-  SELECT u.id, u.is_superuser, s.book_sync_mode
-  FROM edition_sync_user_settings s
-  JOIN users u ON u.id = s.user_id
-  WHERE s.enabled
+  SELECT u.id, u.is_superuser, COALESCE(s.book_sync_mode, 'all_eligible') AS book_sync_mode
+  FROM users u
+  LEFT JOIN edition_sync_user_settings s ON s.user_id = u.id
+  WHERE COALESCE(s.enabled, true)
     AND u.active
     AND (u.is_superuser OR EXISTS (
       SELECT 1 FROM user_permissions p WHERE p.user_id = u.id AND p.permission_name = ${Permission.EditionSync}
@@ -130,6 +147,35 @@ const FILE_CHANGE_REASONS_SQL = sql.join(
 );
 const SETTLED_PIN_SQL = sql`(i.pinned_at IS NULL OR i.retry_requested OR i.invalidated_reason IS NULL OR i.invalidated_reason NOT IN (${FILE_CHANGE_REASONS_SQL}) OR i.files_changed_at IS NULL OR i.files_changed_at <= now() - (${EDITION_SYNC_FILES_SETTLE_MS} * interval '1 millisecond'))`;
 
+/** Index statuses behind each books-list filter; `all` has none. Drives both the page filter and the counts. */
+const LIST_FILTER_STATUSES: Record<Exclude<EditionSyncBookListFilter, 'all'>, readonly string[]> = {
+  problems: ['failed'],
+  queued: ['queued', 'stale', 'running'],
+  synced: ['ready'],
+  off: ['off'],
+};
+
+function statusIn(statuses: readonly string[]): SQL {
+  return sql`status IN (${sql.join(
+    statuses.map((status) => sql`${status}`),
+    sql`, `,
+  )})`;
+}
+
+function listFilterPredicate(filter: EditionSyncBookListFilter): SQL {
+  return filter === 'all' ? sql`true` : statusIn(LIST_FILTER_STATUSES[filter]);
+}
+
+const LIST_FILTER_COUNTS_SQL = sql.join(
+  [
+    sql`count(*)::int AS "all"`,
+    ...Object.entries(LIST_FILTER_STATUSES).map(
+      ([filter, statuses]) => sql`count(*) FILTER (WHERE ${statusIn(statuses)})::int AS ${sql.identifier(filter)}`,
+    ),
+  ],
+  sql`, `,
+);
+
 const FILE_REF_COLUMNS = {
   id: schema.bookFiles.id,
   bookId: schema.bookFiles.bookId,
@@ -149,7 +195,61 @@ const FILE_REF_COLUMNS = {
  */
 @Injectable()
 export class EditionSyncRepository {
+  private serverEnabledCache: { value: boolean; expiresAt: number } | null = null;
+
   constructor(@Inject(DB) private readonly db: Db) {}
+
+  async listBooks(user: RequestUser, settings: EditionSyncBookListSettings, filter: EditionSyncBookListFilter, q: string | undefined, page: number) {
+    const contentFilterClauses = !user.isSuperuser && user.contentFilters ? buildContentFilterClauses(user.contentFilters, this.db) : [];
+    // The content filter clauses reference the unaliased "books" table, so they run in their own scope.
+    const contentFilterSql =
+      contentFilterClauses.length > 0 ? sql`AND EXISTS (SELECT 1 FROM books WHERE books.id = b.id AND ${and(...contentFilterClauses)})` : sql``;
+    const title = sql`COALESCE(m.title, b.folder_path)`;
+    const base = sql`WITH ${ELIGIBLE_FILES_CTE}, scoped AS (
+      SELECT b.id, ${title} AS title, o.sync_override,
+        (${settings.effectiveEnabled} AND (o.sync_override = 'included' OR (o.sync_override IS NULL AND ${settings.bookSyncMode} = 'all_eligible'))) IS TRUE AS enabled,
+        i.status AS stored_status, i.retry_requested, i.indexed_at
+      FROM eligible_files ef JOIN books b ON b.id = ef.book_id
+      JOIN libraries l ON l.id = b.library_id
+      LEFT JOIN book_metadata m ON m.book_id = b.id
+      LEFT JOIN edition_sync_book_overrides o ON o.book_id = b.id AND o.user_id = ${user.id}
+      LEFT JOIN edition_sync_book_index i ON i.book_id = b.id
+      WHERE ${BOOK_PLACEMENT_SQL}
+        AND (${user.isSuperuser} OR EXISTS (SELECT 1 FROM user_library_access a WHERE a.user_id = ${user.id} AND a.library_id = b.library_id))
+        ${q ? sql`AND ${title} ILIKE ${`%${escapeLikePattern(q)}%`} ESCAPE '\\'` : sql``}
+        ${contentFilterSql}
+    ), states AS (
+      SELECT *, CASE WHEN NOT enabled THEN 'off'
+        WHEN stored_status IS NULL THEN 'queued'
+        WHEN stored_status = 'failed' AND retry_requested THEN 'queued'
+        WHEN stored_status = 'stale' AND indexed_at IS NULL THEN 'queued'
+        ELSE stored_status END AS status FROM scoped
+    )`;
+    const [items, counts] = await Promise.all([
+      this.db.execute<EditionSyncBookListRow>(sql`${base}, page AS (
+        SELECT s.* FROM states s WHERE ${listFilterPredicate(filter)} ORDER BY lower(s.title), s.id
+        LIMIT ${EDITION_SYNC_BOOK_LIST_PAGE_SIZE} OFFSET ${(page - 1) * EDITION_SYNC_BOOK_LIST_PAGE_SIZE}
+      ) SELECT s.id AS "bookId", s.title, s.enabled AS "syncEnabled", s.sync_override AS "syncOverride", s.status,
+        CASE WHEN s.status = 'running' THEN i.stage END AS stage,
+        CASE WHEN s.status = 'running' THEN COALESCE(i.progress, 0) END AS progress,
+        i.indexed_at AS "indexedAt", i.last_error AS error,
+        (s.status = 'failed' AND COALESCE(r.mode, 'auto') <> 'disabled' AND EXISTS (
+          SELECT 1 FROM audiobook_alignment a WHERE a.text_book_id = s.id AND a.audio_book_id = s.id AND a.status = 'ready'
+        )) AS "whisperFallback",
+        ARRAY(SELECT f.format FROM book_files f WHERE f.book_id = s.id AND f.role = 'content'
+          GROUP BY f.format ORDER BY bool_or(f.id = b.primary_file_id) DESC,
+          min(CASE WHEN f.format IN (${AUDIO_FORMATS_SQL}) THEN 0 WHEN f.format = 'epub' THEN 1 ELSE 2 END), f.format) AS formats
+      FROM page s JOIN books b ON b.id = s.id
+      LEFT JOIN edition_sync_book_index i ON i.book_id = s.id
+      LEFT JOIN user_book_read_aloud_sync_settings r ON r.book_id = s.id AND r.user_id = ${user.id}
+      ORDER BY lower(s.title), s.id`),
+      this.db.execute<Record<EditionSyncBookListFilter, number>>(sql`${base} SELECT ${LIST_FILTER_COUNTS_SQL} FROM states`),
+    ]);
+    return {
+      items: rowsOf<EditionSyncBookListRow>(items),
+      counts: rowsOf<Record<EditionSyncBookListFilter, number>>(counts)[0],
+    };
+  }
 
   // Schema bootstrap
 
@@ -251,6 +351,7 @@ export class EditionSyncRepository {
     return (
       row ?? {
         id: 1,
+        enabled: false,
         cronExpression: EDITION_SYNC_DEFAULT_CRON,
         onFilesChanged: 'next_run',
         runHours: EDITION_SYNC_DEFAULT_RUN_HOURS,
@@ -260,11 +361,21 @@ export class EditionSyncRepository {
     );
   }
 
+  /** The one gate for the server switch, cached briefly. */
+  async isServerEnabled(): Promise<boolean> {
+    const now = Date.now();
+    if (this.serverEnabledCache && this.serverEnabledCache.expiresAt > now) return this.serverEnabledCache.value;
+    const { enabled } = await this.findAdminSettings();
+    this.serverEnabledCache = { value: enabled, expiresAt: now + SERVER_ENABLED_CACHE_MS };
+    return enabled;
+  }
+
   async updateAdminSettings(
-    patch: { cronExpression?: string | null; runHours?: number; onFilesChanged?: EditionSyncFilesChangedMode },
+    patch: { enabled?: boolean; cronExpression?: string | null; runHours?: number; onFilesChanged?: EditionSyncFilesChangedMode },
     userId: number,
   ): Promise<EditionSyncSettingsRow> {
     const set: Partial<typeof editionSyncSettings.$inferInsert> = { updatedAt: new Date(), updatedByUserId: userId };
+    if (patch.enabled !== undefined) set.enabled = patch.enabled;
     if (patch.cronExpression !== undefined) set.cronExpression = patch.cronExpression;
     if (patch.onFilesChanged != null) set.onFilesChanged = patch.onFilesChanged;
     if (patch.runHours !== undefined) set.runHours = patch.runHours;
@@ -273,6 +384,7 @@ export class EditionSyncRepository {
       .values({ id: 1, cronExpression: EDITION_SYNC_DEFAULT_CRON, runHours: EDITION_SYNC_DEFAULT_RUN_HOURS, ...set })
       .onConflictDoUpdate({ target: editionSyncSettings.id, set })
       .returning();
+    this.serverEnabledCache = null;
     return row;
   }
 

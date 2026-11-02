@@ -19,7 +19,7 @@ import { reconcileFailureKey } from '@/features/book/lib/abs-sync-status'
 
 const SEARCH_DEBOUNCE_MS = 250
 const SEARCH_PAGE_SIZE = 10
-const CHAIN = 'book.detail.editionLink.chain.'
+const TOAST = 'book.detail.editionLink.abs.row.toast.'
 
 export type AbsSyncBusy = AudiobookshelfReconcileDirection | 'retry' | 'resume' | 'pause' | 'confirm' | 'change'
 
@@ -33,7 +33,7 @@ export interface AudiobookshelfSyncHandle {
 }
 
 /**
- * Everything the panel changes on the Audiobookshelf side: reconciling a position, pausing or resuming
+ * Everything the Audiobookshelf row changes on the Audiobookshelf side: reconciling a position, pausing or resuming
  * the match's sync, confirming a match under review, and swapping the matched item for another.
  */
 export function useAudiobookshelfSyncActions(sync: AudiobookshelfSyncHandle, audioBookId: () => number | null) {
@@ -88,10 +88,10 @@ export function useAudiobookshelfSyncActions(sync: AudiobookshelfSyncHandle, aud
       await change(link.absLibraryItemId)
       await sync.reload()
       const key = successKey()
-      if (key) toast.success(t(CHAIN + key))
+      if (key) toast.success(t(TOAST + key))
       return true
     } catch {
-      toast.error(t(`${CHAIN}toast.absFailed`))
+      toast.error(t(`${TOAST}failed`))
       return false
     } finally {
       busy.value = null
@@ -102,7 +102,7 @@ export function useAudiobookshelfSyncActions(sync: AudiobookshelfSyncHandle, aud
     return runMatchChange(
       'resume',
       (id) => updateAudiobookshelfBookExclusion(id, false),
-      () => 'toast.absResumed',
+      () => 'resumed',
     )
   }
 
@@ -111,12 +111,12 @@ export function useAudiobookshelfSyncActions(sync: AudiobookshelfSyncHandle, aud
     return runMatchChange(
       'pause',
       (id) => updateAudiobookshelfBookExclusion(id, true),
-      () => 'toast.absPaused',
+      () => 'paused',
     )
   }
 
   function confirm(): Promise<boolean> {
-    return runMatchChange('confirm', confirmAudiobookshelfMatch, () => (sync.link.value?.syncing ? 'toast.absResumed' : null))
+    return runMatchChange('confirm', confirmAudiobookshelfMatch, () => (sync.link.value?.syncing ? 'resumed' : null))
   }
 
   const query = ref('')
@@ -196,9 +196,9 @@ export function useAudiobookshelfSyncActions(sync: AudiobookshelfSyncHandle, aud
     busy.value = null
     if (succeeded) {
       resetSearch()
-      toast.success(t(`${CHAIN}toast.absChanged`))
+      toast.success(t(`${TOAST}changed`))
     } else {
-      toast.error(t(`${CHAIN}toast.absFailed`))
+      toast.error(t(`${TOAST}failed`))
     }
     return succeeded
   }

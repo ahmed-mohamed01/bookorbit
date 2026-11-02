@@ -19,7 +19,8 @@ export const EDITION_SYNC_RUN_HOURS_MAX = 24;
 export type EditionSyncBookSyncMode = "all_eligible" | "selected_only";
 export const EDITION_SYNC_BOOK_SYNC_MODES = ["all_eligible", "selected_only"] as const satisfies readonly EditionSyncBookSyncMode[];
 export type EditionSyncOverride = "included" | "excluded" | null;
-export type EditionSyncDisabledReason = "permission_denied" | "user_disabled";
+/** `server_disabled`: an admin has turned edition sync off for the whole server. */
+export type EditionSyncDisabledReason = "server_disabled" | "permission_denied" | "user_disabled";
 export type EditionSyncEffectiveReason = EditionSyncDisabledReason | "not_selected" | "excluded" | "not_eligible";
 
 export interface EditionSyncSettings {
@@ -90,6 +91,8 @@ export interface UpdateEditionSyncBookStatePayload {
 }
 
 export interface EditionSyncAdminSettings {
+  /** Server-wide switch; off stops all indexing and hides edition sync from users. Defaults to off. */
+  enabled: boolean;
   /** Five-field cron in the server time zone; null means Never (manual runs only). */
   cronExpression: string | null;
   runHours: number;
@@ -98,6 +101,7 @@ export interface EditionSyncAdminSettings {
 }
 
 export interface UpdateEditionSyncAdminSettingsPayload {
+  enabled?: boolean;
   cronExpression?: string | null;
   runHours?: number;
   onFilesChanged?: EditionSyncFilesChangedMode;
@@ -125,6 +129,52 @@ export interface EditionSyncAdminStatus {
   };
   counts: { indexed: number; queued: number; failed: number; stale: number; unusedIndexes: number; unusedBytes: number };
   backlogEstimate: { books: number; hoursAtRecentRate: number | null };
+}
+
+/** Tabs of the settings books list: every eligible book, then by the current user's sync state. */
+export const EDITION_SYNC_BOOK_LIST_FILTERS = ["all", "problems", "queued", "synced", "off"] as const;
+export type EditionSyncBookListFilter = (typeof EDITION_SYNC_BOOK_LIST_FILTERS)[number];
+export const EDITION_SYNC_BOOK_LIST_PAGE_SIZE = 50;
+
+export interface EditionSyncBookListQuery {
+  filter?: EditionSyncBookListFilter;
+  q?: string;
+  /** 1-based. */
+  page?: number;
+}
+
+export interface EditionSyncBookListItem {
+  bookId: number;
+  title: string;
+  coverVersion: string | null;
+  /** Content formats on the book, primary first (e.g. ["m4b", "epub"]). */
+  formats: string[];
+  /** False while the user's own edition sync is off (`user_disabled`), whatever the per-book choice. */
+  syncEnabled: boolean;
+  /** The stored per-book choice, kept even while the user's own sync is off so it can be shown and changed. */
+  syncOverride: EditionSyncOverride;
+  /**
+   * For this user: `off` when sync is off for the book or the user's own sync is off, otherwise the
+   * index state. `ready` is the stored state; it is not revalidated against the files per row.
+   */
+  status: EditionSyncIndexStatus | "off";
+  stage: ReadAloudWorkerStage | null;
+  progress: number | null;
+  indexedAt: string | null;
+  error: string | null;
+  whisperFallback: boolean;
+  canRunNow: boolean;
+  canRetry: boolean;
+}
+
+export interface EditionSyncBookListResponse {
+  items: EditionSyncBookListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  counts: Record<EditionSyncBookListFilter, number>;
+  /** Set when the user's edition sync is off; the list is still returned so books can be reviewed. */
+  disabledReason: EditionSyncDisabledReason | null;
 }
 
 export interface EditionSyncClearUnusedResult {

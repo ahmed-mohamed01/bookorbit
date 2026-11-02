@@ -3,7 +3,14 @@ import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
 import type { BookDetail, ReadAloudProgressSyncMode } from '@bookorbit/types'
 import { api } from '@/lib/api'
-import { editionSyncToggleKind, editionSyncToggleValue, planEditionSyncToggle } from '../lib/toggle-plan'
+import {
+  editionSyncToggleKind,
+  editionSyncToggleValue,
+  planEditionSyncToggle,
+  readAlongEditions,
+  readAlongSyncCount,
+  type EditionSyncToggleKind,
+} from '../lib/toggle-plan'
 import type { useEditionSyncBookState } from './useEditionSyncBookState'
 
 interface Options {
@@ -16,10 +23,20 @@ export function useEditionSyncToggle({ book, editionSync, onSaved }: Options) {
   const { t } = useI18n()
   const savingReadAloud = ref(false)
 
-  const kind = computed(() => (editionSync.visible.value ? editionSyncToggleKind(editionSync.state.value) : 'none'))
-  const count = computed(() => (kind.value === 'none' ? null : editionSync.editionCount.value))
+  const readAlong = computed(() => readAlongEditions(book().files, book().formatPriority))
+  const readAlongCount = computed(() => readAlongSyncCount(readAlong.value))
+  // Upstream's read-aloud sync is per book and needs no edition sync permission or setting; only the timing index does.
+  const kind = computed<EditionSyncToggleKind>(() => {
+    if (readAlongCount.value !== null) return 'readAlong'
+    if (!editionSync.visible.value) return 'none'
+    return editionSyncToggleKind(editionSync.state.value) === 'index' ? 'index' : 'none'
+  })
+  const count = computed(() => {
+    if (kind.value === 'readAlong') return readAlongCount.value
+    return kind.value === 'index' ? editionSync.editionCount.value : null
+  })
   const checked = computed(() => editionSyncToggleValue(kind.value, editionSync.state.value, book().readAloudSync.mode))
-  const disabled = computed(() => editionSync.busy.value || savingReadAloud.value)
+  const disabled = computed(() => savingReadAloud.value || (kind.value !== 'readAlong' && editionSync.busy.value))
 
   async function patchReadAloudMode(mode: ReadAloudProgressSyncMode): Promise<boolean> {
     savingReadAloud.value = true

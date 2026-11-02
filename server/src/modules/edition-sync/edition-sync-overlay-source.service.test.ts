@@ -28,6 +28,7 @@ function setup(inputs: {
 }) {
   vi.mocked(checkEditionSyncSources).mockResolvedValue({ valid: true });
   const repo = {
+    isServerEnabled: vi.fn().mockResolvedValue(true),
     findResolverInputs: vi.fn().mockResolvedValue({
       settings:
         inputs.enabled === undefined
@@ -58,7 +59,6 @@ describe('EditionSyncOverlaySourceService.resolveOverlaySource', () => {
   });
 
   it.each([
-    ['no settings row', { status: 'ready' as const }],
     ['sync disabled', { enabled: false, status: 'ready' as const }],
     ['no permission', { enabled: true, hasPermission: false, status: 'ready' as const }],
     ['book excluded', { enabled: true, override: 'excluded' as const, status: 'ready' as const }],
@@ -170,4 +170,15 @@ it.each([false, true])('resolver uses shared per-changed-file coverage: uncovere
     expect(repo.flagRecheck).toHaveBeenCalledWith(10);
     expect(repo.markStale).not.toHaveBeenCalled();
   }
+});
+
+it('defaults a user with no settings row to enabled and invalidates cached server decisions', async () => {
+  const { service, repo } = setup({ status: 'ready' });
+  await expect(service.resolveOverlaySource(7, 10, [index])).resolves.toMatchObject({ id: 3 });
+  repo.isServerEnabled.mockResolvedValue(false);
+  service.invalidate();
+  await expect(service.resolveOverlaySource(7, 10, [index])).resolves.toBeNull();
+  repo.isServerEnabled.mockResolvedValue(true);
+  service.invalidate();
+  await expect(service.resolveOverlaySource(7, 10, [index])).resolves.toMatchObject({ id: 3 });
 });

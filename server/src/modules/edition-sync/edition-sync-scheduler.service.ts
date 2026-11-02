@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
 import { Interval, SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
 import type {
@@ -19,6 +19,7 @@ import {
   EDITION_SYNC_FILES_SETTLE_MS,
   EDITION_SYNC_FILES_CHANGED_PIN_BATCH_SIZE,
   EDITION_SYNC_POKE_INTERVAL_MS,
+  EDITION_SYNC_SERVER_DISABLED_MESSAGE,
   EDITION_SYNC_UPSTREAM_WAIT_MS,
 } from './edition-sync.constants';
 import { EditionSyncIndexerService } from './edition-sync-indexer.service';
@@ -79,7 +80,7 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
         this.repo.markInterruptedRows(),
         this.repo.findAdminSettings(),
       ]);
-      const registered = this.syncSchedule(settings.cronExpression);
+      const registered = this.syncSchedule(settings.cronExpression, settings.enabled);
       this.logger.log(
         `[${event}] [end] durationMs=${Date.now() - startedAt} runsClosed=${runsClosed} rowsInterrupted=${rowsInterrupted} scheduleRegistered=${registered} - edition sync scheduler ready`,
       );
@@ -96,13 +97,15 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
   }
 
   /** Re-registers the cron job; null removes it (manual mode). Returns false when registration failed. */
-  syncSchedule(cronExpression: string | null): boolean {
+  syncSchedule(cronExpression: string | null, enabled: boolean): boolean {
     const event = 'edition_sync.schedule';
     const startedAt = Date.now();
     try {
       this.deleteCronJob();
-      if (cronExpression === null) {
-        this.logger.log(`[${event}] [end] durationMs=${Date.now() - startedAt} enabled=false - scheduled indexing disabled`);
+      if (!enabled || cronExpression === null) {
+        this.logger.log(
+          `[${event}] [end] durationMs=${Date.now() - startedAt} enabled=false reason=${!enabled ? 'server_disabled' : 'no_cron'} - scheduled indexing disabled`,
+        );
         return true;
       }
       const job = CronJob.from({ cronTime: cronExpression, timeZone: this.timeZone, onTick: () => this.onCronTick(), start: false });
@@ -132,9 +135,10 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
   @Interval(EDITION_SYNC_POKE_INTERVAL_MS)
   async tick(): Promise<void> {
     if (this.destroyed) return;
-    await this.recheckFlaggedIndexes();
-    if (this.run || this.starting) return;
     try {
+      if (!(await this.repo.isServerEnabled())) return;
+      await this.recheckFlaggedIndexes();
+      if (this.run || this.starting) return;
       const pinned = await this.repo.findNextQueuedBook({ pinnedOnly: true });
       if (pinned) {
         const { state } = await this.workerClient.healthState();
@@ -153,6 +157,7 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
 
   /** Starts an unscheduled run with no window; 409 when a run is active. */
   async startManualRun(): Promise<EditionSyncAdminStatus> {
+    if (!(await this.repo.isServerEnabled())) throw new BadRequestException(EDITION_SYNC_SERVER_DISABLED_MESSAGE);
     if (this.run || this.starting) throw new ConflictException('An edition sync run is already active');
     await this.startRun('manual');
     return this.getAdminStatus();
@@ -173,7 +178,7 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
 
   async getAdminStatus(): Promise<EditionSyncAdminStatus> {
     const run = this.run;
-    const [health, settings, counts, unused, throughput, current] = await Promise.all([
+    const [health, settings, indexCounts, unused, throughput, current] = await Promise.all([
       this.workerClient.healthState(),
       this.repo.findAdminSettings(),
       this.repo.countIndexStates(),
@@ -181,6 +186,7 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
       this.repo.findRecentThroughput(),
       run?.currentBookId ? this.describeCurrent(run.currentBookId) : Promise.resolve(null),
     ]);
+    const counts = settings.enabled ? indexCounts : { ...indexCounts, queued: 0 };
     const forkHealth = health.state === 'ok' || health.state === 'incompatible' ? (health.health as ReadAloudWorkerForkHealth) : null;
     return {
       worker: {
@@ -191,6 +197,7 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
         rebuildSupported: forkHealth?.rebuild === true,
       },
       schedule: {
+        enabled: settings.enabled,
         cronExpression: settings.cronExpression,
         runHours: settings.runHours,
         onFilesChanged: settings.onFilesChanged,
@@ -218,10 +225,11 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
       if (run.trigger === 'toggle' && run.pinnedOnly) {
         // A pinned book is indexing at the scheduled time: widen that run instead of skipping tonight.
         void this.repo
-          .findAdminSettings()
-          .then(async (settings) => {
-            if (this.run !== run || run.stopRequested) return;
-            const windowUntil = computeWindowUntil('scheduled', new Date(), settings.runHours);
+          .isServerEnabled()
+          .then(async (enabled) => {
+            if (!enabled || this.run !== run || run.stopRequested) return;
+            const { runHours } = await this.repo.findAdminSettings();
+            const windowUntil = computeWindowUntil('scheduled', new Date(), runHours);
             await this.repo.widenRun(run.id, windowUntil);
             run.trigger = 'scheduled';
             run.pinnedOnly = false;
@@ -244,8 +252,9 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
     this.starting = true;
     try {
       const startedAt = new Date();
-      const settings = await this.repo.findAdminSettings();
-      const windowUntil = computeWindowUntil(trigger, startedAt, settings.runHours);
+      if (!(await this.repo.isServerEnabled())) return;
+      const { runHours } = await this.repo.findAdminSettings();
+      const windowUntil = computeWindowUntil(trigger, startedAt, runHours);
       const row = await this.repo.createRun(trigger, windowUntil);
       const run: ActiveRun = {
         id: row.id,
@@ -299,7 +308,7 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
     // claimed again in the same run, so a flapping book cannot spin the loop.
     const skip = new Set<number>();
     for (;;) {
-      if (run.stopRequested) return 'stopped';
+      if (run.stopRequested || !(await this.repo.isServerEnabled())) return 'stopped';
       const upstream = await this.upstreamState();
       if (upstream === 'unavailable') return 'worker_unavailable';
       if (upstream === 'busy') {
@@ -373,8 +382,7 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
       }
       const pinStarted = Date.now();
       try {
-        const settings = await this.repo.findAdminSettings();
-        if (settings.onFilesChanged === 'immediate') {
+        if ((await this.repo.isServerEnabled()) && (await this.repo.findAdminSettings()).onFilesChanged === 'immediate') {
           const pinned = await this.repo.pinFilesChangedBooks(
             new Date(Date.now() - EDITION_SYNC_FILES_SETTLE_MS),
             EDITION_SYNC_FILES_CHANGED_PIN_BATCH_SIZE,

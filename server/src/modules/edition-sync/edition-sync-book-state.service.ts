@@ -4,6 +4,7 @@ import type { EditionSyncBookState, EditionSyncIndexState, ReadAloudErrorCode, R
 import type { RequestUser } from '../../common/types/request-user';
 import { BookService } from '../book/book.service';
 import { ReadingAlignmentStatusService } from '../reading-alignment/reading-alignment-status.service';
+import { EDITION_SYNC_SERVER_DISABLED_MESSAGE } from './edition-sync.constants';
 import { EditionSyncOverlaySourceService } from './edition-sync-overlay-source.service';
 import { resolveEditionSyncDecision, resolveEditionSyncIndexStatus, resolveEditionSyncOverrideForToggle } from './edition-sync-policy';
 import { EditionSyncQueueService } from './edition-sync-queue.service';
@@ -53,6 +54,7 @@ export class EditionSyncBookStateService {
   async runNow(user: RequestUser, bookId: number): Promise<EditionSyncBookState> {
     await this.books.verifyBookAccess(bookId, user);
     const state = await this.buildState(user, bookId);
+    if (state.effectiveReason === 'server_disabled') throw new BadRequestException(EDITION_SYNC_SERVER_DISABLED_MESSAGE);
     if (!state.canRunNow) throw new BadRequestException('This book cannot be indexed now');
     await this.pin(bookId, false);
     return this.buildState(user, bookId);
@@ -61,6 +63,7 @@ export class EditionSyncBookStateService {
   async retry(user: RequestUser, bookId: number): Promise<EditionSyncBookState> {
     await this.books.verifyBookAccess(bookId, user);
     const state = await this.buildState(user, bookId);
+    if (state.effectiveReason === 'server_disabled') throw new BadRequestException(EDITION_SYNC_SERVER_DISABLED_MESSAGE);
     if (!state.canRetry) throw new BadRequestException('This book has no failed index to retry');
     await this.pin(bookId, true);
     return this.buildState(user, bookId);
@@ -73,11 +76,12 @@ export class EditionSyncBookStateService {
   }
 
   private async buildState(user: RequestUser, bookId: number): Promise<EditionSyncBookState> {
+    const settingsLoad = this.settings.getSettings(user);
     const [settings, eligibility, override, wanted] = await Promise.all([
-      this.settings.getSettings(user),
+      settingsLoad,
       this.repo.findEligibility(bookId),
       this.repo.findOverride(user.id, bookId),
-      this.repo.isWanted(bookId),
+      settingsLoad.then((loaded) => loaded.disabledReason !== 'server_disabled' && this.repo.isWanted(bookId)),
     ]);
     if (!eligibility) throw new NotFoundException(`Book ${bookId} not found`);
 

@@ -46,16 +46,20 @@ export class EditionSyncSettingsService {
     const event = 'edition_sync.admin_settings_update';
     const startedAt = Date.now();
     this.logger.log(
-      `[${event}] [start] userId=${user.id} cronChanged=${payload.cronExpression !== undefined} runHoursChanged=${payload.runHours !== undefined} onFilesChangedChanged=${payload.onFilesChanged !== undefined} - admin settings update started`,
+      `[${event}] [start] userId=${user.id} enabledChanged=${payload.enabled !== undefined} cronChanged=${payload.cronExpression !== undefined} runHoursChanged=${payload.runHours !== undefined} onFilesChangedChanged=${payload.onFilesChanged !== undefined} - admin settings update started`,
     );
     try {
+      const previous = await this.repo.findAdminSettings();
       const row = await this.repo.updateAdminSettings(
-        { cronExpression: payload.cronExpression, runHours: payload.runHours, onFilesChanged: payload.onFilesChanged },
+        { enabled: payload.enabled, cronExpression: payload.cronExpression, runHours: payload.runHours, onFilesChanged: payload.onFilesChanged },
         user.id,
       );
-      const registered = this.scheduler.syncSchedule(row.cronExpression);
+      const enabledChanged = previous.enabled !== row.enabled;
+      if (enabledChanged) this.overlaySource.invalidate();
+      const registered = this.scheduler.syncSchedule(row.cronExpression, row.enabled);
+      if (enabledChanged && !row.enabled) await this.scheduler.stop();
       this.logger.log(
-        `[${event}] [end] userId=${user.id} durationMs=${Date.now() - startedAt} cron="${sanitizeLogValue(row.cronExpression ?? 'never')}" runHours=${row.runHours} onFilesChanged=${row.onFilesChanged} scheduleRegistered=${registered} - admin settings updated`,
+        `[${event}] [end] userId=${user.id} durationMs=${Date.now() - startedAt} enabled=${row.enabled} cron="${sanitizeLogValue(row.cronExpression ?? 'never')}" runHours=${row.runHours} onFilesChanged=${row.onFilesChanged} scheduleRegistered=${registered} - admin settings updated`,
       );
       return toAdminSettings(row);
     } catch (err) {
@@ -67,16 +71,22 @@ export class EditionSyncSettingsService {
     }
   }
 
-  private toSettings(user: RequestUser, row: EditionSyncUserSettingsRow | null): EditionSyncSettings {
-    const enabled = row?.enabled ?? false;
+  private async toSettings(user: RequestUser, row: EditionSyncUserSettingsRow | null): Promise<EditionSyncSettings> {
+    const enabled = row?.enabled ?? true;
     const bookSyncMode = row?.bookSyncMode ?? 'all_eligible';
-    const policy = resolveEditionSyncSettings({ hasPermission: this.permissions.userHas(user, Permission.EditionSync), enabled, bookSyncMode });
+    const policy = resolveEditionSyncSettings({
+      serverEnabled: await this.repo.isServerEnabled(),
+      hasPermission: this.permissions.userHas(user, Permission.EditionSync),
+      enabled,
+      bookSyncMode,
+    });
     return { enabled, effectiveEnabled: policy.effectiveEnabled, disabledReason: policy.disabledReason, bookSyncMode };
   }
 }
 
 function toAdminSettings(row: EditionSyncSettingsRow): EditionSyncAdminSettings {
   return {
+    enabled: row.enabled,
     onFilesChanged: row.onFilesChanged,
     cronExpression: row.cronExpression,
     runHours: row.runHours,

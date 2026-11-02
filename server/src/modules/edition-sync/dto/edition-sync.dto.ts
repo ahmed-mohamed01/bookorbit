@@ -1,5 +1,8 @@
-import { IsBoolean, IsIn, IsInt, IsOptional, Max, Min, ValidateIf } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, MaxLength, Max, Min, ValidateIf } from 'class-validator';
 import {
+  EDITION_SYNC_BOOK_LIST_FILTERS,
+  type EditionSyncBookListFilter,
   EDITION_SYNC_BOOK_SYNC_MODES,
   EDITION_SYNC_FILES_CHANGED_MODES,
   EDITION_SYNC_RUN_HOURS_MAX,
@@ -30,6 +33,10 @@ export class UpdateEditionSyncBookStateDto implements UpdateEditionSyncBookState
 
 export class UpdateEditionSyncAdminSettingsDto implements UpdateEditionSyncAdminSettingsPayload {
   @ValidateIf((_object, value) => value !== undefined)
+  @IsBoolean()
+  enabled?: boolean;
+
+  @ValidateIf((_object, value) => value !== undefined)
   @IsIn(EDITION_SYNC_FILES_CHANGED_MODES)
   onFilesChanged?: EditionSyncFilesChangedMode;
 
@@ -43,4 +50,23 @@ export class UpdateEditionSyncAdminSettingsDto implements UpdateEditionSyncAdmin
   @Min(EDITION_SYNC_RUN_HOURS_MIN)
   @Max(EDITION_SYNC_RUN_HOURS_MAX)
   runHours?: number;
+}
+
+export class EditionSyncBookListQueryDto {
+  @IsOptional()
+  @IsIn(EDITION_SYNC_BOOK_LIST_FILTERS)
+  filter: EditionSyncBookListFilter = 'all';
+
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @MaxLength(200)
+  q?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100000)
+  page: number = 1;
 }

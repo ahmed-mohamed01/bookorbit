@@ -25,7 +25,7 @@ import EditionSyncAdminSection from '../EditionSyncAdminSection.vue'
 
 const STATUS: EditionSyncAdminStatus = {
   worker: { configured: true, state: 'ok', version: '1', device: 'cpu', rebuildSupported: true },
-  schedule: { cronExpression: '0 2 * * *', runHours: 8, onFilesChanged: 'next_run', updatedAt: null, nextRunAt: null },
+  schedule: { enabled: true, cronExpression: '0 2 * * *', runHours: 8, onFilesChanged: 'next_run', updatedAt: null, nextRunAt: null },
   run: { active: false, trigger: null, startedAt: null, windowUntil: null, current: null },
   counts: { indexed: 1, queued: 2, failed: 0, stale: 0, unusedIndexes: 1, unusedBytes: 100 },
   backlogEstimate: { books: 0, hoursAtRecentRate: null },
@@ -35,7 +35,7 @@ describe('EditionSyncAdminSection', () => {
   beforeEach(() => {
     Object.values(mocks).forEach((mock) => mock.mockReset())
     mocks.fetchStatus.mockResolvedValue(STATUS)
-    mocks.fetchSettings.mockResolvedValue({ cronExpression: '0 2 * * *', runHours: 8, onFilesChanged: 'next_run', updatedAt: null })
+    mocks.fetchSettings.mockResolvedValue({ enabled: true, cronExpression: '0 2 * * *', runHours: 8, onFilesChanged: 'next_run', updatedAt: null })
   })
 
   it('does not flash the load failure before the first load settles', async () => {
@@ -58,8 +58,9 @@ describe('EditionSyncAdminSection', () => {
   })
 
   it('renders the saved files-changed mode and saves a change in the PATCH payload', async () => {
-    mocks.fetchSettings.mockResolvedValue({ cronExpression: '0 2 * * *', runHours: 8, onFilesChanged: 'immediate', updatedAt: null })
+    mocks.fetchSettings.mockResolvedValue({ enabled: true, cronExpression: '0 2 * * *', runHours: 8, onFilesChanged: 'immediate', updatedAt: null })
     mocks.update.mockImplementation(async (payload) => ({
+      enabled: true,
       cronExpression: '0 2 * * *',
       runHours: 8,
       onFilesChanged: 'immediate',
@@ -78,7 +79,39 @@ describe('EditionSyncAdminSection', () => {
 
     await save.trigger('click')
     await flushPromises()
-    expect(mocks.update).toHaveBeenCalledWith({ cronExpression: '0 2 * * *', runHours: 8, onFilesChanged: 'next_run' })
+    expect(mocks.update).toHaveBeenCalledWith({ enabled: true, cronExpression: '0 2 * * *', runHours: 8, onFilesChanged: 'next_run' })
+  })
+
+  it('leads with the server switch, which saves with the other settings', async () => {
+    mocks.fetchSettings.mockResolvedValue({ enabled: false, cronExpression: '0 2 * * *', runHours: 8, onFilesChanged: 'next_run', updatedAt: null })
+    mocks.update.mockImplementation(async (payload) => ({
+      enabled: false,
+      cronExpression: '0 2 * * *',
+      runHours: 8,
+      onFilesChanged: 'next_run',
+      updatedAt: null,
+      ...payload,
+    }))
+    const wrapper = mount(EditionSyncAdminSection)
+    await flushPromises()
+
+    const settingsCard = wrapper.findAll('section').find((section) => section.find('[data-testid="edition-sync-admin-enabled"]').exists())!
+    expect(settingsCard.text().startsWith('Edition sync on this server')).toBe(true)
+    expect(settingsCard.text()).toContain("Off: no indexing runs and users don't see the option.")
+    const toggle = wrapper.get('[data-testid="edition-sync-admin-enabled"]')
+    expect(toggle.attributes('aria-checked')).toBe('false')
+
+    const save = wrapper.findAll('button').find((button) => button.text() === 'Save')!
+    expect(save.attributes('disabled')).toBeDefined()
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-checked')).toBe('true')
+    expect(save.attributes('disabled')).toBeUndefined()
+
+    await save.trigger('click')
+    await flushPromises()
+    expect(mocks.update).toHaveBeenCalledWith({ enabled: true, cronExpression: '0 2 * * *', runHours: 8, onFilesChanged: 'next_run' })
+    expect(mocks.toastSuccess).toHaveBeenCalledWith('Settings saved.')
+    expect(save.attributes('disabled')).toBeDefined()
   })
 
   it('uses the singular in the cleared toast for one file', async () => {

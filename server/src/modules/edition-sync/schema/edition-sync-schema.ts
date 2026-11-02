@@ -3,7 +3,7 @@
 // Embedded as a string because the SWC watch builder does not reliably copy .sql assets.
 export const EDITION_SYNC_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS "edition_sync_user_settings" (
 	"user_id" integer PRIMARY KEY NOT NULL,
-	"enabled" boolean DEFAULT false NOT NULL,
+	"enabled" boolean DEFAULT true NOT NULL,
 	"book_sync_mode" varchar(20) DEFAULT 'all_eligible' NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "edition_sync_user_settings_mode_chk" CHECK ("book_sync_mode" in ('all_eligible', 'selected_only'))
@@ -85,6 +85,7 @@ CREATE INDEX IF NOT EXISTS "edition_sync_book_index_worker_job_idx" ON "edition_
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "edition_sync_settings" (
 	"id" smallint PRIMARY KEY NOT NULL,
+	"enabled" boolean DEFAULT false NOT NULL,
 	"cron_expression" varchar(100),
 	"run_hours" smallint DEFAULT 8 NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -168,4 +169,8 @@ END $$;
 CREATE OR REPLACE TRIGGER edition_sync_book_files_changed
 AFTER INSERT OR UPDATE OF book_id, role, size_bytes, mtime, file_hash, absolute_path OR DELETE ON book_files
 FOR EACH ROW EXECUTE FUNCTION edition_sync_book_files_changed();
+--> statement-breakpoint
+ALTER TABLE "edition_sync_settings" ADD COLUMN IF NOT EXISTS "enabled" boolean DEFAULT false NOT NULL;
+--> statement-breakpoint
+ALTER TABLE "edition_sync_user_settings" ALTER COLUMN "enabled" SET DEFAULT true;
 `;

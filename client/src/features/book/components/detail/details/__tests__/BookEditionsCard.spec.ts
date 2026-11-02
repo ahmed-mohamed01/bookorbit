@@ -160,11 +160,17 @@ describe('BookEditionsCard edition sync', () => {
     expect(wrapper.find('[data-test="toggle"]').exists()).toBe(true)
   })
 
-  it('moves the total size beside the files on disk count and renders the status slot', () => {
-    const wrapper = mountCard({ syncCount: 2 }, { status: '<p data-test="status">Queued #1</p>' })
+  it('moves the total size beside the files on disk count', () => {
+    const wrapper = mountCard({ syncCount: 2 })
 
     expect(wrapper.text()).toMatch(/Files on disk\s*2 · /)
-    expect(wrapper.get('[data-test="status"]').text()).toBe('Queued #1')
     expect(wrapper.get('h3').element.parentElement?.textContent).not.toContain('·')
+  })
+
+  it('lists extra rows after the editions', () => {
+    const wrapper = mountCard({}, { 'extra-rows': '<li data-test="extra">Read-aloud</li>' })
+
+    const items = wrapper.findAll('ul > li')
+    expect(items.at(-1)?.attributes('data-test')).toBe('extra')
   })
 })

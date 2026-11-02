@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { formatDate as formatLocaleDate } from '@/i18n/formatters'
 import { formatBytes as formatFileSize } from '@/lib/formatting'
@@ -34,7 +34,15 @@ import { getProviderColor, providerShortLabel } from '@/lib/provider-colors'
 import { useCoverVersions } from '@/features/book/composables/useCoverVersions'
 import { useBookCoverAspectRatio } from '@/features/book/composables/useBookCoverAspectRatio'
 import { FORMAT_TO_GROUP, getPrimaryBookFile, READER_OPENABLE_FORMATS, isComicFormat } from '@bookorbit/types'
-import type { BookDetail, BookKoboState, CoverMedium, CustomMetadataBookValue, ReadStatus, UserBookStatus } from '@bookorbit/types'
+import type {
+  BookDetail,
+  BookKoboState,
+  CoverMedium,
+  CreateReadAloudJobRequest,
+  CustomMetadataBookValue,
+  ReadStatus,
+  UserBookStatus,
+} from '@bookorbit/types'
 import { STATUS_OPTIONS, STATUS_ICONS, STATUS_COLORS, useBookStatus } from '@/features/book/composables/useBookStatus'
 import BookDownloadButton from '@/features/book/components/BookDownloadButton.vue'
 import DiscoverRow from '@/features/book/components/detail/DiscoverRow.vue'
@@ -52,7 +60,6 @@ import { useDeleteBook } from '@/features/book/composables/useDeleteBook'
 import { useMetadataLocks } from '@/features/book/composables/useMetadataLocks'
 import { usePersonalNote, PERSONAL_NOTE_MAX_LENGTH } from '@/features/book/composables/usePersonalNote'
 import { useResetReadingState } from '@/features/book/composables/useResetReadingState'
-import LinkBookControl from '@/features/book/components/detail/tabs/LinkBookControl.vue'
 import DeleteBookDialog from '@/features/book/components/DeleteBookDialog.vue'
 import MoveToLibrarySheet from '@/features/book/components/MoveToLibrarySheet.vue'
 import ResetReadingStateDialog from '@/features/book/components/ResetReadingStateDialog.vue'
@@ -72,11 +79,15 @@ import { useDisplaySettings } from '@/composables/useDisplaySettings'
 import HardcoverBookSyncGridItem from '@/features/hardcover/components/HardcoverBookSyncGridItem.vue'
 import StorygraphBookSyncGridItem from '@/features/storygraph/components/StorygraphBookSyncGridItem.vue'
 import EditionSyncCardHeader from '@/features/edition-sync/components/EditionSyncCardHeader.vue'
-import EditionSyncStatusRow from '@/features/edition-sync/components/EditionSyncStatusRow.vue'
+import EditionSyncHeaderStatus from '@/features/edition-sync/components/EditionSyncHeaderStatus.vue'
 import { useEditionSyncBookState } from '@/features/edition-sync/composables/useEditionSyncBookState'
 import { useEditionSyncToggle } from '@/features/edition-sync/composables/useEditionSyncToggle'
 import { toast } from 'vue-sonner'
 import BookEditionsCard, { type EditionProgress } from '@/features/book/components/detail/details/BookEditionsCard.vue'
+import AudiobookshelfSyncRow from '@/features/book/components/detail/details/AudiobookshelfSyncRow.vue'
+import EditionsReadAloudRow from '@/features/book/components/detail/details/EditionsReadAloudRow.vue'
+import { useReadAloudCreate } from '@/features/book/composables/useReadAloudCreate'
+import ReadAloudDialog from '@/features/read-aloud/components/ReadAloudDialog.vue'
 import BookReadingActivityCard from '@/features/book/components/detail/details/BookReadingActivityCard.vue'
 import BookMissingFormatRequest from '@/features/book-requests/components/BookMissingFormatRequest.vue'
 import { useBookReadingLog } from '@/features/book/composables/useBookReadingLog'
@@ -391,13 +402,13 @@ const hasMultipleFiles = computed(() => openableFiles.value.length > 1)
 const editionSyncBookId = computed(() => props.book.id)
 const editionSyncFilesKey = computed(() => props.book.files.map((file) => file.id).join(','))
 const editionSync = useEditionSyncBookState(editionSyncBookId, () => editionSyncFilesKey.value)
-const timingIndexReady = computed(() => editionSync.state.value?.syncEnabled === true && editionSync.state.value.index.status === 'ready')
 const editionSyncToggle = useEditionSyncToggle({
   book: () => props.book,
   editionSync,
   onSaved: (updated) => emit('saved', updated),
 })
 const editionSyncCount = editionSyncToggle.count
+const editionSyncStatusId = useId()
 
 function handleEditionSyncToggle(value: boolean) {
   void editionSyncToggle.toggle(value)
@@ -420,8 +431,37 @@ function handleEditionSyncRetry() {
 const readAloudInviteBook = computed(() => props.book)
 const { invite: readAloudInvite } = useReadAloudInvite(readAloudInviteBook)
 
-function handlePositionSyncSaved(updated: BookDetail) {
-  emit('saved', updated)
+const readAloudCreate = useReadAloudCreate({
+  book: () => props.book,
+  onBookChanged: (updated) => emit('saved', updated),
+})
+
+function handleReadAloudCreate() {
+  void readAloudCreate.create()
+}
+
+function handleReadAloudOptions() {
+  readAloudCreate.openDialog()
+}
+
+function handleReadAloudCancel() {
+  readAloudCreate.cancel()
+}
+
+function handleReadAloudRetry() {
+  readAloudCreate.retry()
+}
+
+function handleReadAloudReview() {
+  readAloudCreate.review()
+}
+
+function handleCloseReadAloudDialog() {
+  readAloudCreate.closeDialog()
+}
+
+function handleCreateReadAloudFromDialog(input: CreateReadAloudJobRequest) {
+  void readAloudCreate.createFromDialog(input)
 }
 
 function handleCreateReadAloud() {
@@ -1429,13 +1469,6 @@ watch(
               </TooltipTrigger>
               <TooltipContent>{{ t('book.detail.details.peek') }}</TooltipContent>
             </Tooltip>
-            <LinkBookControl
-              :book="book"
-              :progress="editionProgress"
-              :timing-index="timingIndexReady"
-              trigger-class="flex items-center justify-center h-9 w-12 shrink-0 rounded-md border border-input bg-background hover:bg-muted transition-colors"
-              @saved="handlePositionSyncSaved"
-            />
           </div>
 
           <div class="flex gap-2">
@@ -2047,6 +2080,7 @@ watch(
           </div>
           <HardcoverBookSyncGridItem :book-id="book.id" />
           <StorygraphBookSyncGridItem :book-id="book.id" />
+          <AudiobookshelfSyncRow :book="book" />
           <div class="flex items-baseline justify-between gap-3 border-b border-border py-[6px] last:border-b-0">
             <dt class="shrink-0 text-[11px] font-medium text-muted-foreground">{{ t('book.detail.details.dateStarted') }}</dt>
             <template v-if="isEditingReadingDate('startedAt')">
@@ -2144,18 +2178,33 @@ watch(
         @reset-progress="handleEditionReset"
       >
         <template v-if="editionSyncCount !== null" #header-action>
-          <EditionSyncCardHeader
-            :model-value="editionSyncToggle.checked.value"
-            :disabled="editionSyncToggle.disabled.value"
-            @update:model-value="handleEditionSyncToggle"
-          />
+          <div class="flex min-w-0 items-center gap-2">
+            <EditionSyncHeaderStatus
+              :book="book"
+              :kind="editionSyncToggle.kind.value"
+              :state="editionSync.state.value"
+              :checked="editionSyncToggle.checked.value"
+              :acting="editionSync.acting.value"
+              :described-by-id="editionSyncStatusId"
+              @run="handleEditionSyncRun"
+              @retry="handleEditionSyncRetry"
+            />
+            <EditionSyncCardHeader
+              :model-value="editionSyncToggle.checked.value"
+              :disabled="editionSyncToggle.disabled.value"
+              :aria-describedby="editionSyncStatusId"
+              @update:model-value="handleEditionSyncToggle"
+            />
+          </div>
         </template>
-        <template v-if="editionSyncToggle.kind.value === 'index' && editionSync.state.value" #status>
-          <EditionSyncStatusRow
-            :state="editionSync.state.value"
-            :busy="editionSync.acting.value"
-            @run="handleEditionSyncRun"
-            @retry="handleEditionSyncRetry"
+        <template #extra-rows>
+          <EditionsReadAloudRow
+            :state="readAloudCreate.slot.value"
+            @create="handleReadAloudCreate"
+            @options="handleReadAloudOptions"
+            @cancel="handleReadAloudCancel"
+            @retry="handleReadAloudRetry"
+            @review="handleReadAloudReview"
           />
         </template>
         <template #missing>
@@ -2228,6 +2277,18 @@ watch(
   />
 
   <BookCoverLightbox :open="coverLightboxOpen" :book="book" :medium="coverLightboxMedium" @update:open="handleCoverLightboxOpenChange" />
+
+  <ReadAloudDialog
+    v-if="readAloudCreate.dialog.value.capability"
+    :open="readAloudCreate.dialog.value.open"
+    :capability="readAloudCreate.dialog.value.capability"
+    :default-language="readAloudCreate.dialog.value.defaultLanguage"
+    :initial="null"
+    :busy="readAloudCreate.dialog.value.busy"
+    :error="readAloudCreate.dialog.value.error"
+    @close="handleCloseReadAloudDialog"
+    @create="handleCreateReadAloudFromDialog"
+  />
 </template>
 
 <style scoped>

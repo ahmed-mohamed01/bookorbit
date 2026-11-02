@@ -7,13 +7,13 @@ import {
   fetchAudiobookshelfSyncLive,
 } from '@/features/audiobookshelf/api/audiobookshelf.api'
 
-// A live check that fails still has to leave the sync chain with a way to act, which the unreachable state offers.
+// A live check that fails still has to leave the Audiobookshelf row with a way to act, which the unreachable state offers.
 const UNREACHABLE: AudiobookshelfBookSyncLive = { status: 'unreachable', progress: null, local: null, divergedReason: null }
 
 /**
  * The Audiobookshelf item an audiobook is matched with, or null when there is none to show: no
  * permission or no match. A paused match is returned too (`syncing` false, with its reason), so the
- * panel can offer to resume it. The link comes from BookOrbit alone so it renders with the other
+ * row can offer to resume it. The link comes from BookOrbit alone so it renders with the other
  * editions; the live status follows from Audiobookshelf itself, and only for a match that syncs.
  */
 export function useAudiobookshelfSyncLink(audioBookId: Ref<number | null>) {

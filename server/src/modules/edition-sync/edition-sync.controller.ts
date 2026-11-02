@@ -1,17 +1,19 @@
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
 import { Permission } from '@bookorbit/types';
 import type {
   EditionSyncAdminSettings,
   EditionSyncAdminStatus,
   EditionSyncBookState,
+  EditionSyncBookListResponse,
   EditionSyncClearUnusedResult,
   EditionSyncSettings,
 } from '@bookorbit/types';
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Patch, Post } from '@nestjs/common';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import type { RequestUser } from '../../common/types/request-user';
-import { UpdateEditionSyncAdminSettingsDto, UpdateEditionSyncBookStateDto, UpsertEditionSyncSettingsDto } from './dto';
+import { EditionSyncBookListQueryDto, UpdateEditionSyncAdminSettingsDto, UpdateEditionSyncBookStateDto, UpsertEditionSyncSettingsDto } from './dto';
+import { EditionSyncBookListService } from './edition-sync-book-list.service';
 import { EditionSyncBookStateService } from './edition-sync-book-state.service';
 import { EditionSyncQueueService } from './edition-sync-queue.service';
 import { EditionSyncSchedulerService } from './edition-sync-scheduler.service';
@@ -27,6 +29,7 @@ export class EditionSyncController {
     private readonly bookState: EditionSyncBookStateService,
     private readonly scheduler: EditionSyncSchedulerService,
     private readonly queue: EditionSyncQueueService,
+    private readonly bookList: EditionSyncBookListService,
   ) {}
 
   @Get('settings')
@@ -37,6 +40,11 @@ export class EditionSyncController {
   @Patch('settings')
   upsertSettings(@CurrentUser() user: RequestUser, @Body() dto: UpsertEditionSyncSettingsDto): Promise<EditionSyncSettings> {
     return this.settings.upsertSettings(user, dto);
+  }
+
+  @Get('books')
+  listBooks(@CurrentUser() user: RequestUser, @Query() query: EditionSyncBookListQueryDto): Promise<EditionSyncBookListResponse> {
+    return this.bookList.list(user, query);
   }
 
   @Get('books/:bookId/state')

@@ -30,3 +30,5 @@ export const EDITION_SYNC_MAX_ATTEMPTS = 4;
 export const EDITION_SYNC_RESOLVER_CACHE_MS = 30_000;
 /** Rows handled per transaction by Clear unused. */
 export const EDITION_SYNC_CLEAR_BATCH_SIZE = 200;
+
+export const EDITION_SYNC_SERVER_DISABLED_MESSAGE = 'Edition sync is turned off on this server';

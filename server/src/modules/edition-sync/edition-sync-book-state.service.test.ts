@@ -2,6 +2,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { RequestUser } from '../../common/types/request-user';
+import { EDITION_SYNC_SERVER_DISABLED_MESSAGE } from './edition-sync.constants';
 import { EditionSyncBookStateService } from './edition-sync-book-state.service';
 
 const user = { id: 7, isSuperuser: false, permissions: ['edition_sync'] } as unknown as RequestUser;
@@ -9,6 +10,7 @@ const user = { id: 7, isSuperuser: false, permissions: ['edition_sync'] } as unk
 function setup(
   options: {
     effectiveEnabled?: boolean;
+    serverEnabled?: boolean;
     mode?: 'all_eligible' | 'selected_only';
     row?: Record<string, unknown> | null;
     eligible?: boolean;
@@ -37,7 +39,7 @@ function setup(
     getSettings: vi.fn().mockResolvedValue({
       enabled: effectiveEnabled,
       effectiveEnabled,
-      disabledReason: effectiveEnabled ? null : 'user_disabled',
+      disabledReason: options.serverEnabled === false ? 'server_disabled' : effectiveEnabled ? null : 'user_disabled',
       bookSyncMode: options.mode ?? 'all_eligible',
     }),
   };
@@ -210,4 +212,19 @@ describe('EditionSyncBookStateService run now and retry', () => {
     const { service } = setup();
     await expect(service.retry(user, 10)).rejects.toBeInstanceOf(BadRequestException);
   });
+});
+
+it.each(['runNow', 'retry'] as const)('rejects %s and does not pin while the server is disabled', async (method) => {
+  const { service, repo } = setup({ effectiveEnabled: false, serverEnabled: false, row: { status: method === 'retry' ? 'failed' : 'stale' } });
+  await expect(service[method](user, 10)).rejects.toThrow(new BadRequestException(EDITION_SYNC_SERVER_DISABLED_MESSAGE));
+  expect(repo.pinBook).not.toHaveBeenCalled();
+  expect(repo.isWanted).not.toHaveBeenCalled();
+  expect(repo.findQueuePosition).not.toHaveBeenCalled();
+});
+
+it('does not pin a toggle-on book while the server is disabled', async () => {
+  const { service, repo, scheduler } = setup({ effectiveEnabled: false, serverEnabled: false });
+  await expect(service.setSyncEnabled(user, 10, true)).resolves.toMatchObject({ syncEnabled: false, effectiveReason: 'server_disabled' });
+  expect(repo.pinBook).not.toHaveBeenCalled();
+  expect(scheduler.poke).not.toHaveBeenCalled();
 });

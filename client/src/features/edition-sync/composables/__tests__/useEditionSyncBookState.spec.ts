@@ -21,7 +21,7 @@ vi.mock('../../api/edition-sync.api', () => ({
   retryEditionSyncBook: mocks.retry,
 }))
 
-import { EDITION_SYNC_POLL_MS, EDITION_SYNC_QUEUED_POLL_MS, useEditionSyncBookState } from '../useEditionSyncBookState'
+import { EDITION_SYNC_POLL_MS, EDITION_SYNC_QUEUED_POLL_MS, EDITION_SYNC_VIEW_REFRESH_MS, useEditionSyncBookState } from '../useEditionSyncBookState'
 
 function makeState(status: EditionSyncBookState['index']['status'] = 'ready', overrides: Partial<EditionSyncBookState> = {}): EditionSyncBookState {
   return {
@@ -106,6 +106,79 @@ describe('useEditionSyncBookState', () => {
     expect(api.visible.value).toBe(false)
     expect(mocks.fetchState).not.toHaveBeenCalled()
     scope.stop()
+  })
+
+  it('stays hidden when an admin has turned edition sync off for the server', async () => {
+    mocks.fetchSettings.mockResolvedValue({ ...SETTINGS, effectiveEnabled: false, disabledReason: 'server_disabled' })
+    const { scope, api } = setup()
+    await settle()
+
+    expect(api.visible.value).toBe(false)
+    expect(mocks.fetchState).not.toHaveBeenCalled()
+    scope.stop()
+  })
+
+  describe('refresh when the page is viewed again', () => {
+    let visibility: DocumentVisibilityState = 'visible'
+    beforeEach(() => {
+      visibility = 'visible'
+      vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility)
+    })
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    function showPage(): void {
+      visibility = 'visible'
+      document.dispatchEvent(new Event('visibilitychange'))
+    }
+
+    it('refetches a ready state when the page becomes visible after the throttle window', async () => {
+      const { scope, api } = setup()
+      await settle()
+      expect(mocks.fetchState).toHaveBeenCalledTimes(1)
+      mocks.fetchState.mockResolvedValue(makeState('stale'))
+
+      vi.setSystemTime(Date.now() + EDITION_SYNC_VIEW_REFRESH_MS + 1)
+      showPage()
+      await settle()
+
+      expect(mocks.fetchState).toHaveBeenCalledTimes(2)
+      expect(api.state.value?.index.status).toBe('stale')
+      scope.stop()
+    })
+
+    it('makes at most one request per throttle window', async () => {
+      const { scope } = setup()
+      await settle()
+      showPage()
+      vi.setSystemTime(Date.now() + EDITION_SYNC_VIEW_REFRESH_MS - 1)
+      showPage()
+      await settle()
+      expect(mocks.fetchState).toHaveBeenCalledTimes(1)
+
+      vi.setSystemTime(Date.now() + 2)
+      showPage()
+      showPage()
+      await settle()
+      expect(mocks.fetchState).toHaveBeenCalledTimes(2)
+      scope.stop()
+    })
+
+    it('ignores the page being hidden and stops listening once disposed', async () => {
+      const { scope } = setup()
+      await settle()
+      vi.setSystemTime(Date.now() + EDITION_SYNC_VIEW_REFRESH_MS + 1)
+      visibility = 'hidden'
+      document.dispatchEvent(new Event('visibilitychange'))
+      await settle()
+      expect(mocks.fetchState).toHaveBeenCalledTimes(1)
+
+      scope.stop()
+      showPage()
+      await settle()
+      expect(mocks.fetchState).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('loads the book state once the settings allow it', async () => {
@@ -256,6 +329,23 @@ describe('useEditionSyncBookState', () => {
     await settle()
     await vi.advanceTimersByTimeAsync(EDITION_SYNC_POLL_MS)
     expect(mocks.fetchState).toHaveBeenCalledTimes(2)
+    scope.stop()
+  })
+
+  it('clears loading when a refresh starts while the first state load is still in flight', async () => {
+    let resolveInitial: (value: EditionSyncBookState) => void = () => undefined
+    mocks.fetchState.mockImplementationOnce(() => new Promise<EditionSyncBookState>((resolve) => (resolveInitial = resolve)))
+    const { scope, api } = setup()
+    await settle()
+    expect(api.busy.value).toBe(true)
+
+    mocks.fetchState.mockResolvedValueOnce(makeState('ready', { syncEnabled: true }))
+    await api.refresh()
+    resolveInitial(makeState('ready', { syncEnabled: false }))
+    await settle()
+
+    expect(api.busy.value).toBe(false)
+    expect(api.syncEnabled.value).toBe(true)
     scope.stop()
   })
 

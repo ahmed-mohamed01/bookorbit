@@ -29,7 +29,7 @@ import {
 
 export const editionSyncUserSettings = pgTable('edition_sync_user_settings', {
   userId: integer('user_id').primaryKey(),
-  enabled: boolean('enabled').notNull().default(false),
+  enabled: boolean('enabled').notNull().default(true),
   bookSyncMode: varchar('book_sync_mode', { length: 20 }).$type<EditionSyncBookSyncMode>().notNull().default('all_eligible'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
@@ -77,6 +77,7 @@ export const editionSyncBookIndex = pgTable('edition_sync_book_index', {
 
 export const editionSyncSettings = pgTable('edition_sync_settings', {
   id: smallint('id').primaryKey(),
+  enabled: boolean('enabled').notNull().default(false),
   cronExpression: varchar('cron_expression', { length: 100 }),
   onFilesChanged: varchar('on_files_changed', { length: 10 }).$type<EditionSyncFilesChangedMode>().notNull().default('next_run'),
   runHours: smallint('run_hours').notNull().default(8),

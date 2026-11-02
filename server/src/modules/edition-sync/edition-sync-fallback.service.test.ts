@@ -12,6 +12,7 @@ type Options = {
 
 function setup(options: Options = {}) {
   const repo = {
+    isServerEnabled: vi.fn().mockResolvedValue(true),
     findIndexRow: vi.fn().mockResolvedValue(options.row === undefined ? { status: 'failed' } : options.row),
     userHasEditionSyncPermission: vi.fn().mockResolvedValue(options.permission ?? true),
     findResolverInputs: vi.fn().mockResolvedValue({
@@ -41,12 +42,10 @@ describe('EditionSyncFallbackService.allowsWhisperFallback', () => {
     expect(repo.findResolverInputs).not.toHaveBeenCalled();
   });
 
-  it('is false when the user disabled sync or never turned it on', async () => {
-    for (const settings of [{ enabled: false, bookSyncMode: 'all_eligible' as const }, null]) {
-      const { service, repo } = setup({ settings });
-      await expect(service.allowsWhisperFallback(7, 10)).resolves.toBe(false);
-      expect(repo.findEligibility).not.toHaveBeenCalled();
-    }
+  it('is false when the user disabled sync', async () => {
+    const { service, repo } = setup({ settings: { enabled: false, bookSyncMode: 'all_eligible' } });
+    await expect(service.allowsWhisperFallback(7, 10)).resolves.toBe(false);
+    expect(repo.findEligibility).not.toHaveBeenCalled();
   });
 
   it('is false when the book is excluded', async () => {
@@ -75,4 +74,14 @@ describe('EditionSyncFallbackService.allowsWhisperFallback', () => {
     expect(repo.findResolverInputs).toHaveBeenCalledWith(7, 10);
     expect(repo.findEligibility).toHaveBeenCalledWith(10);
   });
+});
+
+it('allows an eligible failed book for a user with no settings row', async () => {
+  await expect(setup({ settings: null }).service.allowsWhisperFallback(7, 10)).resolves.toBe(true);
+});
+it('suppresses Whisper fallback when the server is disabled', async () => {
+  const { service, repo } = setup();
+  repo.isServerEnabled.mockResolvedValue(false);
+  await expect(service.allowsWhisperFallback(7, 10)).resolves.toBe(false);
+  expect(repo.findEligibility).not.toHaveBeenCalled();
 });

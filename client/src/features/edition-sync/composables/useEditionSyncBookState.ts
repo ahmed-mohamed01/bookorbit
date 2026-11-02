@@ -7,6 +7,7 @@ import { useEditionSyncSettings } from './useEditionSyncSettings'
 
 export const EDITION_SYNC_POLL_MS = 10_000
 export const EDITION_SYNC_QUEUED_POLL_MS = 60_000
+export const EDITION_SYNC_VIEW_REFRESH_MS = 30_000
 
 function messageOf(err: unknown, fallbackKey: string): string {
   return err instanceof Error && err.message ? err.message : i18n.global.t(fallbackKey)
@@ -24,7 +25,9 @@ export function useEditionSyncBookState(bookId: Ref<number>, filesKey?: () => st
   const error = ref<string | null>(null)
   let settingsRequestId = 0
   let stateRequestId = 0
+  let loadRequestId = 0
   let pollTimer: ReturnType<typeof setTimeout> | null = null
+  let lastFetchAt = 0
   let disposed = false
 
   const allowed = computed(() => hasPermission(Permission.EditionSync))
@@ -48,6 +51,7 @@ export function useEditionSyncBookState(bookId: Ref<number>, filesKey?: () => st
   async function refresh(): Promise<void> {
     const targetBookId = bookId.value
     const requestId = ++stateRequestId
+    lastFetchAt = Date.now()
     try {
       const next = await fetchEditionSyncBookState(targetBookId)
       if (!disposed && requestId === stateRequestId && bookId.value === targetBookId) state.value = next
@@ -72,9 +76,17 @@ export function useEditionSyncBookState(bookId: Ref<number>, filesKey?: () => st
       if (visible.value) void refresh()
     })
   }
+  // A ready index can turn stale or failed server-side; coming back to the page picks that up.
+  function refreshOnView(): void {
+    if (document.visibilityState !== 'visible' || !visible.value || !state.value) return
+    if (Date.now() - lastFetchAt < EDITION_SYNC_VIEW_REFRESH_MS) return
+    void refresh()
+  }
+  document.addEventListener('visibilitychange', refreshOnView)
   onScopeDispose(() => {
     disposed = true
     stopPolling()
+    document.removeEventListener('visibilitychange', refreshOnView)
   })
 
   watch(
@@ -93,6 +105,7 @@ export function useEditionSyncBookState(bookId: Ref<number>, filesKey?: () => st
     [bookId, visible],
     async ([currentBookId, isVisible]) => {
       const requestId = ++stateRequestId
+      const loadId = ++loadRequestId
       state.value = null
       error.value = null
       if (!isVisible) {
@@ -100,13 +113,14 @@ export function useEditionSyncBookState(bookId: Ref<number>, filesKey?: () => st
         return
       }
       loading.value = true
+      lastFetchAt = Date.now()
       try {
         const next = await fetchEditionSyncBookState(currentBookId)
         if (requestId === stateRequestId) state.value = next
       } catch {
         if (requestId === stateRequestId) error.value = i18n.global.t('editionSync.errors.loadFailed')
       } finally {
-        if (requestId === stateRequestId) loading.value = false
+        if (loadId === loadRequestId) loading.value = false
       }
     },
     { immediate: true },

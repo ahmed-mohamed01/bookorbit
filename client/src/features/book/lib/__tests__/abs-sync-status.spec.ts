@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AudiobookshelfBookSyncLive } from '@bookorbit/types'
 import { AudiobookshelfReconcileError } from '@/features/audiobookshelf/api/audiobookshelf.api'
-import { absConnectorHint, displayPercentage, isAbsReconcileAction, reconcileFailureKey } from '../abs-sync-status'
+import { absStatusHint, displayPercentage, reconcileFailureKey } from '../abs-sync-status'
 
 const t = (key: string, params?: Record<string, unknown>) => (params ? `${key}${JSON.stringify(params)}` : key)
 const A = 'book.detail.editionLink.abs.'
@@ -26,23 +26,14 @@ describe('abs-sync-status', () => {
       local: { percentage: 30, capturedAt: 'x' },
       divergedReason: 'stale',
     })
-    expect(absConnectorHint('absDiverged', diverged, null, t)).toBe(`${A}status.divergedHint{"abs":52,"local":30} ${A}status.divergedReason.stale`)
-    expect(absConnectorHint('absDiverged', live({}), null, t)).toBeNull()
-    expect(absConnectorHint('absReceiving', null, null, t)).toBeNull()
-    expect(absConnectorHint('absReceiving', live({ status: 'sending' }), null, t)).toBeNull()
-    expect(absConnectorHint('absReceiving', live({ status: 'receiving' }), null, t)).toBe(`${A}status.receivingHint`)
+    expect(absStatusHint(diverged, t)).toBe(`${A}status.divergedHint{"abs":52,"local":30} ${A}status.divergedReason.stale`)
+    expect(absStatusHint(live({}), t)).toBeNull()
+    expect(absStatusHint(null, t)).toBeNull()
+    expect(absStatusHint(live({ status: 'sending' }), t)).toBeNull()
+    expect(absStatusHint(live({ status: 'receiving' }), t)).toBe(`${A}status.receivingHint`)
   })
 
-  it("prefers the live hint only where it carries more than the chain's note", () => {
-    expect(absConnectorHint('absUnreachable', live({ status: 'unreachable' }), 'note', t)).toBe('note')
-    expect(absConnectorHint('absReceiving', live({ status: 'receiving' }), 'note', t)).toBe(`${A}status.receivingHint`)
-    expect(absConnectorHint('absLinked', live({}), null, t)).toBeNull()
-  })
-
-  it('tells reconcile actions apart and names each failure', () => {
-    expect(isAbsReconcileAction('absPush')).toBe(true)
-    expect(isAbsReconcileAction('retryAbs')).toBe(true)
-    expect(isAbsReconcileAction('resumeAbs')).toBe(false)
+  it('names each reconcile failure', () => {
     expect(reconcileFailureKey(new AudiobookshelfReconcileError('x', 409))).toBe(`${A}reconcile.busy`)
     expect(reconcileFailureKey(new AudiobookshelfReconcileError('x', 502))).toBe(`${A}reconcile.unreachable`)
     expect(reconcileFailureKey(new Error('x'))).toBe(`${A}reconcile.failed`)

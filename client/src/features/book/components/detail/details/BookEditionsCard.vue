@@ -82,10 +82,10 @@ function rowMeasure(row: BookFormatEntry): string {
 <template>
   <section class="rounded-xl border border-border bg-card px-3.5 py-3" :aria-label="t('book.detail.details.editions')">
     <div v-if="syncCount !== null" class="flex items-center gap-2">
-      <h3 class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <h3 class="shrink-0 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
         {{ t('editionSync.card.title', { count: syncCount }) }}
       </h3>
-      <div class="ml-auto flex shrink-0 items-center">
+      <div class="ml-auto flex min-w-0 items-center">
         <slot name="header-action" />
       </div>
     </div>
@@ -135,13 +135,13 @@ function rowMeasure(row: BookFormatEntry): string {
           <RotateCcw class="size-3" />
         </button>
       </li>
+      <!-- An edition the book could still gain, such as a read-aloud another feature can create. -->
+      <slot name="extra-rows" />
     </ul>
 
     <p v-if="hiddenCount > 0" class="mt-2 text-[11px] text-muted-foreground">
       {{ t('book.detail.details.moreFormats', { count: hiddenCount }) }}
     </p>
-
-    <slot name="status" />
 
     <!-- What this book could still have: a format another feature can offer to fetch. -->
     <slot name="missing" />

@@ -18,8 +18,9 @@ export class EditionSyncFallbackService {
     if (!(await this.repo.userHasEditionSyncPermission(userId))) return false;
     const inputs = await this.repo.findResolverInputs(userId, bookId);
     const settings = resolveEditionSyncSettings({
+      serverEnabled: await this.repo.isServerEnabled(),
       hasPermission: true,
-      enabled: inputs.settings?.enabled ?? false,
+      enabled: inputs.settings?.enabled ?? true,
       bookSyncMode: inputs.settings?.bookSyncMode ?? 'all_eligible',
     });
     if (!settings.effectiveEnabled) return false;

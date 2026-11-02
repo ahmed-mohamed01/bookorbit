@@ -3,13 +3,20 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { READ_ALONG_FORMAT_PRIORITY, type BookFileRef } from '@bookorbit/types'
 
 import { i18n } from '@/i18n'
-import { bookFormatEntries, formatKeyCode, formatKeyName, rankedContentFiles } from './book-formats'
+import { bookFormatEntries, formatKeyCode, formatKeyName, isPlainEpubEntry, rankedContentFiles } from './book-formats'
 
 function file(id: number, format: string | null, role = 'content', extra: Partial<BookFileRef> = {}): BookFileRef {
   return { id, format, role, sizeBytes: 100, ...extra }
 }
 
 const readAlong = { mediaOverlay: { available: true, durationSeconds: 60 } }
+
+describe('isPlainEpubEntry', () => {
+  it('accepts only an EPUB without audio or a media overlay', () => {
+    const entries = bookFormatEntries([file(1, 'epub', 'primary'), file(2, 'epub', 'content', readAlong), file(3, 'm4b'), file(4, 'pdf')])
+    expect(entries.filter(isPlainEpubEntry).map((entry) => entry.files[0]!.id)).toEqual([1])
+  })
+})
 
 describe('bookFormatEntries', () => {
   it('lists content files only, never covers or sidecars', () => {

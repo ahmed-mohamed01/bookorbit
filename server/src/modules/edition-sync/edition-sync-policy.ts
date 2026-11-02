@@ -19,11 +19,18 @@ export interface EditionSyncDecision {
 }
 
 export function resolveEditionSyncSettings(input: {
+  serverEnabled: boolean;
   hasPermission: boolean;
   enabled: boolean;
   bookSyncMode: EditionSyncBookSyncMode;
 }): EditionSyncPolicySettings {
-  const disabledReason: EditionSyncDisabledReason | null = !input.hasPermission ? 'permission_denied' : !input.enabled ? 'user_disabled' : null;
+  const disabledReason: EditionSyncDisabledReason | null = !input.serverEnabled
+    ? 'server_disabled'
+    : !input.hasPermission
+      ? 'permission_denied'
+      : !input.enabled
+        ? 'user_disabled'
+        : null;
   return { effectiveEnabled: disabledReason === null, disabledReason, bookSyncMode: input.bookSyncMode };
 }
 

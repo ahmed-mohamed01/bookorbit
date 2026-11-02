@@ -1,4 +1,5 @@
-import type { EditionSyncBookState, ReadAloudProgressSyncMode } from '@bookorbit/types'
+import type { BookFileRef, EditionSyncBookState, ReadAloudProgressSyncMode } from '@bookorbit/types'
+import { bookFormatEntries, isPlainEpubEntry } from '@/features/book/lib/book-formats'
 
 export type EditionSyncToggleKind = 'readAlong' | 'index' | 'none'
 
@@ -11,6 +12,33 @@ export function editionSyncToggleKind(state: EditionSyncBookState | null): Editi
   if (!state) return 'none'
   if (state.hasReadAlong && state.hasAudio) return 'readAlong'
   return state.eligible ? 'index' : 'none'
+}
+
+/** What upstream's per-book read-aloud sync works with, read from the book's own files. */
+export interface ReadAlongEditions {
+  hasReadAlong: boolean
+  hasAudio: boolean
+  /** A second EPUB beside the read-along, which upstream keeps in step through the narration. */
+  hasEpubCopy: boolean
+}
+
+export function readAlongEditions(
+  files: readonly Pick<BookFileRef, 'id' | 'format' | 'role' | 'sizeBytes' | 'mediaOverlay'>[],
+  formatPriority?: readonly string[] | null,
+): ReadAlongEditions {
+  const entries = bookFormatEntries(files, formatPriority)
+  const readAlong = entries.find((entry) => entry.readAlong)
+  return {
+    hasReadAlong: readAlong !== undefined,
+    hasAudio: entries.some((entry) => entry.audio),
+    hasEpubCopy: readAlong !== undefined && (readAlong.files.length > 1 || entries.some(isPlainEpubEntry)),
+  }
+}
+
+/** Editions upstream's read-aloud sync keeps together, or null when it has nothing to sync for this book. */
+export function readAlongSyncCount(editions: ReadAlongEditions): number | null {
+  if (!editions.hasReadAlong || !(editions.hasAudio || editions.hasEpubCopy)) return null
+  return 1 + Number(editions.hasAudio) + Number(editions.hasEpubCopy)
 }
 
 export function editionSyncToggleValue(
