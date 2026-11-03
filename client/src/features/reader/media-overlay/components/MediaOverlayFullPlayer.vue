@@ -29,7 +29,7 @@ import {
 import { toast } from 'vue-sonner'
 import MediaScrubber from '@/components/media/MediaScrubber.vue'
 import type { MediaScrubberTooltip } from '@/components/media/types'
-import { formatPlaybackClock } from '@/features/podcast/lib/podcast-format'
+import { formatChapterLength } from '@/features/book/lib/chapter-time'
 import CoverFill from '@/features/book/components/CoverFill.vue'
 import { copyToClipboard } from '@/lib/clipboard'
 import { useMediaOverlay } from '../composables/useMediaOverlay'
@@ -80,18 +80,18 @@ const sleepButtonLabel = computed(() =>
 )
 const isSpeedChanged = computed(() => rate.value !== 1)
 const hasBookClock = computed(() => positionSeconds.value !== null && (durationSeconds.value ?? 0) > 0)
-const elapsedLabel = computed(() => formatPlaybackClock(positionSeconds.value ?? 0))
+const elapsedLabel = computed(() => formatChapterLength((positionSeconds.value ?? 0) * 1000))
 // At the chosen speed, so it says how long the listener has left, not how long the recording is.
 const timeLeftLabel = computed(() => {
   const left = Math.max(0, (durationSeconds.value ?? 0) - (positionSeconds.value ?? 0)) / (rate.value || 1)
-  return t('reader.narration.timeLeft', { time: formatPlaybackClock(left) })
+  return t('reader.narration.timeLeft', { time: formatChapterLength(left * 1000) })
 })
 const positionValueText = computed(() =>
-  t('reader.narration.bookPositionValue', { position: elapsedLabel.value, duration: formatPlaybackClock(durationSeconds.value ?? 0) }),
+  t('reader.narration.bookPositionValue', { position: elapsedLabel.value, duration: formatChapterLength((durationSeconds.value ?? 0) * 1000) }),
 )
 
 function scrubberTooltip(seconds: number): MediaScrubberTooltip {
-  return { primary: formatPlaybackClock(seconds) }
+  return { primary: formatChapterLength(seconds * 1000) }
 }
 
 function handleSeek(seconds: number) {

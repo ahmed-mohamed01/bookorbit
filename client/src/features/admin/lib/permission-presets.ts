@@ -1,4 +1,4 @@
-import { APP_FEATURES, Permission } from '@bookorbit/types'
+import { Permission } from '@bookorbit/types'
 
 export interface PermissionGroup {
   id: string
@@ -28,15 +28,6 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     use: [Permission.WebSerialAccess],
     manage: [],
   },
-  ...(APP_FEATURES.podcasts
-    ? [
-        {
-          id: 'podcasts',
-          use: [Permission.PodcastDownload],
-          manage: [Permission.PodcastManageFeeds, Permission.PodcastEditMetadata, Permission.PodcastManageRetention, Permission.PodcastPurge],
-        },
-      ]
-    : []),
   {
     id: 'devices',
     use: [Permission.KoboSync, Permission.KoreaderSync, Permission.OpdsAccess],
@@ -94,7 +85,6 @@ export function isRestrictionPermission(permissionName: string): boolean {
  */
 const STANDARD_PRESET: Permission[] = [
   Permission.LibraryDownload,
-  ...(APP_FEATURES.podcasts ? [Permission.PodcastDownload] : []),
   Permission.KoboSync,
   Permission.KoreaderSync,
   Permission.HardcoverSync,

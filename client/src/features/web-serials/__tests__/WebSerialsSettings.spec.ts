@@ -17,10 +17,9 @@ vi.mock('vue-sonner', () => ({ toast: { success: vi.fn<() => void>(), error: vi.
 vi.mock('@/features/auth/composables/usePermissions', () => ({ usePermissions: () => ({ hasPermission: () => true }) }))
 vi.mock('@/features/library/composables/useLibraries', () => {
   const libraries = ref([
-    { id: 1, type: 'books', name: 'Comics', allowedFormats: ['cbz'], folders: [{ id: 11, path: '/comics' }] },
+    { id: 1, name: 'Comics', allowedFormats: ['cbz'], folders: [{ id: 11, path: '/comics' }] },
     {
       id: 2,
-      type: 'books',
       name: 'Novels',
       allowedFormats: ['epub'],
       folders: [
@@ -28,7 +27,7 @@ vi.mock('@/features/library/composables/useLibraries', () => {
         { id: 22, path: '/n2' },
       ],
     },
-    { id: 3, type: 'books', name: 'Everything', allowedFormats: [], folders: [{ id: 31, path: '/all' }] },
+    { id: 3, name: 'Everything', allowedFormats: [], folders: [{ id: 31, path: '/all' }] },
   ])
   return { useLibraries: () => ({ libraries, fetchLibraries: vi.fn<() => Promise<void>>().mockResolvedValue(undefined) }) }
 })

@@ -17,8 +17,8 @@ vi.mock('../api/webSerials', () => api)
 vi.mock('@/features/library/composables/useLibraries', async () => {
   const { ref } = await import('vue')
   const libraries = ref([
-    { id: 1, type: 'books', name: 'Manga', accessLevel: 'owner', folders: [{ id: 11, path: '/manga' }] },
-    { id: 2, type: 'books', name: 'Comics', accessLevel: 'owner', folders: [{ id: 21, path: '/comics' }] },
+    { id: 1, name: 'Manga', accessLevel: 'owner', folders: [{ id: 11, path: '/manga' }] },
+    { id: 2, name: 'Comics', accessLevel: 'owner', folders: [{ id: 21, path: '/comics' }] },
   ])
   return { useLibraries: () => ({ libraries, loaded: ref(true), fetchLibraries: vi.fn<() => Promise<void>>() }) }
 })

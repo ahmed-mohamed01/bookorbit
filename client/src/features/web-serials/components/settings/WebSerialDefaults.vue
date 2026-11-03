@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Library, WebSerialKind, WebSerialPackaging } from '@bookorbit/types'
 import { useLibraries } from '@/features/library/composables/useLibraries'
@@ -17,16 +16,15 @@ const { t } = useI18n()
 const { libraries } = useLibraries()
 const { draft } = useWebSerialSettingsContext()
 
-const bookLibraries = computed(() => libraries.value.filter((library) => library.type === 'books'))
 
 function optionsFor(kind: WebSerialKind): Library[] {
-  const accepted = bookLibraries.value.filter((library) => libraryAcceptsKind(library, kind))
-  const current = bookLibraries.value.find((library) => library.id === draft[kind].targetLibraryId)
+  const accepted = libraries.value.filter((library) => libraryAcceptsKind(library, kind))
+  const current = libraries.value.find((library) => library.id === draft[kind].targetLibraryId)
   return current && !accepted.includes(current) ? [...accepted, current] : accepted
 }
 
 function foldersFor(kind: WebSerialKind) {
-  return bookLibraries.value.find((library) => library.id === draft[kind].targetLibraryId)?.folders ?? []
+  return libraries.value.find((library) => library.id === draft[kind].targetLibraryId)?.folders ?? []
 }
 
 function handleLibrary(kind: WebSerialKind, event: Event) {

@@ -8,11 +8,6 @@ export enum Permission {
   BookDockAccess = "book_dock_access",
   BookRequestAccess = "book_request_access",
   WebSerialAccess = "web_serial_access",
-  PodcastManageFeeds = "podcast_manage_feeds",
-  PodcastDownload = "podcast_download",
-  PodcastEditMetadata = "podcast_edit_metadata",
-  PodcastManageRetention = "podcast_manage_retention",
-  PodcastPurge = "podcast_purge",
   DemoRestricted = "demo_restricted",
 
   // Devices & Access
@@ -55,11 +50,6 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   [Permission.BookDockAccess]: "Book Dock",
   [Permission.BookRequestAccess]: "Request books",
   [Permission.WebSerialAccess]: "Get manga and light novels",
-  [Permission.PodcastManageFeeds]: "Manage podcast feeds",
-  [Permission.PodcastDownload]: "Download podcast episodes",
-  [Permission.PodcastEditMetadata]: "Edit podcast metadata",
-  [Permission.PodcastManageRetention]: "Manage podcast retention",
-  [Permission.PodcastPurge]: "Purge podcast content",
   [Permission.DemoRestricted]: "Demo restricted",
   [Permission.KoboSync]: "Kobo sync",
   [Permission.KoreaderSync]: "KOReader sync",

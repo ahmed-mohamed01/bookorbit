@@ -14,11 +14,10 @@ vi.mock('../api/webSerials', () => ({ createSerialJob: state.createSerialJob, fe
 vi.mock('@/features/library/composables/useLibraries', async () => {
   const { ref: makeRef } = await import('vue')
   const libraries = makeRef([
-    { id: 1, type: 'books', name: 'Novels', accessLevel: 'owner', folders: [{ id: 11, path: '/novels' }] },
-    { id: 2, type: 'books', name: 'Shared', accessLevel: 'viewer', folders: [{ id: 21, path: '/shared' }] },
+    { id: 1, name: 'Novels', accessLevel: 'owner', folders: [{ id: 11, path: '/novels' }] },
+    { id: 2, name: 'Shared', accessLevel: 'viewer', folders: [{ id: 21, path: '/shared' }] },
     {
       id: 3,
-      type: 'books',
       name: 'Manga',
       accessLevel: 'editor',
       folders: [
@@ -26,8 +25,7 @@ vi.mock('@/features/library/composables/useLibraries', async () => {
         { id: 32, path: '/manga2' },
       ],
     },
-    { id: 4, type: 'podcasts', name: 'Pods', accessLevel: 'owner', folders: [] },
-    { id: 5, type: 'books', name: 'Audio', accessLevel: 'owner', allowedFormats: ['m4b', 'mp3'], folders: [{ id: 51, path: '/audio' }] },
+    { id: 5, name: 'Audio', accessLevel: 'owner', allowedFormats: ['m4b', 'mp3'], folders: [{ id: 51, path: '/audio' }] },
   ])
   return { useLibraries: () => ({ libraries, loaded: makeRef(true), fetchLibraries: vi.fn<() => Promise<void>>() }) }
 })
@@ -47,11 +45,11 @@ beforeEach(() => {
 })
 
 describe('useWebSerialJobForm', () => {
-  it('offers only book libraries the user can add to', () => {
+  it('offers only libraries the user can add to', () => {
     const { form } = setup(mangaDetail())
     expect(form.libraries.value.map((library) => library.id)).toEqual([1, 3])
-    expect(canAddToLibrary({ type: 'books', accessLevel: 'viewer' })).toBe(false)
-    expect(canAddToLibrary({ type: 'books', accessLevel: null })).toBe(true)
+    expect(canAddToLibrary({ accessLevel: 'viewer' })).toBe(false)
+    expect(canAddToLibrary({ accessLevel: null })).toBe(true)
   })
 
   it('preselects the first library and its first folder', () => {

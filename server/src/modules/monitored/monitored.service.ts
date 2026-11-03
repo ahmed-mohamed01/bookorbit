@@ -1369,6 +1369,8 @@ export class MonitoredService {
       id: syntheticRequestId(work.id, format),
       mediaKind: format,
       ...this.buildSearchCriteria(monitor, work),
+      seriesName: null,
+      seriesIndex: null,
       isbn10: null,
       isbn13: null,
       metadataSources: [],

@@ -2,7 +2,7 @@ import { computed, onBeforeUnmount, watch, type Ref } from 'vue'
 import { useNarrationOutsideReader } from './useNarrationOutsideReader'
 import type { NarrationDockSide } from './useNarrationDockLayout'
 
-export const NARRATION_BASE_CLEARANCE = 'max(1.5rem, var(--podcast-mini-player-clearance, 0px))'
+export const NARRATION_BASE_CLEARANCE = '1.5rem'
 
 const CLEARANCE_CSS_VAR = '--narration-dock-clearance'
 const RIGHT_CLEARANCE_CSS_VAR = '--narration-dock-right-clearance'

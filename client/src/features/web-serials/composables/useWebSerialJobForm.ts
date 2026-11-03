@@ -56,8 +56,8 @@ function rememberLibraryId(userId: number | null, id: number): void {
 }
 
 /** A viewer cannot add books, so offering their library would only end in a rejection. */
-export function canAddToLibrary(library: Pick<Library, 'type' | 'accessLevel'>): boolean {
-  return library.type === 'books' && library.accessLevel !== 'viewer'
+export function canAddToLibrary(library: Pick<Library, 'accessLevel'>): boolean {
+  return library.accessLevel !== 'viewer'
 }
 
 const KIND_FORMAT: Record<WebSerialSeriesDetail['kind'], string> = { manga: 'cbz', novel: 'epub' }

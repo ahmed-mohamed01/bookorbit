@@ -2,7 +2,6 @@
 import { computed, provide, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { INIT_OPTIONS_KEY, THEME_KEY } from 'vue-echarts'
-import { APP_FEATURES } from '@bookorbit/types'
 import { useChangePasswordDialog } from '@/composables/useChangePasswordDialog'
 import { useChartTokens } from '@/composables/useChartTokens'
 import { buildChartTheme } from '@/lib/echarts'
@@ -15,31 +14,20 @@ import ServerReconnectScreen from '@/features/auth/components/ServerReconnectScr
 import TtsMiniPlayer from '@/features/tts/components/TtsMiniPlayer.vue'
 import MediaOverlayDock from '@/features/reader/media-overlay/components/MediaOverlayDock.vue'
 import { useMediaOverlay } from '@/features/reader/media-overlay/composables/useMediaOverlay'
-import PodcastMiniPlayer from '@/features/podcast/components/PodcastMiniPlayer.vue'
-import PodcastLiveRegion from '@/features/podcast/components/PodcastLiveRegion.vue'
-import PodcastDownloadWidget from '@/features/podcast/components/PodcastDownloadWidget.vue'
-import PodcastShortcutsDialog from '@/features/podcast/components/PodcastShortcutsDialog.vue'
-import { usePodcastPlayer } from '@/features/podcast/composables/usePodcastPlayer'
-import { usePodcastKeyboardShortcuts } from '@/features/podcast/composables/usePodcastKeyboardShortcuts'
-import { usePodcastDownloadBatches } from '@/features/podcast/composables/usePodcastDownloadBatches'
-import { usePodcastEvents } from '@/features/podcast/composables/usePodcastEvents'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { resolveRouteViewKey } from '@/router/view-key'
 import LegalNotices from '@/components/legal/LegalNotices.vue'
 
-// Bottom-edge media and download surfaces publish their measured heights, so the toaster clears
-// whichever one currently sits highest.
+// The bottom-edge TTS player publishes its measured height, so the toaster clears it.
 const TOASTER_OFFSET = {
   right: '16px',
-  bottom:
-    'max(16px, var(--podcast-mini-player-clearance, 0px), var(--tts-mini-player-clearance, 0px), var(--podcast-download-widget-clearance, 0px), var(--narration-dock-right-clearance, 0px))',
+  bottom: 'max(16px, var(--tts-mini-player-clearance, 0px), var(--narration-dock-right-clearance, 0px))',
 }
 const TOASTER_MOBILE_OFFSET = {
   left: '16px',
   right: '16px',
-  bottom:
-    'max(16px, var(--podcast-mini-player-clearance, 0px), var(--tts-mini-player-clearance, 0px), var(--podcast-download-widget-clearance, 0px), var(--narration-dock-clearance, 0px))',
+  bottom: 'max(16px, var(--tts-mini-player-clearance, 0px), var(--narration-dock-clearance, 0px))',
 }
 
 const { isOpen } = useChangePasswordDialog()
@@ -49,33 +37,15 @@ const route = useRoute()
 const { user } = useAuth()
 const { unreachable: serverUnreachable } = useSessionBootstrap()
 const { popupOpen, evaluate, syncPopup } = useWhatsNew()
-const podcastPlayer = APP_FEATURES.podcasts ? usePodcastPlayer() : null
-const podcastDownloads = APP_FEATURES.podcasts ? usePodcastDownloadBatches() : null
-const podcastEvents = APP_FEATURES.podcasts ? usePodcastEvents() : null
 const narration = useMediaOverlay()
-
-if (APP_FEATURES.podcasts) usePodcastKeyboardShortcuts()
 
 watch(
   () => user.value,
   async (current, previous) => {
     // Narration can outlive its reader, so it must not carry on into another session.
     if (previous && (!current || current.id !== previous.id)) narration.stop()
-    if (previous && current?.id !== previous.id) {
-      await podcastPlayer?.resetForUserChange()
-      podcastDownloads?.resetForUserChange()
-      podcastEvents?.resetForUserChange()
-    }
-    if (!current) {
-      if (!previous) {
-        await podcastPlayer?.resetForUserChange()
-        podcastDownloads?.resetForUserChange()
-        podcastEvents?.resetForUserChange()
-      }
-      return
-    }
+    if (!current) return
     narration.restoreBackground(current.id)
-    await podcastPlayer?.loadPreferences()
     await evaluate()
     syncPopup(route.name as string | undefined)
   },
@@ -107,10 +77,6 @@ provide(
     <LegalNotices />
     <TtsMiniPlayer />
     <MediaOverlayDock />
-    <PodcastMiniPlayer v-if="APP_FEATURES.podcasts" />
-    <PodcastDownloadWidget v-if="APP_FEATURES.podcasts && user" />
-    <PodcastShortcutsDialog v-if="APP_FEATURES.podcasts" />
-    <PodcastLiveRegion v-if="APP_FEATURES.podcasts" />
     <Toaster rich-colors position="bottom-right" :visible-toasts="5" :gap="8" :offset="TOASTER_OFFSET" :mobile-offset="TOASTER_MOBILE_OFFSET" />
   </TooltipProvider>
 </template>

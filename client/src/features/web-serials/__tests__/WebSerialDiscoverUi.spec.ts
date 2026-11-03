@@ -25,7 +25,7 @@ vi.mock('vue-router', async (importOriginal) => ({
 }))
 vi.mock('@/features/library/composables/useLibraries', async () => {
   const { ref } = await import('vue')
-  const libraries = ref([{ id: 1, type: 'books', name: 'Manga', accessLevel: 'owner', folders: [{ id: 11, path: '/manga' }] }])
+  const libraries = ref([{ id: 1, name: 'Manga', accessLevel: 'owner', folders: [{ id: 11, path: '/manga' }] }])
   return { useLibraries: () => ({ libraries, loaded: ref(true), fetchLibraries: vi.fn<() => Promise<void>>() }) }
 })
 

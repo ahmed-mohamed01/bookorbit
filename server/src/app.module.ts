@@ -18,7 +18,6 @@ import {
   fileWriteConfig,
   migrationConfig,
   oidcRuntimeConfig,
-  podcastConfig,
   readAloudConfig,
   storageConfig,
 } from './config/config';
@@ -105,7 +104,6 @@ import { ChapterHealthModule } from './modules/chapter-health/chapter-health.mod
 import { TtsModule } from './modules/tts/tts.module';
 import { SearchModule } from './modules/search/search.module';
 import { WatchDownloadModule } from './modules/watch-download/watch-download.module';
-import { PodcastModule } from './modules/podcast/podcast.module';
 import { ReadAloudModule } from './modules/read-aloud/read-aloud.module';
 import { EditionSyncModule } from './modules/edition-sync/edition-sync.module';
 
@@ -126,7 +124,6 @@ import { EditionSyncModule } from './modules/edition-sync/edition-sync.module';
         migrationConfig,
         bookRequestConfig,
         oidcRuntimeConfig,
-        podcastConfig,
         audiolessEpubConfig,
         djvuConfig,
         readAloudConfig,
@@ -220,7 +217,6 @@ import { EditionSyncModule } from './modules/edition-sync/edition-sync.module';
     TtsModule,
     SearchModule,
     WatchDownloadModule,
-    PodcastModule,
     MonitoredModule,
     ReadingAlignmentModule,
     WebSerialsModule,

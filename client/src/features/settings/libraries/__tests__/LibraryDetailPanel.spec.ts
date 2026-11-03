@@ -7,7 +7,6 @@ import LibraryDetailPanel from '../components/LibraryDetailPanel.vue'
 function makeLibrary(overrides: Partial<Library> = {}): Library {
   return {
     id: 1,
-    type: 'books',
     name: 'Test Library',
     icon: null,
     displayOrder: 0,
@@ -41,7 +40,7 @@ function makeLibrary(overrides: Partial<Library> = {}): Library {
     fileWriteAudioEnabled: false,
     fileWriteAudioMaxFileSizeMb: 500,
     fileRenameEnabled: false,
-    folders: [{ id: 1, path: '/books', role: 'downloads' as const, createdAt: '2024-01-01T00:00:00.000Z' }],
+    folders: [{ id: 1, path: '/books', createdAt: '2024-01-01T00:00:00.000Z' }],
     createdAt: '2024-01-01T00:00:00.000Z',
     updatedAt: '2024-01-01T00:00:00.000Z',
     ...overrides,

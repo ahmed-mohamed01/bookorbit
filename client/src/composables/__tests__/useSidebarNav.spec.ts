@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Permission, type BrowseCounts } from '@bookorbit/types'
 import type { RouteLocationNormalizedLoaded } from 'vue-router'
 import { i18n } from '@/i18n'
-import { SIDEBAR_NAV_REGISTRY, entryVisibleInMode, isNavEntryAllowed, resolveNavEntry, useSidebarNav } from '../useSidebarNav'
+import { SIDEBAR_NAV_REGISTRY, isNavEntryAllowed, resolveNavEntry, useSidebarNav } from '../useSidebarNav'
 
 const mocks = vi.hoisted(() => ({ permissions: new Set<string>() }))
 
@@ -40,7 +40,6 @@ function makeContext(
     monitoredReleaseTotal: number
     monitoredReleaseLabel: string
     browseCounts: BrowseCounts | null
-    firstPodcastLibraryId: number | null
   }> = {},
 ) {
   const permissions = overrides.permissions ?? []
@@ -54,7 +53,6 @@ function makeContext(
     outstandingRequestTotal: overrides.outstandingRequestTotal ?? 0,
     outstandingRequestLabel: overrides.outstandingRequestLabel ?? '',
     browseCounts: overrides.browseCounts ?? null,
-    firstPodcastLibraryId: overrides.firstPodcastLibraryId ?? null,
   }
 }
 
@@ -81,10 +79,10 @@ describe('sidebar nav registry', () => {
     expect(allowedIds(makeContext())).toEqual(['dashboard', 'statistics', 'reading-history', 'achievements', 'authors', 'series', 'annotations'])
   })
 
-  it('places Dashboard, Book Dock, Requests, Monitored, Web Serials, Tools and the podcast Queue in the primary zone, above the entity sections', () => {
+  it('places Dashboard, Book Dock, Requests, Monitored, Web Serials and Tools in the primary zone, above the entity sections', () => {
     const primary = SIDEBAR_NAV_REGISTRY.filter((candidate) => candidate.zone === 'primary').map((candidate) => candidate.id)
 
-    expect(primary).toEqual(['dashboard', 'book-dock', 'book-requests', 'monitored', 'web-serials', 'tools', 'podcast-queue'])
+    expect(primary).toEqual(['dashboard', 'book-dock', 'book-requests', 'monitored', 'web-serials', 'tools'])
   })
 
   it('groups Statistics, History, Achievements and Annotations in the Reading zone', () => {
@@ -272,45 +270,6 @@ describe('sidebar nav registry', () => {
     for (const candidate of SIDEBAR_NAV_REGISTRY) {
       expect(['primary', 'browse', 'reading']).toContain(candidate.zone)
     }
-  })
-
-  it('hides the Queue until a podcast library exists', () => {
-    expect(allowedIds(makeContext())).not.toContain('podcast-queue')
-    expect(allowedIds(makeContext({ firstPodcastLibraryId: 4 }))).toContain('podcast-queue')
-  })
-
-  it('sends the Queue to the first podcast library queue tab, which spans all libraries', () => {
-    const context = makeContext({ firstPodcastLibraryId: 4 })
-
-    const resolved = resolveNavEntry(entry('podcast-queue'), context, makeRoute('dashboard'), 'Queue')
-
-    expect(resolved.to).toEqual({ name: 'podcast-library', params: { id: 4 }, query: { view: 'queue' } })
-  })
-
-  it('marks the Queue active only on the queue tab of a podcast library', () => {
-    expect(entry('podcast-queue').isActive(makeRoute('podcast-library', { id: '4' }, { view: 'queue' }))).toBe(true)
-    expect(entry('podcast-queue').isActive(makeRoute('podcast-library', { id: '4' }))).toBe(false)
-  })
-
-  it('keeps book destinations out of podcast mode and the Queue out of books mode', () => {
-    const podcastModeIds = SIDEBAR_NAV_REGISTRY.filter((candidate) => entryVisibleInMode(candidate, 'podcasts')).map((candidate) => candidate.id)
-    const booksModeIds = SIDEBAR_NAV_REGISTRY.filter((candidate) => entryVisibleInMode(candidate, 'books')).map((candidate) => candidate.id)
-
-    expect(podcastModeIds).toEqual(['dashboard', 'statistics', 'achievements', 'podcast-queue'])
-    expect(booksModeIds).toEqual([
-      'dashboard',
-      'statistics',
-      'reading-history',
-      'achievements',
-      'book-dock',
-      'book-requests',
-      'monitored',
-      'web-serials',
-      'tools',
-      'authors',
-      'series',
-      'annotations',
-    ])
   })
 })
 
