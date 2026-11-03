@@ -1,3 +1,4 @@
+import { createRequestGeneration } from '@/lib/async'
 import { computed, onScopeDispose, ref, watch, type Ref } from 'vue'
 import type { WebSerialCatalogEntry, WebSerialSeriesDetail, WebSerialSeriesMatch, WebSerialSourceOption, WebSerialSuggestion } from '@bookorbit/types'
 import { fetchDiscoverSources, fetchSeries } from '../api/webSerials'
@@ -48,7 +49,7 @@ export function useWebSerialEntryPreview(
   /** The site whose long chapter list the server is still loading, while the preview waits for it. */
   const pendingSource = ref<string | null>(null)
   const preselectedKey = computed(() => chosenKey.value ?? options.value[0]?.seriesKey ?? null)
-  let token = 0
+  const token = createRequestGeneration()
   let controller: AbortController | null = null
   let counting: AbortController | null = null
   let countTarget: { openedKey: string; matchId: string | undefined } | null = null
@@ -87,13 +88,13 @@ export function useWebSerialEntryPreview(
         if (option.seriesKey === target.openedKey || !option.chaptersUnknown) continue
         try {
           const other = await fetchSeries(option.seriesKey, target.matchId, current.signal)
-          if (mine !== token || current.signal.aborted) return
+          if (!token.isCurrent(mine) || current.signal.aborted) return
           settleOption(option.seriesKey, { ...chaptersOf(other), chaptersUnknown: false })
         } catch {
-          if (mine !== token || current.signal.aborted) return
+          if (!token.isCurrent(mine) || current.signal.aborted) return
         }
       }
-      if (mine === token) markMostComplete()
+      if (token.isCurrent(mine)) markMostComplete()
     } finally {
       if (counting === current) counting = null
     }
@@ -107,11 +108,11 @@ export function useWebSerialEntryPreview(
       return await loadWhileSeriesLoads(() => fetchSeries(option.seriesKey, matchId, current.signal), {
         signal: current.signal,
         onPending: () => {
-          if (mine === token) pendingSource.value = option.sourceName
+          if (token.isCurrent(mine)) pendingSource.value = option.sourceName
         },
       })
     } finally {
-      if (mine === token) pendingSource.value = null
+      if (token.isCurrent(mine)) pendingSource.value = null
     }
   }
 
@@ -133,14 +134,14 @@ export function useWebSerialEntryPreview(
     const matchId = current.matchId
     try {
       const opened = await openSeries(first, matchId, mine)
-      if (mine !== token) return
+      if (!token.isCurrent(mine)) return
       settleOption(first.seriesKey, { ...chaptersOf(opened), chaptersUnknown: false })
       countTarget = { openedKey: first.seriesKey, matchId }
       detail.value = opened
       loadedAt = Date.now()
       state.value = 'ready'
     } catch (cause) {
-      if (mine !== token) return
+      if (!token.isCurrent(mine)) return
       failOpening(cause)
       return
     }
@@ -150,7 +151,7 @@ export function useWebSerialEntryPreview(
   async function load(refresh = false): Promise<void> {
     const current = entry.value
     const suggested = suggestion?.value ?? null
-    const mine = ++token
+    const mine = token.begin()
     controller?.abort()
     controller = null
     stopCounting()
@@ -178,12 +179,12 @@ export function useWebSerialEntryPreview(
     let first: WebSerialSourceOption | undefined
     try {
       const result = await fetchDiscoverSources(current.kind, current.matchId, controller.signal, refresh)
-      if (mine !== token) return
+      if (!token.isCurrent(mine)) return
       options.value = result.options
       failedSources.value = result.failedSources
       first = result.options[0]
     } catch (cause) {
-      if (mine !== token) return
+      if (!token.isCurrent(mine)) return
       error.value = messageOf(cause, 'webSerials.api.discoverSources')
       state.value = 'error'
       return
@@ -195,19 +196,19 @@ export function useWebSerialEntryPreview(
     state.value = 'opening'
     try {
       const opened = await openSeries(first, current.matchId, mine)
-      if (mine !== token) return
+      if (!token.isCurrent(mine)) return
       detail.value = opened
       loadedAt = Date.now()
       state.value = 'ready'
     } catch (cause) {
-      if (mine !== token) return
+      if (!token.isCurrent(mine)) return
       failOpening(cause)
     }
   }
 
   /** Closing mid-load drops that load entirely, so nothing keeps asking the server and reopening starts afresh. */
   function abandonLoad(): void {
-    token++
+    token.invalidate()
     controller?.abort()
     controller = null
     pendingSource.value = null
@@ -226,7 +227,7 @@ export function useWebSerialEntryPreview(
 
   watch(open, (isOpen) => {
     if (isOpen) {
-      if (state.value === 'ready') void countOthers(token)
+      if (state.value === 'ready') void countOthers(token.current())
       return
     }
     stopCounting()

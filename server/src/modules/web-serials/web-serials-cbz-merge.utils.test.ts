@@ -64,6 +64,27 @@ describe('mergeCbzChapters', () => {
     expect(await readFile(`${output}.part`).catch(() => null)).toBeNull();
   });
 
+  it('excludes hidden archive entries while retaining AVIF pages', async () => {
+    const chapter = join(dir, 'chapter.cbz');
+    const output = join(dir, 'merged.cbz');
+    await writeZipFixture(chapter, [
+      { name: '__MACOSX/._x.jpg', data: 'hidden' },
+      { name: 'page.avif', data: 'avif' },
+    ]);
+
+    const result = await mergeCbzChapters(
+      [chapter],
+      output,
+      { series: 'Saga', title: 'Saga', number: '1', writers: [], pencillers: [], summary: null, genres: [], language: null },
+      1024 * 1024,
+    );
+
+    const index = await readCbzZipIndex(output);
+    expect(result.pages).toBe(1);
+    expect(index?.entries.map((entry) => entry.name)).toEqual(['0001-0001.avif', 'ComicInfo.xml']);
+    expect((await extractCbzZipEntry(output, index!.entries[0]!))?.toString()).toBe('avif');
+  });
+
   it('removes partial output when a chapter is invalid or the cap is exceeded', async () => {
     const invalid = join(dir, 'invalid.cbz');
     const output = join(dir, 'merged.cbz');

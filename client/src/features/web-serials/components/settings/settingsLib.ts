@@ -60,14 +60,6 @@ export function setSourcesSelected(selected: readonly string[], ids: readonly st
   return on ? [...rest, ...ids] : rest
 }
 
-export function languageName(lang: string, locale: string): string {
-  try {
-    return new Intl.DisplayNames([locale], { type: 'language' }).of(lang) ?? lang.toUpperCase()
-  } catch {
-    return lang.toUpperCase()
-  }
-}
-
 export function searchableDomains(sources: readonly WebSerialNovelSource[]): string[] {
   return sources.filter((source) => source.canSearch && !source.disabled).map((source) => source.domain)
 }

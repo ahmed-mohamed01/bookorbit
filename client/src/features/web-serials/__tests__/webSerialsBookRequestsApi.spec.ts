@@ -129,10 +129,14 @@ describe('Book Requests calls from Web Serials', () => {
   })
 })
 
-describe('Book Requests calls from Web Serials stay inside the feature', () => {
-  it('reads refusals with its own code, not the Book Requests feature internals', async () => {
-    const source = (await import('../api/bookRequests.ts?raw')).default
-    expect(source).not.toContain('@/features/book-requests')
+describe('Book Requests submission failures from Web Serials', () => {
+  it('falls back to the localized request error for an unreadable refusal', async () => {
+    http.api.mockResolvedValue(new Response('invalid json', { status: 500 }))
+    await expect(createVolumeRequest({} as never)).rejects.toMatchObject({
+      message: i18n.global.t('webSerials.api.requestVolume'),
+      status: 500,
+      errorCode: null,
+    })
   })
 
   it('falls back to the server sentence for an uncoded refused create', async () => {

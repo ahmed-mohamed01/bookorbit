@@ -1,3 +1,4 @@
+import { createRequestGeneration } from '@/lib/async'
 import { computed, onScopeDispose, ref, watch, type Ref } from 'vue'
 import type { WebSerialSeriesDetail } from '@bookorbit/types'
 import { fetchSeries } from '../api/webSerials'
@@ -18,11 +19,11 @@ export function useWebSerialSeriesSwitch(opened: Ref<WebSerialSeriesDetail | nul
   const renderKey = ref(0)
   /** The site whose long chapter list the server is still loading for the switch. */
   const pendingSource = ref<string | null>(null)
-  let token = 0
+  const token = createRequestGeneration()
   let controller: AbortController | null = null
 
   function cancel(): void {
-    token++
+    token.invalidate()
     if (switching.value) renderKey.value++
     controller?.abort()
     controller = null
@@ -45,7 +46,7 @@ export function useWebSerialSeriesSwitch(opened: Ref<WebSerialSeriesDetail | nul
     return loadWhileSeriesLoads(() => fetchSeries(seriesKey, id, current.signal), {
       signal: current.signal,
       onPending: () => {
-        if (mine === token) pendingSource.value = sourceName
+        if (token.isCurrent(mine)) pendingSource.value = sourceName
       },
     })
   }
@@ -53,20 +54,20 @@ export function useWebSerialSeriesSwitch(opened: Ref<WebSerialSeriesDetail | nul
   /** `beforeApply` runs once the new series is in hand, right before it replaces the shown one. */
   async function select(seriesKey: string, beforeApply: () => void, sourceName: string | null = null): Promise<void> {
     if (switching.value || seriesKey === shown.value?.seriesKey) return
-    const mine = ++token
+    const mine = token.begin()
     switching.value = true
     switchError.value = null
     try {
       const next = seriesKey === opened.value?.seriesKey ? opened.value : await load(seriesKey, sourceName, mine)
-      if (mine !== token || !next) return
+      if (!token.isCurrent(mine) || !next) return
       beforeApply()
       switched.value = next
     } catch (cause) {
-      if (mine !== token) return
+      if (!token.isCurrent(mine)) return
       renderKey.value++
       if (!isAbort(cause)) switchError.value = messageOf(cause, 'webSerials.preview.sources.switchError')
     } finally {
-      if (mine === token) {
+      if (token.isCurrent(mine)) {
         switching.value = false
         pendingSource.value = null
         controller = null

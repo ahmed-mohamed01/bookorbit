@@ -1,3 +1,5 @@
+import { isAudioFormat, isBookFormat } from '@bookorbit/types'
+
 export const PATH_ELLIPSIS = '…'
 const MAX_FOLDER_LINES = 6
 const KEPT_FOLDER_LINES = 4
@@ -35,8 +37,6 @@ export interface OwnedTree {
   coverFileName: string | null
 }
 
-const EBOOK_EXTENSIONS = new Set(['epub', 'kepub', 'pdf', 'mobi', 'azw', 'azw3', 'fb2', 'cbz', 'cbr', 'cb7', 'txt', 'djvu', 'lit'])
-const AUDIO_EXTENSIONS = new Set(['m4b', 'm4a', 'mp3', 'flac', 'ogg', 'opus', 'aac', 'wav', 'wma'])
 const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp'])
 
 export function splitPath(path: string | null | undefined): string[] {
@@ -46,8 +46,8 @@ export function splitPath(path: string | null | undefined): string[] {
 export function fileKind(name: string): OwnedFileKind {
   const dot = name.lastIndexOf('.')
   const extension = dot >= 0 ? name.slice(dot + 1).toLowerCase() : ''
-  if (EBOOK_EXTENSIONS.has(extension)) return 'ebook'
-  if (AUDIO_EXTENSIONS.has(extension)) return 'audio'
+  if (isAudioFormat(extension)) return 'audio'
+  if (isBookFormat(extension)) return 'ebook'
   if (IMAGE_EXTENSIONS.has(extension)) return 'image'
   return 'other'
 }

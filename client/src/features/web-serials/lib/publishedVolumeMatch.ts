@@ -1,3 +1,4 @@
+import { candidateTitle } from '@/features/book-requests/composables/useRequestSubmission'
 import { authorsMatch, baseSeriesTitle, canonicalizeBookRequestIsbn, languagesAgree } from '@bookorbit/types'
 import type { BookRequestMetadataSource, CreateBookRequestPayload, MetadataCandidate, MetadataProviderKey } from '@bookorbit/types'
 import { preferredFormatsFor, volumeTitle, type PublishedSeries, type PublishedVolumeDestination } from './publishedVolumes'
@@ -5,11 +6,6 @@ import { preferredFormatsFor, volumeTitle, type PublishedSeries, type PublishedV
 export interface VolumeSearchQuery {
   title: string
   author: string | null
-}
-
-/** The record's display title, the same choice of field the built request stores. */
-export function candidateTitle(candidate: MetadataCandidate): string {
-  return candidate.displayTitle ?? candidate.title ?? ''
 }
 
 /** Bounded: at most this many provider searches per volume, whichever titles are tried. */

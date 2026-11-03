@@ -1,3 +1,4 @@
+import { createRequestGeneration } from '@/lib/async'
 import { onScopeDispose, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { WebSerialCatalogEntry } from '@bookorbit/types'
@@ -8,24 +9,24 @@ export function useWebSerialSeriesUrl(openEntry: (entry: WebSerialCatalogEntry) 
   const route = useRoute()
   const router = useRouter()
   let controller: AbortController | undefined
-  let generation = 0
+  const generation = createRequestGeneration()
   watch(
     [() => route.name, () => route.query.series],
     async ([name, value]) => {
       controller?.abort()
-      const mine = ++generation
+      const mine = generation.begin()
       if (name !== 'web-serials' || value === undefined) return
       const match = parseSeriesParam(value)
       controller = new AbortController()
       try {
         if (match) {
           const entry = await fetchDiscoverEntry(match.kind, match.matchId, controller.signal)
-          if (mine === generation) openEntry(entry)
+          if (generation.isCurrent(mine)) openEntry(entry)
         }
       } catch (cause) {
-        if (mine === generation) onError(cause)
+        if (generation.isCurrent(mine)) onError(cause)
       } finally {
-        if (mine === generation) {
+        if (generation.isCurrent(mine)) {
           const query = { ...route.query }
           delete query.series
           await router.replace({ name: 'web-serials', query })
@@ -35,7 +36,7 @@ export function useWebSerialSeriesUrl(openEntry: (entry: WebSerialCatalogEntry) 
     { immediate: true },
   )
   onScopeDispose(() => {
-    generation++
+    generation.invalidate()
     controller?.abort()
   })
 }

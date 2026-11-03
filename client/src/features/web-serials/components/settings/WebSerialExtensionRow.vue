@@ -5,7 +5,7 @@ import { Check, Download, Loader2, Puzzle, RefreshCw, Trash2 } from '@lucide/vue
 import type { WebSerialMangaExtension } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
 import type { WebSerialExtensionAction } from '../../api/webSerials'
-import { languageName } from './settingsLib'
+import { formatLanguageName } from '@/i18n/formatters'
 
 const props = defineProps<{
   extension: WebSerialMangaExtension
@@ -16,10 +16,10 @@ const props = defineProps<{
 
 const emit = defineEmits<{ install: []; uninstall: []; update: [] }>()
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 
 const language = computed(() =>
-  props.extension.lang === 'all' ? t('webSerials.settings.extensions.multiLanguage') : languageName(props.extension.lang, locale.value),
+  props.extension.lang === 'all' ? t('webSerials.settings.extensions.multiLanguage') : formatLanguageName(props.extension.lang),
 )
 const working = computed(() => props.busy !== null)
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { formatReadAloudDuration } from '@/features/read-aloud/lib/read-aloud'
 import { useI18n } from 'vue-i18n'
 import { Loader2 } from '@lucide/vue'
 import type { BookDetail, EditionSyncBookState } from '@bookorbit/types'
@@ -27,9 +28,7 @@ const { t } = useI18n()
 
 function formatDuration(seconds: number | null | undefined): string {
   if (seconds == null) return '-'
-  const hours = Math.floor(seconds / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
-  return hours > 0 ? t('book.detail.details.durationHm', { hours, minutes }) : t('book.detail.details.durationM', { minutes })
+  return formatReadAloudDuration(seconds, t)
 }
 
 function nextRunText(iso: string | null): string | null {

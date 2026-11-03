@@ -1,3 +1,4 @@
+import { createRequestGeneration } from '@/lib/async'
 import { computed, ref } from 'vue'
 import { toast } from 'vue-sonner'
 import type { WebSerialNovelProviders } from '@bookorbit/types'
@@ -11,7 +12,7 @@ export function useWebSerialNovelProviders() {
   const error = ref<string | null>(null)
   const linkQuery = ref('')
   const linkOpen = ref(false)
-  let saveToken = 0
+  const saveToken = createRequestGeneration()
 
   const search = computed(() => providers.value?.search ?? [])
   const unavailable = computed(() => providers.value?.unavailable ?? false)
@@ -40,12 +41,12 @@ export function useWebSerialNovelProviders() {
     const entry = current?.search.find((item) => item.domain === domain)
     if (!current || !entry || entry.enabled === enabled) return
     entry.enabled = enabled
-    const token = ++saveToken
+    const token = saveToken.begin()
     try {
       const saved = await saveNovelProviders({ disabledDomains: current.search.filter((item) => !item.enabled).map((item) => item.domain) })
       // The kept answer was searched with the old set of sites, so coming back to the page searches again.
       clearStoredSearch()
-      if (token === saveToken) providers.value = saved
+      if (saveToken.isCurrent(token)) providers.value = saved
     } catch (cause) {
       entry.enabled = !enabled
       toast.error(messageOf(cause, 'webSerials.api.saveNovelProviders'))

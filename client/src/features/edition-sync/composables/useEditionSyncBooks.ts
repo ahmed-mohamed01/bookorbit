@@ -1,3 +1,4 @@
+import { useDebounceFn } from '@vueuse/core'
 import { computed, onScopeDispose, ref, toValue, watch, type MaybeRefOrGetter } from 'vue'
 import { toast } from 'vue-sonner'
 import {
@@ -73,7 +74,6 @@ export function useEditionSyncBooks(options: UseEditionSyncBooksOptions = {}) {
   /** Rows whose status came from an action, waiting for the re-fetch to bring their details. */
   const detailsPendingIds = ref<ReadonlySet<number>>(new Set())
   let requestId = 0
-  let searchTimer: ReturnType<typeof setTimeout> | null = null
   let refreshTimer: ReturnType<typeof setTimeout> | null = null
   let disposed = false
   // The first answer picks the opening tab: Problems when anything failed, otherwise All.
@@ -175,10 +175,11 @@ export function useEditionSyncBooks(options: UseEditionSyncBooksOptions = {}) {
     },
   )
 
-  function clearSearchTimer(): void {
-    if (searchTimer) clearTimeout(searchTimer)
-    searchTimer = null
-  }
+  const search = useDebounceFn(() => {
+    if (disposed) return
+    page.value = 1
+    void load()
+  }, EDITION_SYNC_BOOKS_SEARCH_DEBOUNCE_MS)
 
   function setFilter(value: EditionSyncBookListFilter): void {
     pickOpeningTab = false
@@ -190,12 +191,7 @@ export function useEditionSyncBooks(options: UseEditionSyncBooksOptions = {}) {
 
   function setQuery(value: string): void {
     query.value = value.slice(0, EDITION_SYNC_BOOKS_QUERY_MAX_LENGTH)
-    clearSearchTimer()
-    searchTimer = setTimeout(() => {
-      searchTimer = null
-      page.value = 1
-      void load()
-    }, EDITION_SYNC_BOOKS_SEARCH_DEBOUNCE_MS)
+    void search()
   }
 
   function nextPage(): void {
@@ -265,7 +261,6 @@ export function useEditionSyncBooks(options: UseEditionSyncBooksOptions = {}) {
 
   onScopeDispose(() => {
     disposed = true
-    clearSearchTimer()
     clearRefreshTimer()
     document.removeEventListener('visibilitychange', handleVisibilityChange)
     requestId += 1

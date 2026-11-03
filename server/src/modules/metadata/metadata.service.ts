@@ -6,6 +6,7 @@ import { and, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import sharp from 'sharp';
 
+import { normalizeIsbn } from '../../common/text-match/isbn-normalize';
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
 import { mapWithConcurrency } from '../../common/utils/batch.utils';
@@ -1198,7 +1199,7 @@ export class MetadataService {
       title: data.title,
       subtitle: data.subtitle,
       description: data.description,
-      isbn10: data.isbn10 ? data.isbn10.replace(/[^0-9Xx]/g, '') : data.isbn10,
+      isbn10: data.isbn10 ? normalizeIsbn(data.isbn10) : data.isbn10,
       isbn13: data.isbn13 ? data.isbn13.replace(/[^0-9]/g, '') : data.isbn13,
       publisher: normalizeMetadataText(data.publisher),
       publishedDate: data.publishedDate,

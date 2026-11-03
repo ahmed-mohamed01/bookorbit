@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { createRequestGeneration } from '@/lib/async'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowLeft, Info, Link2, Loader2, Rows3, Search, StretchHorizontal, TriangleAlert } from '@lucide/vue'
@@ -142,10 +143,10 @@ function tickAge() {
   now.value = Date.now()
 }
 
-let previewSeq = 0
+const previewSeq = createRequestGeneration()
 
 async function openPreview(target: PreviewTarget) {
-  const mine = ++previewSeq
+  const mine = previewSeq.begin()
   lastPreviewTarget.value = target
   search.clearPreviewError()
   emit('preview-loading')
@@ -156,7 +157,7 @@ async function openPreview(target: PreviewTarget) {
     detail = await search.submit()
   }
   // A later preview replaced this one while it loaded.
-  if (mine !== previewSeq) return
+  if (!previewSeq.isCurrent(mine)) return
   if (detail) emit('open', detail)
   else emit('preview-error', previewError.value ?? t('webSerials.preview.loadError'))
 }

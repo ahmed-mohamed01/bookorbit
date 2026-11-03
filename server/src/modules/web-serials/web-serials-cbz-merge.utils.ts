@@ -5,13 +5,13 @@ import { Transform, type Readable } from 'stream';
 import { BadGatewayException } from '@nestjs/common';
 import { ZipArchive, type Archiver } from 'archiver';
 
+import { compareArchiveEntryNames, isHiddenArchivePath } from '../metadata/lib/archive-image-utils';
 import { buildComicInfoXml } from '../file-write/formats/cbx/comic-info-builder';
 import type { BookWritePayload, BookWritePayloadKey } from '../file-write/interfaces/book-write-payload.interface';
 import { createCbzZipEntryReadStream, isSupportedCbzZipCompression, readCbzZipIndex } from '../../common/cbz-zip-reader';
 
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif']);
 const MAX_MERGED_PAGES = 250_000;
-const COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 export interface MergedCbzMetadata {
   series: string;
@@ -62,8 +62,8 @@ export async function mergeCbzChapters(
       const index = await readCbzZipIndex(chapterPath);
       if (!index) throw new BadGatewayException('A downloaded chapter is not a valid CBZ file');
       const entries = index.entries
-        .filter((entry) => IMAGE_EXTENSIONS.has(extname(entry.name).toLowerCase()))
-        .sort((left, right) => COLLATOR.compare(left.name, right.name));
+        .filter((entry) => !isHiddenArchivePath(entry.name) && IMAGE_EXTENSIONS.has(extname(entry.name).toLowerCase()))
+        .sort((left, right) => compareArchiveEntryNames(left.name, right.name));
       for (let pageIndex = 0; pageIndex < entries.length; pageIndex += 1) {
         const entry = entries[pageIndex]!;
         if (!isSupportedCbzZipCompression(entry)) throw new BadGatewayException('A downloaded chapter uses unsupported ZIP compression');

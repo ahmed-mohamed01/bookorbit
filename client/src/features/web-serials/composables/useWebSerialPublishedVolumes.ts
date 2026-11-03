@@ -1,3 +1,5 @@
+import { candidateTitle } from '@/features/book-requests/composables/useRequestSubmission'
+import { createRequestGeneration } from '@/lib/async'
 import { computed, onScopeDispose, ref, unref, watch, type Ref } from 'vue'
 import { i18n } from '@/i18n'
 import { isCancellableBookRequestStatus, isGrabbableBookRequestStatus } from '@bookorbit/types'
@@ -22,7 +24,7 @@ import {
 } from '../api/bookRequests'
 import { fetchCapabilities } from '../api/webSerials'
 import { messageOf } from '../lib/messageOf'
-import { buildMatchedVolumeRequest, candidateTitle, type VolumeCandidatePick } from '../lib/publishedVolumeMatch'
+import { buildMatchedVolumeRequest, type VolumeCandidatePick } from '../lib/publishedVolumeMatch'
 import {
   buildVolumeRequest,
   buildVolumeRows,
@@ -92,7 +94,7 @@ export function useWebSerialPublishedVolumes(series: Ref<PublishedSeries | null>
   const rematchBusy = ref(false)
   const requestLanguage = ref<string | null>(null)
   const stopping = ref(false)
-  let token = 0
+  const token = createRequestGeneration()
 
   const visible = computed(() => access.canRequest.value && access.offered.value && series.value !== null && configured.value === true)
   const knownCount = computed(() => series.value?.publication?.finalVolume ?? null)
@@ -147,25 +149,25 @@ export function useWebSerialPublishedVolumes(series: Ref<PublishedSeries | null>
 
   async function loadRequests(): Promise<void> {
     const current = series.value
-    const mine = ++token
+    const mine = token.begin()
     if (!current) return
     listState.value = 'loading'
     listError.value = null
     try {
       const recorded = await fetchPublishedRequests(current.kind, current.matchId)
       const found = await fetchStatuses(recorded)
-      if (mine !== token) return
+      if (!token.isCurrent(mine)) return
       requests.value = found
       listState.value = 'ready'
     } catch (cause) {
-      if (mine !== token) return
+      if (!token.isCurrent(mine)) return
       listError.value = messageOf(cause, 'webSerials.api.requests')
       listState.value = 'error'
     }
   }
 
   function reset(): void {
-    token += 1
+    token.invalidate()
     requests.value = new Map()
     typedCount.value = null
     pending.value = new Set()
@@ -225,9 +227,9 @@ export function useWebSerialPublishedVolumes(series: Ref<PublishedSeries | null>
   /** Once the request exists it is recorded against the series it was made for, even if the sheet closed or moved on meanwhile. */
   async function createAndRecord(current: PublishedSeries, volume: number, payload: CreateBookRequestPayload, mine: number): Promise<boolean> {
     const result = await createVolumeRequest(payload)
-    if (mine === token) setRequest(volume, result.request)
+    if (token.isCurrent(mine)) setRequest(volume, result.request)
     await recordRequest(current, volume, result.request.id)
-    return mine === token
+    return token.isCurrent(mine)
   }
 
   function matchedPayload(current: PublishedSeries, volume: number, pick: VolumeCandidatePick): CreateBookRequestPayload {
@@ -250,13 +252,13 @@ export function useWebSerialPublishedVolumes(series: Ref<PublishedSeries | null>
   async function requestVolume(volume: number): Promise<boolean> {
     const current = series.value
     if (!current || pending.value.has(volume) || !stillMissing(volume)) return false
-    const mine = token
+    const mine = token.current()
     pending.value = new Set(pending.value).add(volume)
     setError(volume, null)
     setMatch(volume, { state: 'searching' })
     try {
       const pick = await match.resolveVolume(current, volume)
-      if (mine !== token) return false
+      if (!token.isCurrent(mine)) return false
       if (!pick) {
         setMatch(volume, { state: 'none' })
         return false
@@ -264,13 +266,13 @@ export function useWebSerialPublishedVolumes(series: Ref<PublishedSeries | null>
       setMatch(volume, { state: 'matched', title: candidateTitle(pick.candidate) })
       return await createAndRecord(current, volume, matchedPayload(current, volume, pick), mine)
     } catch (cause) {
-      if (mine === token) {
+      if (token.isCurrent(mine)) {
         setError(volume, messageOf(cause, 'webSerials.api.requestVolume'))
         setMatch(volume, null)
       }
       return false
     } finally {
-      if (mine === token) {
+      if (token.isCurrent(mine)) {
         const next = new Set(pending.value)
         next.delete(volume)
         pending.value = next
@@ -282,7 +284,7 @@ export function useWebSerialPublishedVolumes(series: Ref<PublishedSeries | null>
   async function requestVolumeAnyway(volume: number): Promise<boolean> {
     const current = series.value
     if (!current || pending.value.has(volume) || !stillMissing(volume)) return false
-    const mine = token
+    const mine = token.current()
     pending.value = new Set(pending.value).add(volume)
     setError(volume, null)
     try {
@@ -290,10 +292,10 @@ export function useWebSerialPublishedVolumes(series: Ref<PublishedSeries | null>
       if (done) setMatch(volume, null)
       return done
     } catch (cause) {
-      if (mine === token) setError(volume, messageOf(cause, 'webSerials.api.requestVolume'))
+      if (token.isCurrent(mine)) setError(volume, messageOf(cause, 'webSerials.api.requestVolume'))
       return false
     } finally {
-      if (mine === token) {
+      if (token.isCurrent(mine)) {
         const next = new Set(pending.value)
         next.delete(volume)
         pending.value = next
@@ -306,18 +308,18 @@ export function useWebSerialPublishedVolumes(series: Ref<PublishedSeries | null>
     if (bulk.value) return
     const volumes = missing.value.map((row) => row.volume)
     if (volumes.length === 0) return
-    const mine = token
+    const mine = token.current()
     bulk.value = { done: 0, total: volumes.length }
     stopping.value = false
     try {
       for (const volume of volumes) {
-        if (mine !== token || stopping.value) return
+        if (!token.isCurrent(mine) || stopping.value) return
         await requestVolume(volume)
-        if (mine !== token) return
+        if (!token.isCurrent(mine)) return
         bulk.value = { done: bulk.value.done + 1, total: volumes.length }
       }
     } finally {
-      if (mine === token) {
+      if (token.isCurrent(mine)) {
         bulk.value = null
         stopping.value = false
       }
@@ -337,13 +339,13 @@ export function useWebSerialPublishedVolumes(series: Ref<PublishedSeries | null>
     const current = series.value
     const request = requests.value.get(volume) ?? null
     if (!current || !canRematch(request) || pending.value.has(volume)) return
-    const mine = token
+    const mine = token.current()
     pending.value = new Set(pending.value).add(volume)
     setError(volume, null)
     setMatch(volume, { state: 'searching' })
     try {
       const pick = await match.resolveVolume(current, volume)
-      if (mine !== token) return
+      if (!token.isCurrent(mine)) return
       if (!pick) {
         setMatch(volume, { state: 'none' })
         return
@@ -352,12 +354,12 @@ export function useWebSerialPublishedVolumes(series: Ref<PublishedSeries | null>
       setMatch(volume, { state: 'matched', title })
       rematch.value = { volume, request, title, payload: matchedPayload(current, volume, pick) }
     } catch (cause) {
-      if (mine === token) {
+      if (token.isCurrent(mine)) {
         setError(volume, messageOf(cause, 'webSerials.api.matchVolume'))
         setMatch(volume, null)
       }
     } finally {
-      if (mine === token) {
+      if (token.isCurrent(mine)) {
         const next = new Set(pending.value)
         next.delete(volume)
         pending.value = next
@@ -369,20 +371,20 @@ export function useWebSerialPublishedVolumes(series: Ref<PublishedSeries | null>
     const held = rematch.value
     const current = series.value
     if (!held || !current || rematchBusy.value) return
-    const mine = token
+    const mine = token.current()
     rematchBusy.value = true
     try {
       // The old request is gone once cancelled, so the confirmed replacement is asked for and recorded even if the sheet closed.
       const cancelled = await cancelVolumeRequest(held.request.id)
       // The row shows the cancellation before the replacement exists, so a refusal leaves it saying what it is.
-      if (mine === token) setRequest(held.volume, cancelled)
+      if (token.isCurrent(mine)) setRequest(held.volume, cancelled)
       const result = await createVolumeRequest(held.payload)
-      if (mine === token) setRequest(held.volume, result.request)
+      if (token.isCurrent(mine)) setRequest(held.volume, result.request)
       await recordRequest(current, held.volume, result.request.id)
     } catch (cause) {
-      if (mine === token) setError(held.volume, messageOf(cause, 'webSerials.api.requestMatched'))
+      if (token.isCurrent(mine)) setError(held.volume, messageOf(cause, 'webSerials.api.requestMatched'))
     } finally {
-      if (mine === token) {
+      if (token.isCurrent(mine)) {
         rematchBusy.value = false
         rematch.value = null
       }
@@ -391,7 +393,7 @@ export function useWebSerialPublishedVolumes(series: Ref<PublishedSeries | null>
 
   // Work still running when the section goes away must not write to it or keep requesting volumes.
   onScopeDispose(() => {
-    token += 1
+    token.invalidate()
   })
 
   function cancelRematch(): void {
@@ -421,11 +423,11 @@ export function useWebSerialPublishedVolumes(series: Ref<PublishedSeries | null>
 
   async function findReleases(request: BookRequestItem): Promise<void> {
     if (!canFindReleases(request)) return
-    const mine = token
+    const mine = token.current()
     setReleases(request.id, { state: 'loading', releases: [], total: 0, error: null })
     try {
       const result = await fetchRequestReleases(request.id)
-      if (mine !== token) return
+      if (!token.isCurrent(mine)) return
       setReleases(request.id, {
         state: 'ready',
         releases: result.releases.slice(0, INLINE_RELEASE_LIMIT),
@@ -433,7 +435,7 @@ export function useWebSerialPublishedVolumes(series: Ref<PublishedSeries | null>
         error: null,
       })
     } catch (cause) {
-      if (mine !== token) return
+      if (!token.isCurrent(mine)) return
       setReleases(request.id, { state: 'error', releases: [], total: 0, error: messageOf(cause, 'webSerials.api.releases') })
     }
   }
@@ -444,20 +446,20 @@ export function useWebSerialPublishedVolumes(series: Ref<PublishedSeries | null>
 
   async function grab(volume: number, request: BookRequestItem, release: ReleaseCandidateItem): Promise<boolean> {
     if (grabbing.value !== null || !canFindReleases(request)) return false
-    const mine = token
+    const mine = token.current()
     grabbing.value = release.guid
     setError(volume, null)
     try {
       const updated = await grabRequestRelease(request.id, release.indexerId, release.guid)
-      if (mine !== token) return false
+      if (!token.isCurrent(mine)) return false
       setRequest(volume, updated)
       setReleases(request.id, null)
       return true
     } catch (cause) {
-      if (mine === token) setError(volume, messageOf(cause, 'webSerials.api.grab'))
+      if (token.isCurrent(mine)) setError(volume, messageOf(cause, 'webSerials.api.grab'))
       return false
     } finally {
-      if (mine === token) grabbing.value = null
+      if (token.isCurrent(mine)) grabbing.value = null
     }
   }
 

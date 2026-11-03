@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
+import { languageSubtagOf } from '@bookorbit/types';
 import { BadGatewayException, Injectable } from '@nestjs/common';
 import { ZipArchive } from 'archiver';
 import { load } from 'cheerio';
@@ -22,24 +23,6 @@ const MAX_IMAGES_PER_BOOK = 400;
 const MISSING_CHAPTER_BODY = '<p>This chapter could not be downloaded from the source.</p>';
 const VOID_TAGS = new Set(['br', 'hr', 'img']);
 const EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
-const LANGUAGE_CODES: Record<string, string> = {
-  arabic: 'ar',
-  chinese: 'zh',
-  english: 'en',
-  french: 'fr',
-  german: 'de',
-  indonesian: 'id',
-  italian: 'it',
-  japanese: 'ja',
-  korean: 'ko',
-  polish: 'pl',
-  portuguese: 'pt',
-  russian: 'ru',
-  spanish: 'es',
-  thai: 'th',
-  turkish: 'tr',
-  vietnamese: 'vi',
-};
 const DROP_TAGS = new Set(['script', 'style', 'iframe', 'form', 'object', 'embed', 'input', 'button', 'textarea', 'select', 'option']);
 const KEEP_TAGS = new Set([
   'p',
@@ -384,7 +367,7 @@ function externalHref(href: string | undefined): string | null {
 function epubLanguage(value: string | null | undefined): string {
   const text = value?.trim() ?? '';
   if (/^[a-z]{2,3}(-[a-z0-9]{1,8})*$/i.test(text)) return text;
-  return LANGUAGE_CODES[text.toLowerCase()] ?? 'en';
+  return languageSubtagOf(text) ?? 'en';
 }
 
 function chapterXhtml(title: string, body: string, language: string): string {

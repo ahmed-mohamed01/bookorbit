@@ -1,3 +1,4 @@
+import { createRequestGeneration } from '@/lib/async'
 import { computed, ref, watch, type Ref } from 'vue'
 import type { WebSerialMetadataOverride, WebSerialSeriesDetail, WebSerialSeriesLookup, WebSerialSeriesMatch } from '@bookorbit/types'
 import { i18n } from '@/i18n'
@@ -28,7 +29,7 @@ export function useWebSerialLookup(detail: Ref<WebSerialSeriesDetail | null>, pr
   // Once the user edits a credit, a late lookup result must not overwrite it.
   const authorsEdited = ref(false)
   const artistsEdited = ref(false)
-  let token = 0
+  const token = createRequestGeneration()
   let keepCreditsOnNextChange = false
 
   // The preset is only what the opening row knew; the server's match for the same id carries the full credits and publication.
@@ -57,7 +58,7 @@ export function useWebSerialLookup(detail: Ref<WebSerialSeriesDetail | null>, pr
 
   async function load(): Promise<void> {
     const current = detail.value
-    const mine = ++token
+    const mine = token.begin()
     if (!current) {
       lookup.value = null
       loading.value = false
@@ -68,10 +69,10 @@ export function useWebSerialLookup(detail: Ref<WebSerialSeriesDetail | null>, pr
     try {
       const presetId = preset?.value?.id
       const result = await (presetId ? fetchSeriesLookup(current.seriesKey, presetId) : fetchSeriesLookup(current.seriesKey))
-      if (mine !== token) return
+      if (!token.isCurrent(mine)) return
       lookup.value = result
     } catch (cause) {
-      if (mine !== token) return
+      if (!token.isCurrent(mine)) return
       lookup.value = {
         state: 'unavailable',
         match: null,

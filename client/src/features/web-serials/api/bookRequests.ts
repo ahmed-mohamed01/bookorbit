@@ -1,7 +1,8 @@
 import { i18n } from '@/i18n'
 import { api } from '@/lib/api'
 import { ApiError, apiError, apiJson, apiSend, jsonBody } from '@/lib/api-json'
-import { bookRequestActionErrorCode, bookRequestSubmitErrorCode } from '@bookorbit/types'
+import { localizedRequestActionFailure } from '@/features/book-requests/requestActionFailure'
+import { submitFailure, submitFailureText } from '@/features/book-requests/composables/useRequestSubmission'
 import { RequestRefusal } from '../lib/messageOf'
 import type {
   BookRequestFailureMeta,
@@ -55,19 +56,9 @@ async function readFailure(response: Response): Promise<RequestFailureBody | nul
 export async function createVolumeRequest(payload: CreateBookRequestPayload): Promise<BookRequestSubmitResult> {
   const response = await api(REQUESTS, jsonBody('POST', payload))
   if (response.ok) return (await response.json()) as BookRequestSubmitResult
-  const body = await readFailure(response)
-  const code = bookRequestSubmitErrorCode(body?.errorCode)
-  const message = (Array.isArray(body?.message) ? body.message[0] : body?.message) ?? null
-  const text = code ? i18n.global.t(`bookRequests.submitError.${code}`, body?.errorMeta ?? {}) : message
-  throw new ApiError(text ?? i18n.global.t('webSerials.api.requestVolume'), response.status, code, message)
-}
-
-/** App-authored refusals have catalog text; a tracker's or client's own sentence stays as it is. */
-function localizedActionFailure(errorCode: unknown, meta: BookRequestFailureMeta): string | null {
-  const actionCode = bookRequestActionErrorCode(errorCode)
-  if (actionCode) return i18n.global.t(`bookRequests.actionError.${actionCode}`, meta)
-  const submitCode = bookRequestSubmitErrorCode(errorCode)
-  return submitCode ? i18n.global.t(`bookRequests.submitError.${submitCode}`, meta) : null
+  const failure = await submitFailure(response)
+  const text = submitFailureText(failure, i18n.global.t)
+  throw new ApiError(text ?? i18n.global.t('webSerials.api.requestVolume'), response.status, failure.code, failure.message)
 }
 
 /**
@@ -79,7 +70,8 @@ async function requestActionRefusal(response: Response, fallbackKey: string): Pr
   const joined = Array.isArray(body?.message) ? body.message.join('. ') : body?.message
   const reason = joined?.trim() ? joined.trim() : null
   const errorCode = typeof body?.errorCode === 'string' ? body.errorCode : null
-  const text = localizedActionFailure(errorCode, body?.errorMeta ?? {}) ?? reason
+  const localized = localizedRequestActionFailure({ reason, errorCode, errorMeta: body?.errorMeta })
+  const text = localized ? i18n.global.t(localized.key, localized.params) : reason
   if (!text) return new ApiError(i18n.global.t(fallbackKey), response.status, errorCode, null)
   return new RequestRefusal(text, response.status, errorCode, reason)
 }

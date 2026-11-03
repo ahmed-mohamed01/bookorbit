@@ -118,6 +118,7 @@ describe('fileKind', () => {
     expect(fileKind('a.EPUB')).toBe('ebook')
     expect(fileKind('a.m4b')).toBe('audio')
     expect(fileKind('a.png')).toBe('image')
+    for (const extension of ['txt', 'lit', 'aac', 'wav', 'wma']) expect(fileKind(`a.${extension}`)).toBe('other')
     expect(fileKind('a.nfo')).toBe('other')
     expect(fileKind('noext')).toBe('other')
   })

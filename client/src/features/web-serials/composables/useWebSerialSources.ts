@@ -1,3 +1,4 @@
+import { createRequestGeneration } from '@/lib/async'
 import { ref, watch, type Ref } from 'vue'
 import type { WebSerialSourceOption } from '@bookorbit/types'
 import { fetchSeriesSources } from '../api/webSerials'
@@ -8,11 +9,11 @@ export type WebSerialSourcesState = 'idle' | 'loading' | 'ready' | 'error'
 export function useWebSerialSources(seriesKey: Ref<string | null>) {
   const options = ref<WebSerialSourceOption[]>([])
   const state = ref<WebSerialSourcesState>('idle')
-  let token = 0
+  const token = createRequestGeneration()
   let controller: AbortController | null = null
 
   async function load(key: string | null): Promise<void> {
-    const mine = ++token
+    const mine = token.begin()
     controller?.abort()
     controller = null
     options.value = []
@@ -24,11 +25,11 @@ export function useWebSerialSources(seriesKey: Ref<string | null>) {
     controller = new AbortController()
     try {
       const result = await fetchSeriesSources(key, controller.signal)
-      if (mine !== token) return
+      if (!token.isCurrent(mine)) return
       options.value = result.options
       state.value = 'ready'
     } catch {
-      if (mine !== token) return
+      if (!token.isCurrent(mine)) return
       state.value = 'error'
     }
   }

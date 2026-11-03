@@ -1,13 +1,14 @@
 <script setup lang="ts">
+import { formatLanguageName } from '@/i18n/formatters'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { cleanSourceName, effectiveSourceIds, groupSourcesByLanguage, languageName, setSourcesSelected, toggleSource } from './settingsLib'
+import { cleanSourceName, effectiveSourceIds, groupSourcesByLanguage, setSourcesSelected, toggleSource } from './settingsLib'
 import { useWebSerialSettingsContext } from './settingsContext'
 import WebSerialSourcesDisclaimer from '../WebSerialSourcesDisclaimer.vue'
 
 const GROUP_COLORS = ['--format-ebook', '--format-kindle', '--format-document', '--format-comic', '--format-audio']
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const state = useWebSerialSettingsContext()
 const { draft, mangaSources, mangaSourcesLoading, mangaSourcesError } = state
 
@@ -67,7 +68,7 @@ function handleGroupNone(ids: string[]) {
         <div v-for="(group, index) in groups" :key="group.lang" class="rounded-lg border border-border bg-background px-3 py-2.5">
           <div class="mb-2 flex items-center gap-2">
             <span class="size-1.5 rounded-[2px]" :style="{ backgroundColor: groupColor(index) }" aria-hidden="true" />
-            <p :id="`web-serials-lang-${group.lang}`" class="text-xs font-semibold text-foreground">{{ languageName(group.lang, locale) }}</p>
+            <p :id="`web-serials-lang-${group.lang}`" class="text-xs font-semibold text-foreground">{{ formatLanguageName(group.lang) }}</p>
             <span class="text-xs text-muted-foreground">
               {{ t('webSerials.settings.sources.groupCount', { selected: groupSelectedCount(group.ids), total: group.ids.length }) }}
             </span>

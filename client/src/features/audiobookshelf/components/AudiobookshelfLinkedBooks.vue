@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useDebounceFn } from '@vueuse/core'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { AlertCircle, Ban, BookOpen, Check, ChevronLeft, ChevronRight, Link2, Loader2, RefreshCw, Search, Unlink } from '@lucide/vue'
 import { toast } from 'vue-sonner'
@@ -39,11 +40,16 @@ const searchResults = ref<BookSearchOption[]>([])
 const selectedBook = ref<BookSearchOption | null>(null)
 const searching = ref(false)
 const searchError = ref<string | null>(null)
-let searchTimer: ReturnType<typeof setTimeout> | null = null
+let disposed = false
+const search = useDebounceFn(() => {
+  if (!disposed) void runSearch(searchQuery.value)
+}, 250)
 let searchRequestId = 0
 
 const filterQuery = ref(persistedFilterQuery.value)
-let filterTimer: ReturnType<typeof setTimeout> | null = null
+const filter = useDebounceFn(() => {
+  if (!disposed) void setSearchQuery(filterQuery.value)
+}, FILTER_DEBOUNCE_MS)
 
 const buckets: Array<{ id: AudiobookshelfBookStateBucket; label: string }> = [
   { id: 'linked', label: 'Linked' },
@@ -63,9 +69,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  if (searchTimer) clearTimeout(searchTimer)
+  disposed = true
   searchRequestId++
-  if (filterTimer) clearTimeout(filterTimer)
 })
 
 function selectBucket(bucket: AudiobookshelfBookStateBucket): void {
@@ -75,8 +80,7 @@ function selectBucket(bucket: AudiobookshelfBookStateBucket): void {
 
 function handleFilterInput(event: Event): void {
   filterQuery.value = (event.target as HTMLInputElement).value
-  if (filterTimer) clearTimeout(filterTimer)
-  filterTimer = setTimeout(() => void setSearchQuery(filterQuery.value), FILTER_DEBOUNCE_MS)
+  void filter()
 }
 
 function matchMethodLabel(method: AudiobookshelfBookState['matchMethod']): string {
@@ -156,8 +160,7 @@ async function runSearch(query: string): Promise<void> {
 function handleSearchInput(event: Event): void {
   searchQuery.value = (event.target as HTMLInputElement).value
   selectedBook.value = null
-  if (searchTimer) clearTimeout(searchTimer)
-  searchTimer = setTimeout(() => void runSearch(searchQuery.value), 250)
+  void search()
 }
 
 function selectSearchResult(option: BookSearchOption): void {

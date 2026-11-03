@@ -1,3 +1,4 @@
+import { useDebounceFn } from '@vueuse/core'
 import { ref, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
@@ -124,7 +125,6 @@ export function useAudiobookshelfSyncActions(sync: AudiobookshelfSyncHandle, aud
   const searching = ref(false)
   const searchError = ref(false)
   const hasSearched = ref(false)
-  let searchTimer: ReturnType<typeof setTimeout> | null = null
   let searchRequestId = 0
 
   async function runSearch(value: string, requestId: number): Promise<void> {
@@ -145,20 +145,18 @@ export function useAudiobookshelfSyncActions(sync: AudiobookshelfSyncHandle, aud
     }
   }
 
+  const search = useDebounceFn((value: string, requestId: number) => {
+    if (requestId === searchRequestId) void runSearch(value, requestId)
+  }, SEARCH_DEBOUNCE_MS)
+
   function setQuery(value: string): void {
     query.value = value
-    if (searchTimer) clearTimeout(searchTimer)
     const requestId = ++searchRequestId
     searching.value = true
-    searchTimer = setTimeout(() => {
-      searchTimer = null
-      void runSearch(value, requestId)
-    }, SEARCH_DEBOUNCE_MS)
+    void search(value, requestId)
   }
 
   function resetSearch(): void {
-    if (searchTimer) clearTimeout(searchTimer)
-    searchTimer = null
     searchRequestId += 1
     query.value = ''
     results.value = []

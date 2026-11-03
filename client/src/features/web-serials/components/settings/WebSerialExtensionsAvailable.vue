@@ -8,18 +8,18 @@ import { Select } from '@/components/ui/select'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import { useWebSerialExtensionsContext } from './extensionsContext'
 import WebSerialExtensionRow from './WebSerialExtensionRow.vue'
-import { languageName } from './settingsLib'
+import { formatLanguageName } from '@/i18n/formatters'
 
 const emit = defineEmits<{ goToRepositories: [] }>()
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const state = useWebSerialExtensionsContext()
 const { available, availableTotal, languages, availableLoading, availableError, search, lang, showAdult, refreshing, hasMore, repos, busy } = state
 
 const languageOptions = computed(() =>
   languages.value.map((code) => ({
     code,
-    label: code === 'all' ? t('webSerials.settings.extensions.multiLanguage') : languageName(code, locale.value),
+    label: code === 'all' ? t('webSerials.settings.extensions.multiLanguage') : formatLanguageName(code),
   })),
 )
 const noRepos = computed(() => repos.value.length === 0)

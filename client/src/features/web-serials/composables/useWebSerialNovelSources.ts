@@ -1,3 +1,4 @@
+import { createRequestGeneration } from '@/lib/async'
 import { computed, reactive, ref } from 'vue'
 import type { WebSerialNovelSourceEntry } from '@bookorbit/types'
 import { fetchAvailableNovelSources, fetchInstalledNovelSources, runNovelSourceAction } from '../api/webSerials'
@@ -17,17 +18,17 @@ export function useWebSerialNovelSources(onChanged: () => void | Promise<void>) 
     return sources.value.filter((source) => !text || `${source.name} ${source.site}`.toLocaleLowerCase().includes(text))
   })
 
-  let loadToken = 0
+  const loadToken = createRequestGeneration()
 
   async function load(): Promise<void> {
-    const mine = ++loadToken
+    const mine = loadToken.begin()
     const wanted = language.value
     loading.value = true
     error.value = null
     try {
       const [available, current] = await Promise.all([fetchAvailableNovelSources(wanted), fetchInstalledNovelSources()])
       // A newer load, for instance for another language, owns the list now.
-      if (mine !== loadToken) return
+      if (!loadToken.isCurrent(mine)) return
       const installedById = new Map(current.map((source) => [source.id, source]))
       const availableIds = new Set(available.map((source) => source.id))
       sources.value = [
@@ -39,9 +40,9 @@ export function useWebSerialNovelSources(onChanged: () => void | Promise<void>) 
       ]
       installed.value = current
     } catch (cause) {
-      if (mine === loadToken) error.value = messageOf(cause, 'webSerials.api.novelSources')
+      if (loadToken.isCurrent(mine)) error.value = messageOf(cause, 'webSerials.api.novelSources')
     } finally {
-      if (mine === loadToken) loading.value = false
+      if (loadToken.isCurrent(mine)) loading.value = false
     }
   }
 

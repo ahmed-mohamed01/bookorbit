@@ -1,3 +1,4 @@
+import { createRequestGeneration } from '@/lib/async'
 import { computed, onScopeDispose, ref, toValue, watch, type MaybeRefOrGetter, type Ref } from 'vue'
 import { parseReleaseVolumes, releaseNamesSeries } from '@bookorbit/types'
 import type {
@@ -54,9 +55,9 @@ export function useLightNovelAcquisition(
     return (indexers.value.find((indexer) => indexer.indexerId === release.indexerId)?.delivery ?? 'torrent') === 'torrent'
   }
   let draft: (WebSerialDraft & { matchId: string }) | null = null
-  let searchGeneration = 0
+  const searchGeneration = createRequestGeneration()
   let sent = false
-  let generation = 0
+  const generation = createRequestGeneration()
   const closed = ref(false)
   let timer: ReturnType<typeof setTimeout> | undefined
   let controller: AbortController | undefined
@@ -77,7 +78,7 @@ export function useLightNovelAcquisition(
   const approver = () => toValue(access.role) === 'approver'
   function closeDraft() {
     closed.value = true
-    generation++
+    generation.invalidate()
     controller?.abort()
     clearTimeout(timer)
     const current = draft
@@ -95,48 +96,48 @@ export function useLightNovelAcquisition(
   async function refresh() {
     const current = series.value
     const body = input.value
-    const token = generation
+    const token = generation.current()
     if (closed.value || !current || !body) return
     try {
       const next = await fetchPrintState(current.matchId, body)
-      if (closed.value || token !== generation) return
+      if (closed.value || !generation.isCurrent(token)) return
       state.value = next
     } catch (cause) {
-      if (token === generation) error.value = cause
+      if (generation.isCurrent(token)) error.value = cause
     }
-    if (token === generation) schedulePoll()
+    if (generation.isCurrent(token)) schedulePoll()
   }
   const requesting = ref(false)
   async function requestVolumes(volumes: number[]) {
     const current = series.value
     const body = input.value
     if (!current || !body || requesting.value || approver() || closed.value) return
-    const token = generation
+    const token = generation.current()
     requesting.value = true
     try {
       const next = await requestPrintVolumes(current.matchId, { ...body, volumes })
-      if (token === generation && !closed.value) {
+      if (generation.isCurrent(token) && !closed.value) {
         state.value = next
         clearFilter()
       }
     } catch (cause) {
-      if (token === generation) error.value = cause
+      if (generation.isCurrent(token)) error.value = cause
     } finally {
-      if (token === generation) requesting.value = false
+      if (generation.isCurrent(token)) requesting.value = false
     }
   }
   async function cancelRequest() {
     const id = state.value?.bookRequestId
     if (id == null || requesting.value || approver() || closed.value) return
-    const token = generation
+    const token = generation.current()
     requesting.value = true
     try {
       await cancelVolumeRequest(id)
-      if (token === generation && !closed.value) await refresh()
+      if (generation.isCurrent(token) && !closed.value) await refresh()
     } catch (cause) {
-      if (token === generation) error.value = cause
+      if (generation.isCurrent(token)) error.value = cause
     } finally {
-      if (token === generation) requesting.value = false
+      if (generation.isCurrent(token)) requesting.value = false
     }
   }
   function toggleVolume(volume: number) {
@@ -231,9 +232,9 @@ export function useLightNovelAcquisition(
     }
     if (inspectionPromises.has(key)) return inspectionPromises.get(key)!
     const current = draft
-    const token = generation
+    const token = generation.current()
     if (closed.value || !current || !approver()) return null
-    const searchToken = searchGeneration
+    const searchToken = searchGeneration.current()
     inspecting.value.add(key)
     inspectionErrors.value.delete(key)
     const operation = (async () => {
@@ -246,7 +247,7 @@ export function useLightNovelAcquisition(
         })
         if (!response.ok) throw await apiError(response, 'webSerials.api.releases')
         const inspection = (await response.json()) as ReleaseFileInspection
-        if (closed.value || token !== generation || searchToken !== searchGeneration) return null
+        if (closed.value || !generation.isCurrent(token) || !searchGeneration.isCurrent(searchToken)) return null
         inspections.value.set(key, inspection)
         const releaseTitle = results.value.find((item) => releaseKey(item) === key)?.title ?? ''
         if (inspection.unitCount === 0 || (inspection.unitCount === 1 && (releaseVolumes(releaseTitle)?.length ?? 0) !== 1)) {
@@ -257,13 +258,13 @@ export function useLightNovelAcquisition(
           fileSelection.value.set(key, preselectMissingUnits(inspection.selection?.units ?? [], state.value?.volumes ?? []))
         return inspection
       } catch (cause) {
-        if (token === generation && searchToken === searchGeneration) {
+        if (generation.isCurrent(token) && searchGeneration.isCurrent(searchToken)) {
           error.value = cause
           inspectionErrors.value.set(key, cause)
         }
         return null
       } finally {
-        if (token === generation && searchToken === searchGeneration) {
+        if (generation.isCurrent(token) && searchGeneration.isCurrent(searchToken)) {
           inspectionPromises.delete(key)
           inspecting.value.delete(key)
         }
@@ -278,9 +279,9 @@ export function useLightNovelAcquisition(
   async function run(next = query.value, fallbackAuthor = '') {
     const current = draft
     const body = input.value
-    const token = generation
+    const token = generation.current()
     if (closed.value || !approver() || !current || !body || status.value === 'loading') return
-    searchGeneration++
+    searchGeneration.begin()
     inspectionPromises.clear()
     inspections.value.clear()
     inspecting.value.clear()
@@ -303,7 +304,7 @@ export function useLightNovelAcquisition(
           `${fulfilmentBase(toValue(access.canManage))}/${current.bookRequestId}/releases/stream`,
           payload,
           (progress) => {
-            if (token !== generation || closed.value) return
+            if (!generation.isCurrent(token) || closed.value) return
             results.value = progress.releases
             indexers.value = progress.indexers
             pending.value = progress.pending
@@ -312,11 +313,11 @@ export function useLightNovelAcquisition(
         )
       }
       let result = await searchQuery()
-      if (token !== generation || closed.value) return
+      if (!generation.isCurrent(token) || closed.value) return
       if (!result.releases.length && fallbackAuthor) {
         query.value = { ...query.value, author: fallbackAuthor }
         result = await searchQuery()
-        if (token !== generation || closed.value) return
+        if (!generation.isCurrent(token) || closed.value) return
       }
       results.value = result.releases
       indexers.value = result.indexers
@@ -328,12 +329,12 @@ export function useLightNovelAcquisition(
         volumeCount: body.volumeCount,
         seriesRequestId: current.seriesRequestId,
       })
-      if (token !== generation || closed.value) return
+      if (!generation.isCurrent(token) || closed.value) return
       suggestion.value = nextSuggestion
       status.value = 'ready'
       await refresh()
     } catch (cause) {
-      if (token === generation && !closed.value) {
+      if (generation.isCurrent(token) && !closed.value) {
         error.value = cause
         status.value = 'error'
       }
@@ -341,7 +342,7 @@ export function useLightNovelAcquisition(
   }
   async function send() {
     if (!bar.value.canSend || !draft || !input.value) return
-    const token = generation
+    const token = generation.current()
     sending.value = true
     try {
       const next = await downloadPrintVolumes(draft.matchId, {
@@ -361,15 +362,15 @@ export function useLightNovelAcquisition(
           }
         }),
       })
-      if (token !== generation || closed.value) return
+      if (!generation.isCurrent(token) || closed.value) return
       sent = true
       for (const failure of next.failures ?? []) inspectionErrors.value.set(`${failure.indexerId}:${failure.releaseGuid}`, new Error(failure.error))
       picks.value.clear()
       await refresh()
     } catch (cause) {
-      if (token === generation) error.value = cause
+      if (generation.isCurrent(token)) error.value = cause
     } finally {
-      if (token === generation) sending.value = false
+      if (generation.isCurrent(token)) sending.value = false
     }
   }
   watch(
@@ -378,7 +379,7 @@ export function useLightNovelAcquisition(
       closeDraft()
       closed.value = false
       sent = false
-      const token = generation
+      const token = generation.current()
       controller = new AbortController()
       state.value = null
       results.value = []
@@ -402,19 +403,19 @@ export function useLightNovelAcquisition(
       try {
         if (approver()) {
           const created = await createPrintDraft(current.matchId, body)
-          if (closed.value || token !== generation) {
+          if (closed.value || !generation.isCurrent(token)) {
             void closePrintDraft(current.matchId, created.seriesRequestId).catch(() => {})
             return
           }
           draft = { ...created, matchId: current.matchId }
           const initialState = refresh()
           await fetchClients()
-          if (closed.value || token !== generation) return
+          if (closed.value || !generation.isCurrent(token)) return
           clientId.value = (clients.value.find((client) => client.fileSelection) ?? clients.value[0])?.id ?? null
           await Promise.all([initialState, run({ title: body.title.split(/:\s/)[0]!, author: '' }, body.authors[0] ?? '')])
         } else await refresh()
       } catch (cause) {
-        if (token === generation) {
+        if (generation.isCurrent(token)) {
           error.value = cause
           status.value = 'error'
         }

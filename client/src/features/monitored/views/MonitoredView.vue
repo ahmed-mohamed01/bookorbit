@@ -80,7 +80,8 @@ import {
   releasesView,
 } from '../lib/release-view'
 import MonitoredReleaseRow from '../components/MonitoredReleaseRow.vue'
-import MonitoredSortMenu from '../components/MonitoredSortMenu.vue'
+import BrowseSortControl from '@/components/browse-header/BrowseSortControl.vue'
+import MonitoredSortOptions from '../components/MonitoredSortOptions.vue'
 import MonitoredVirtualGrid from '../components/MonitoredVirtualGrid.vue'
 import MonitoredWorkCard from '../components/MonitoredWorkCard.vue'
 import MonitoredFiltersMenu from '../components/MonitoredFiltersMenu.vue'
@@ -550,6 +551,20 @@ const authorSortOptions = computed<{ value: AuthorSort; label: string }[]>(() =>
   { value: 'books', label: t('monitored.controlsBar.sortBooks') },
   { value: 'progress', label: t('monitored.controlsBar.sortProgress') },
 ])
+
+const releaseSortLabel = computed(() => releaseSortOptions.value.find((option) => option.value === releaseSort.value)?.label ?? '')
+const releaseSortChanged = computed(
+  () => releaseSort.value !== 'date' || releaseOrder.value !== (activeTiming.value === 'upcoming' ? DEFAULT_ORDER.upcoming : DEFAULT_ORDER.releases),
+)
+function toggleReleaseOrder() {
+  handleReleaseOrderChange(releaseOrder.value === 'asc' ? 'desc' : 'asc')
+}
+
+const authorSortLabel = computed(() => authorSortOptions.value.find((option) => option.value === authorSort.value)?.label ?? '')
+const authorSortChanged = computed(() => authorSort.value !== 'name' || authorOrder.value !== DEFAULT_ORDER.authors)
+function toggleAuthorOrder() {
+  handleAuthorOrderChange(authorOrder.value === 'asc' ? 'desc' : 'asc')
+}
 
 function handleReleaseSortChange(value: ReleaseSort) {
   releaseSort.value = value
@@ -1343,15 +1358,21 @@ defineOptions({ name: 'MonitoredView' })
         />
         <template v-if="!searchMode && releaseTab">
           <span :class="barDivider" aria-hidden="true" />
-          <MonitoredSortMenu
-            :options="releaseSortOptions"
-            :model-value="releaseSort"
-            :order="releaseOrder"
-            default-value="date"
-            default-order="asc"
-            @update:model-value="handleReleaseSortChange"
-            @update:order="handleReleaseOrderChange"
-          />
+          <BrowseSortControl
+            :label="releaseSortLabel"
+            :direction="releaseOrder"
+            :changed="releaseSortChanged"
+            popover-class="w-56 p-2"
+            @toggle-direction="toggleReleaseOrder"
+          >
+            <MonitoredSortOptions
+              :options="releaseSortOptions"
+              :model-value="releaseSort"
+              :order="releaseOrder"
+              @update:model-value="handleReleaseSortChange"
+              @update:order="handleReleaseOrderChange"
+            />
+          </BrowseSortControl>
           <MonitoredFiltersMenu
             :model-value="releaseDisplay"
             :counts="releaseClassCounts"
@@ -1378,15 +1399,21 @@ defineOptions({ name: 'MonitoredView' })
         </template>
         <template v-else-if="!searchMode && activeTab === 'authors'">
           <span :class="barDivider" aria-hidden="true" />
-          <MonitoredSortMenu
-            :options="authorSortOptions"
-            :model-value="authorSort"
-            :order="authorOrder"
-            default-value="name"
-            default-order="asc"
-            @update:model-value="handleAuthorSortChange"
-            @update:order="handleAuthorOrderChange"
-          />
+          <BrowseSortControl
+            :label="authorSortLabel"
+            :direction="authorOrder"
+            :changed="authorSortChanged"
+            popover-class="w-56 p-2"
+            @toggle-direction="toggleAuthorOrder"
+          >
+            <MonitoredSortOptions
+              :options="authorSortOptions"
+              :model-value="authorSort"
+              :order="authorOrder"
+              @update:model-value="handleAuthorSortChange"
+              @update:order="handleAuthorOrderChange"
+            />
+          </BrowseSortControl>
         </template>
         <template v-if="showDisplayControls">
           <span class="flex-1" aria-hidden="true" />
