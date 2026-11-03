@@ -16,6 +16,7 @@ import type {
 import type { ResolvedCtcDevice } from "./accelerator.js";
 import { workerTmpDir, type WorkerConfig } from "./config.js";
 import { cleanMessage, errorClass, errorMessage, logLine } from "./log.js";
+import { prepareLocalRun, runFolders, type RunFolders } from "./local-work.js";
 import { ReadableRoots, RequestError, expectedWorkDir, resolveSource, type RootCheckOptions } from "./paths.js";
 import {
   MAX_EVENT_MESSAGE_LENGTH,
@@ -25,7 +26,7 @@ import {
   type RunnerToControl,
   type SourceFingerprint,
 } from "./protocol.js";
-import { markerStates, planStages, requiredDiskBytes, type FingerprintSource, type MarkerStage } from "./stages.js";
+import { DISK_MARGIN_BYTES, markerStates, planStages, requiredDiskBytes, type FingerprintSource, type MarkerStage } from "./stages.js";
 
 const MAX_EVENTS_PER_JOB = 1_000;
 const DEFAULT_CANCEL_GRACE_MS = 30_000;
@@ -73,7 +74,7 @@ type JobRecord = {
 
 export type SubmitResult = { status: 200 | 202; job: ReadAloudWorkerJob };
 
-type ResolvedSources = { workDir: string; epub: SourceFingerprint; audio: SourceFingerprint[] };
+type ResolvedSources = RunFolders & { epub: SourceFingerprint; audio: SourceFingerprint[] };
 
 export class JobRegistry {
   private readonly jobs = new Map<string, JobRecord>();
@@ -151,7 +152,8 @@ export class JobRegistry {
       }
       throw error;
     }
-    const record = this.startRecord(request, existing, resolved.workDir);
+    // The seq file stays in the server's folder: the local cache may be cleared, and the server drops events numbered below what it saw.
+    const record = this.startRecord(request, existing, resolved.publishDir ?? resolved.workDir);
     logLine(
       "read_aloud.worker.job",
       "start",
@@ -171,6 +173,7 @@ export class JobRegistry {
     });
 
     try {
+      await prepareLocalRun(this.options.config, resolved, request);
       await mkdir(resolved.workDir, { recursive: true });
       await mkdir(workerTmpDir(this.options.config), { recursive: true });
       const enough = await this.checkDisk(record, resolved);
@@ -233,11 +236,11 @@ export class JobRegistry {
     const epub = await resolveSource(request.epubPath, libraryRoots, "EPUB");
     const audio: SourceFingerprint[] = [];
     for (const [index, path] of request.audioPaths.entries()) audio.push(await resolveSource(path, libraryRoots, `audio file ${index + 1}`));
-    return { workDir, epub, audio };
+    return { ...runFolders(this.options.config, workDir, request.jobId), epub, audio };
   }
 
-  private startRecord(request: ReadAloudWorkerRebuildRequest, previous: JobRecord | undefined, workDir: string): JobRecord {
-    const seqFile = join(workDir, SEQ_FILE);
+  private startRecord(request: ReadAloudWorkerRebuildRequest, previous: JobRecord | undefined, seqDir: string): JobRecord {
+    const seqFile = join(seqDir, SEQ_FILE);
     const record: JobRecord = {
       jobId: request.jobId,
       request,
@@ -283,16 +286,33 @@ export class JobRegistry {
       audioDurationSeconds: request.audioDurationSeconds,
       skipped,
     });
-    const available = await (this.options.freeBytes ?? freeBytes)(resolved.workDir);
-    const data = { neededBytes: required, availableBytes: available, cachedStages: skipped.size };
-    if (available === null || available >= required) {
-      this.event(record, "info", null, "disk_checked", "Enough free space for this run", data);
-      return true;
+    const checks = [{ path: resolved.workDir, required, folder: "the worker's data folder" }];
+    if (resolved.publishDir) {
+      checks.push({ path: resolved.publishDir, required: publishDiskBytes(resolved), folder: "the shared job folder" });
     }
-    logLine("read_aloud.worker.disk", "fail", { jobId: record.jobId, neededBytes: required, availableBytes: available }, "insufficient storage");
-    this.event(record, "error", null, "disk_check_failed", "Not enough free space in the worker's data folder for this run", data);
-    this.finish(record, "failed", "insufficient_storage", `The run needs ${required} free bytes but ${available} are available`);
-    return false;
+    let checked: EventData | null = null;
+    for (const check of checks) {
+      const available = await (this.options.freeBytes ?? freeBytes)(check.path);
+      const data = { neededBytes: check.required, availableBytes: available, cachedStages: skipped.size };
+      checked ??= data;
+      if (available === null || available >= check.required) continue;
+      logLine(
+        "read_aloud.worker.disk",
+        "fail",
+        { jobId: record.jobId, neededBytes: check.required, availableBytes: available },
+        "insufficient storage",
+      );
+      this.event(record, "error", null, "disk_check_failed", `Not enough free space in ${check.folder} for this run`, data);
+      this.finish(
+        record,
+        "failed",
+        "insufficient_storage",
+        `The run needs ${check.required} free bytes in ${check.folder} but ${available} are available`,
+      );
+      return false;
+    }
+    this.event(record, "info", null, "disk_checked", "Enough free space for this run", checked);
+    return true;
   }
 
   private spawn(record: JobRecord, resolved: ResolvedSources): void {
@@ -302,6 +322,7 @@ export class JobRegistry {
       jobId: record.jobId,
       attempt: record.attempt,
       workDir: resolved.workDir,
+      publishDir: resolved.publishDir,
       epub: resolved.epub,
       audio: resolved.audio,
       language: request.language,
@@ -508,6 +529,12 @@ function writeSeq(path: string, seq: number): void {
   }
 }
 
+/** What publishing puts in the shared folder: the processed audio, and an output EPUB that carries it again. */
+function publishDiskBytes(resolved: ResolvedSources): number {
+  const audioBytes = resolved.audio.reduce((sum, file) => sum + file.size, 0);
+  return DISK_MARGIN_BYTES + 2 * audioBytes + 2 * resolved.epub.size;
+}
+
 export async function freeBytes(path: string): Promise<number | null> {
   try {
     const info = await statfs(path, { bigint: true });
@@ -522,6 +549,7 @@ export async function freeBytes(path: string): Promise<number | null> {
 function buildRedactions(config: WorkerConfig): Redaction[] {
   const folders: Redaction[] = [
     { path: config.workRoot, placeholder: "<work>" },
+    ...(config.localWorkRoot ? [{ path: config.localWorkRoot, placeholder: "<work>" }] : []),
     { path: config.tmpDir, placeholder: "<tmp>" },
     ...config.libraryRoots.map((path) => ({ path, placeholder: "<library>" })),
   ];

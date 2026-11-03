@@ -6,6 +6,7 @@ import { format } from "node:util";
 import { pino, type Logger } from "pino";
 import type { ReadAloudErrorCode, ReadAloudStageDetail, ReadAloudWorkerStage } from "@bookorbit/types";
 import { cleanMessage, errorClass, errorMessage, logLine } from "./log.js";
+import { publishOutputs } from "./local-work.js";
 import { StageError, type LogListener, type Pipeline, type StageContext, type StageResult, type WorkPaths } from "./pipeline-contract.js";
 import { MAX_EVENT_MESSAGE_LENGTH, type ControlToRunner, type EventData, type RunnerJob, type RunnerToControl } from "./protocol.js";
 import {
@@ -243,6 +244,7 @@ async function run(job: RunnerJob): Promise<void> {
         let outputBytes = 0;
         await runStage("validating", async () => {
           const validated = await validateOutput(paths, job.maxOutputBytes);
+          await publishOutputs(paths, job.publishDir, job.jobId, signal);
           outputBytes = validated.outputBytes;
           return { data: validated.data };
         });
@@ -305,6 +307,7 @@ async function run(job: RunnerJob): Promise<void> {
       } else {
         await runStage(stage, async () => {
           const validated = await validateOutput(paths, job.maxOutputBytes);
+          await publishOutputs(paths, job.publishDir, job.jobId, signal);
           outputBytes = validated.outputBytes;
           return { data: validated.data };
         });

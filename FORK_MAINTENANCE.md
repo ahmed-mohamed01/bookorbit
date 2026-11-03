@@ -946,6 +946,50 @@ server does not compile. Whisper removal later: delete `reading-alignment/` and 
 `whisperFallback` on the book state becomes `false`. The worker image seams stay with the fork image
 even if the server module is removed. The fork tables can stay in the database; nothing else reads them.
 
+## Remote read-aloud worker: local work folders
+
+A native worker on another machine (an Apple Silicon Mac for MLX) shares the job folder with the server
+over the network. STAlign makes many small reads and writes there, and each one costs a network round
+trip: over Wi-Fi SMB a file create measured 58 ms against 1 ms locally, so a job ran about 5x slower
+than on local disk even with bulk copies at 125 MB/s. With `READ_ALOUD_LOCAL_WORK_ROOT` set, a job runs
+in `<localWorkRoot>/<jobId>` (split audio, emissions, scratch, intermediate EPUBs, stage markers) and
+only what the server reads is copied into the shared job folder after validation, each file under a
+`.partial` name first: `output.epub`, `report.json`, and `processed-audio/`, which edition sync's capture
+hashes into the timing index (`edition-sync-index-store.service.ts`). Audio chunks whose size and
+modification time match the shared copy are not copied again. The shared `output.epub` and `report.json`
+are deleted when a run starts, as the runner does before aligning without local work, so a failed rerun
+never leaves the last run's output behind. The event sequence file stays in the shared folder: the
+server drops events numbered below what it has seen, and the local cache may be cleared. If the server ever
+reads another file from the job folder, add it to `publishOutputs` too. Unset (the default, and the Docker
+image) behaves exactly like upstream. The temp folder defaults beside the local root instead of the
+shared one.
+
+A local folder is pruned in the background when a later job starts and its shared job folder is
+definitely gone (`ENOENT`), never while the shared root itself is missing (an unmounted share) or a
+check fails for another reason. The disk check also covers the shared folder, which must hold the
+processed audio and an output EPUB that carries it again. The same-folder check and the startup guard
+on the temp folder both see through links. An edition-sync rebuild's `index.epub`, which the
+server writes into the shared folder, is copied in before the runner starts; a missing one falls back to
+full alignment as before, and an earlier attempt's local copy is deleted so it cannot stand in.
+
+**Owned (fork-only) files:** `workers/read-aloud/src/local-work.ts`, `workers/read-aloud/test/local-work.test.mjs`.
+
+| Upstream file                         | Hook                                                                                                                                                                                                            | Footprint |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `workers/read-aloud/src/config.ts`    | `localWorkRoot` field and env parse (`sameFolder` through links); temp folder defaults beside it                                                                                                                | ~18 lines |
+| `workers/read-aloud/src/protocol.ts`  | `publishDir` on `RunnerJob`                                                                                                                                                                                     | 2 lines   |
+| `workers/read-aloud/src/jobs.ts`      | `runFolders` in `resolve`, `prepareLocalRun` before the job folder is created, seq file in the shared folder, `publishDir` to the runner, a shared-folder disk check (`publishDiskBytes`), a `<work>` redaction | ~35 lines |
+| `workers/read-aloud/src/server.ts`    | the startup temp-folder guard also covers `localWorkRoot`                                                                                                                                                       | 2 lines   |
+| `workers/read-aloud/src/runner.ts`    | `publishOutputs` after `validateOutput` in both validating stages                                                                                                                                               | 3 lines   |
+| `workers/read-aloud/test/helpers.mjs` | passes `localWorkRoot` through to the test worker config                                                                                                                                                        | 1 line    |
+
+**Deploying a remote worker** (what a Mac worker for an Unraid server needed): the server sends absolute
+paths and the worker compares them as written, so the library (`/books`) and the job folder
+(`/data/read-aloud/jobs`) must exist at the container's paths on the worker machine; on macOS that is
+`/etc/synthetic.conf` links to the SMB mounts. Samba must write as the container's `PUID`
+(`force user`). macOS SMB multichannel (`mc_on=no` in `~/Library/Preferences/nsmb.conf`) cut uploads
+to 4.5 MB/s over Wi-Fi; turning it off restored 125 MB/s.
+
 ## Investigated and rejected - do not re-chase
 
 Each of these was analysed and deliberately left alone. Re-attempting them wastes time.
@@ -1044,6 +1088,9 @@ shrinks the footprint.
 - ABS pull: it calls `syncEbookProgressForAudiobookPlayback` and emits `book:progress-changed`, the
   same pair upstream's player does; if upstream ever emits from `putPlaybackState`, both fork emits
   can go.
+- Read-aloud worker: `READ_ALOUD_LOCAL_WORK_ROOT` (local work folders for a worker on another
+  machine). Any remote native worker hits the per-file network cost; upstream owning it deletes
+  `local-work.ts` and the six hooks.
 
 ### Edition sync content-file trigger dependency
 

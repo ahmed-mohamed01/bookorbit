@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { CTC_DEVICES, type ConfiguredCtcDevice } from "./accelerator.js";
 
@@ -8,6 +8,8 @@ export type WorkerConfig = {
   token: string;
   libraryRoots: string[];
   workRoot: string;
+  /** Fork: where jobs run when the shared job folder is on another machine (see local-work.ts). */
+  localWorkRoot: string | null;
   tmpDir: string;
   configuredDevice: ConfiguredCtcDevice;
   dtype: "fp32" | "fp16" | null;
@@ -34,13 +36,17 @@ export function loadConfig(env: Env): WorkerConfig {
   const token = env.READ_ALOUD_WORKER_TOKEN?.trim() ?? "";
   if (token.length < 16) throw new Error("READ_ALOUD_WORKER_TOKEN must contain at least 16 characters");
   const workRoot = absolutePath(env.READ_ALOUD_WORK_ROOT, "/data/read-aloud/jobs", "READ_ALOUD_WORK_ROOT");
+  const localWorkRoot = env.READ_ALOUD_LOCAL_WORK_ROOT?.trim()
+    ? absolutePath(env.READ_ALOUD_LOCAL_WORK_ROOT, "", "READ_ALOUD_LOCAL_WORK_ROOT")
+    : null;
   return {
     host: env.READ_ALOUD_WORKER_HOST?.trim() || "127.0.0.1",
     port: port(env.PORT, 8787),
     token,
     libraryRoots: parseLibraryRoots(env),
     workRoot,
-    tmpDir: absolutePath(env.READ_ALOUD_TMP_DIR, resolve(dirname(workRoot), "tmp"), "READ_ALOUD_TMP_DIR"),
+    localWorkRoot: localWorkRoot && sameFolder(localWorkRoot, workRoot) ? null : localWorkRoot,
+    tmpDir: absolutePath(env.READ_ALOUD_TMP_DIR, resolve(dirname(localWorkRoot ?? workRoot), "tmp"), "READ_ALOUD_TMP_DIR"),
     configuredDevice: readEnum(env.READ_ALOUD_CTC_DEVICE, CTC_DEVICES, "auto", "READ_ALOUD_CTC_DEVICE"),
     dtype: readOptionalEnum(env.READ_ALOUD_CTC_DTYPE, ["fp32", "fp16"] as const, "READ_ALOUD_CTC_DTYPE"),
     batchSize: optionalBatchSize(env.READ_ALOUD_CTC_BATCH_SIZE),
@@ -68,6 +74,18 @@ function absolutePath(value: string | undefined, fallback: string, name: string)
   if (!trimmed) return resolve(fallback);
   if (!isAbsolute(trimmed)) throw new Error(`${name} must be an absolute path`);
   return resolve(trimmed);
+}
+
+/** Through links too: publishing into the folder a job runs in would copy files onto themselves. */
+function sameFolder(a: string, b: string): boolean {
+  const real = (path: string) => {
+    try {
+      return realpathSync.native(path);
+    } catch {
+      return path;
+    }
+  };
+  return a === b || real(a) === real(b);
 }
 
 function port(value: string | undefined, fallback: number): number {

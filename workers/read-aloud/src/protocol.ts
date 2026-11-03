@@ -22,6 +22,8 @@ export type RunnerJob = {
   jobId: string;
   attempt: number;
   workDir: string;
+  /** Fork: the shared job folder that receives the output when the run happens in a local folder. */
+  publishDir: string | null;
   epub: SourceFingerprint;
   audio: SourceFingerprint[];
   language: string;

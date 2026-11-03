@@ -172,7 +172,8 @@ export async function prepareDataFolders(config: WorkerConfig): Promise<void> {
   await mkdir(tmpDir, { recursive: true });
   const spellings = async (path: string) => [...new Set([resolve(path), await realpath(path).catch(() => resolve(path))])];
   const temps = await spellings(tmpDir);
-  const guarded = (await Promise.all([config.workRoot, ...config.libraryRoots, homedir()].filter(Boolean).map(spellings))).flat();
+  const jobFolders = [config.workRoot, ...(config.localWorkRoot ? [config.localWorkRoot] : [])];
+  const guarded = (await Promise.all([...jobFolders, ...config.libraryRoots, homedir()].filter(Boolean).map(spellings))).flat();
   if (temps.some((temp) => guarded.some((path) => within(path, temp)))) {
     throw new Error("READ_ALOUD_TMP_DIR must not be, or contain, the job folder, a library folder or the home folder");
   }

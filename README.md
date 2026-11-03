@@ -54,6 +54,7 @@ This is a fork of [BookOrbit](https://github.com/bookorbit/bookorbit). It follow
 - **Manga and light novels**: Find a series, pick the chapters or volumes you want, and BookOrbit downloads them into your library. Requires a [Suwayomi](https://github.com/Suwayomi/Suwayomi-Server) instance for manga and the [novel-sources](https://github.com/ahmed-mohamed01/bookorbit/pkgs/container/bookorbit-novel-sources) container for light novels. See the [setup guide](docs/WEB_SERIALS_ADMIN.md) and the [user guide](docs/WEB_SERIALS.md).
 - **Mini player**: Read-along narration keeps playing in a mini player after you close the reader.
 - **More series from metadata**: Books that belong to several series can pick up the other series from metadata providers that list them.
+- **Remote read-aloud worker**: Supports running the read-aloud worker on another machine, such as an Apple Silicon Mac for MLX, with the library and job folder shared over the network. Set `READ_ALOUD_LOCAL_WORK_ROOT` on the worker to a folder on its own disk: jobs run there and only the finished output is copied back to the shared job folder, which made remote jobs about 3x faster. Leave it unset when the worker runs on the same machine as the server. See [remote worker setup](FORK_MAINTENANCE.md#remote-read-aloud-worker-local-work-folders).
 
 <a id="what-is-bookorbit"></a>
 
