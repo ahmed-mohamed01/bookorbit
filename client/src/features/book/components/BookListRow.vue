@@ -286,7 +286,7 @@ function handleRowClick(event: MouseEvent) {
         data-testid="collapsed-series-progress"
         class="mt-1 h-1 w-32 max-w-full overflow-hidden rounded-full bg-muted"
       >
-        <div class="h-full rounded-full bg-primary/60 transition-all" :style="{ width: `${collapsedProgressPercent}%` }" />
+        <div class="h-full rounded-full bg-primary/60" :style="{ width: `${collapsedProgressPercent}%` }" />
       </div>
     </div>
 
@@ -358,7 +358,7 @@ function handleRowClick(event: MouseEvent) {
       <!-- Reading progress -->
       <div v-if="book.readingProgress != null && book.readingProgress > 0" class="mt-1">
         <div class="h-1 w-24 rounded-full bg-muted overflow-hidden">
-          <div class="h-full rounded-full bg-primary/60 transition-all" :style="{ width: `${book.readingProgress}%` }" />
+          <div class="h-full rounded-full bg-primary/60" :style="{ width: `${book.readingProgress}%` }" />
         </div>
       </div>
     </div>

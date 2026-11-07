@@ -712,13 +712,12 @@ html[data-glow='off'] .shell-glow {
 
 /* Page route transitions */
 .page-enter-active {
-  transition: opacity 0.2s ease-out;
+  transition: opacity 0.15s ease-out;
 }
 .page-leave-active {
-  transition: opacity 0.15s ease-in;
+  transition: none;
 }
-.page-enter-from,
-.page-leave-to {
+.page-enter-from {
   opacity: 0;
 }
 

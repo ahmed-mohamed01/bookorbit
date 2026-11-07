@@ -155,7 +155,7 @@ function handleUnmonitor() {
            away by the circle. Their inset follows the shape instead. -->
       <span
         v-if="selectionMode"
-        class="pointer-events-none absolute z-20 grid size-[18px] place-items-center rounded-md backdrop-blur-[2px] transition-colors"
+        class="pointer-events-none absolute z-20 grid size-[18px] place-items-center rounded-md transition-colors"
         :class="[badgeInset.topLeft, selected ? 'bg-primary text-primary-foreground' : 'bg-black/45 text-transparent ring-1 ring-white/55']"
       >
         <Check :size="11" />
@@ -163,7 +163,7 @@ function handleUnmonitor() {
 
       <span
         v-else-if="author.bookCount > 1"
-        class="pointer-events-none absolute z-20 hidden h-[17px] min-w-[17px] place-items-center rounded-full bg-background/80 px-1.5 text-[10px] font-bold tabular-nums text-foreground ring-1 ring-border backdrop-blur-[2px] transition-opacity group-hover/tile:opacity-0 sm:grid"
+        class="pointer-events-none absolute z-20 hidden h-[17px] min-w-[17px] place-items-center rounded-full bg-background/80 px-1.5 text-[10px] font-bold tabular-nums text-foreground ring-1 ring-border transition-opacity group-hover/tile:opacity-0 sm:grid"
         :class="badgeInset.bottomRight"
       >
         {{ bookCountLabel }}
@@ -188,7 +188,7 @@ function handleUnmonitor() {
         <DropdownMenuTrigger as-child>
           <button
             type="button"
-            class="absolute z-30 size-[22px] place-items-center rounded-md bg-black/45 text-white backdrop-blur-[2px] transition-colors hover:bg-black/65 focus-visible:grid group-focus-within/tile:grid group-hover/tile:grid"
+            class="absolute z-30 size-[22px] place-items-center rounded-md bg-black/45 text-white transition-colors hover:bg-black/65 focus-visible:grid group-focus-within/tile:grid group-hover/tile:grid"
             :class="[badgeInset.topRight, menuOpen ? 'grid' : 'hidden']"
             :aria-label="t('author.index.actionsFor', { name: author.name })"
             @click.stop

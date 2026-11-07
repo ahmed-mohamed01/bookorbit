@@ -1,4 +1,4 @@
-import { computed, nextTick, ref, watch, type Ref } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch, type Ref } from 'vue'
 import type { JumpBucket } from '@bookorbit/types'
 import { useJumpRailGutter } from '@/features/book/composables/useJumpRailGutter'
 import { fetchAuthorJumpBuckets, type AuthorFilterParams } from '../api/author'
@@ -72,7 +72,20 @@ export function useAuthorJumpRail(options: {
    * headings rather than from scroll maths, so it stays right whatever the section
    * heights are in either view.
    */
+  let activeFrame: number | null = null
+  onUnmounted(() => {
+    if (activeFrame !== null) cancelAnimationFrame(activeFrame)
+  })
+
   function syncActiveKey() {
+    if (activeFrame !== null) return
+    activeFrame = requestAnimationFrame(() => {
+      activeFrame = null
+      updateActiveKey()
+    })
+  }
+
+  function updateActiveKey() {
     const root = options.scroller.value
     if (!root || buckets.value.length === 0) return
 

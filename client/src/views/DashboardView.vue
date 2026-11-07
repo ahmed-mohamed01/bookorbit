@@ -163,7 +163,7 @@ onUnmounted(() => {
         <template v-else>
           <DashboardWidgetRow :key="`widgets-${dashboardRevision}`" class="animate-fade-up" />
           <div v-if="enabledScrollers.length > 0" :class="shelfLayoutClass">
-            <template v-for="(shelf, index) in shelves" :key="`${dashboardRevision}-${shelf.key}`">
+            <template v-for="shelf in shelves" :key="`${dashboardRevision}-${shelf.key}`">
               <DashboardScroller
                 :type="shelf.type"
                 :title="shelf.title"
@@ -171,7 +171,6 @@ onUnmounted(() => {
                 :rows="shelf.rows"
                 :smartScope-id="shelf.smartScopeId"
                 class="min-w-0 animate-fade-up"
-                :style="{ animationDelay: `${index * 100}ms` }"
               />
             </template>
           </div>

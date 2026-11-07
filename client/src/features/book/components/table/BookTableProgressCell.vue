@@ -22,7 +22,7 @@ const barColor = computed(() => {
     <TooltipTrigger as-child>
       <div class="flex min-w-0 items-center gap-2" role="progressbar" :aria-valuenow="clamped ?? undefined" aria-valuemin="0" aria-valuemax="100">
         <div class="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
-          <div class="h-full rounded-full transition-all" :class="barColor" :style="{ width: `${clamped}%` }" />
+          <div class="h-full rounded-full" :class="barColor" :style="{ width: `${clamped}%` }" />
         </div>
         <span class="w-14 shrink-0 text-right text-sm font-medium tabular-nums text-muted-foreground">{{ displayPct }}</span>
       </div>

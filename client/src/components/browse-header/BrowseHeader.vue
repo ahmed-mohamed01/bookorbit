@@ -72,12 +72,9 @@ onBeforeUnmount(detach)
 <template>
   <!-- Folded, the bar is the page's top box, so it meets the sidebar's top edge instead of
        keeping the title row's offset. -->
-  <header
-    class="mb-3 flex shrink-0 flex-col transition-[margin] duration-200 ease-out motion-reduce:transition-none"
-    :class="folded ? 'mt-0' : 'mt-2'"
-  >
+  <header class="mb-3 flex shrink-0 flex-col" :class="folded ? 'mt-0' : 'mt-2'">
     <div
-      class="grid transition-[grid-template-rows,opacity,margin] duration-200 ease-out motion-reduce:transition-none"
+      class="grid transition-opacity duration-200 ease-out motion-reduce:transition-none"
       :class="folded ? 'mb-0 grid-rows-[0fr] opacity-0' : 'mb-3 grid-rows-[1fr] opacity-100'"
       :inert="folded || undefined"
     >

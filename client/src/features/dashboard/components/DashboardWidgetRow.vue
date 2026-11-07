@@ -84,7 +84,7 @@ const widgetSizeClass: Record<DashboardWidgetSize, string> = {
     <div
       class="pointer-events-none absolute right-2 top-2 z-10 flex items-center gap-0.5 opacity-0 transition-opacity duration-200 group-hover/widgets:opacity-100"
     >
-      <div class="pointer-events-auto flex items-center gap-0.5 rounded-md border border-border/60 bg-background/65 p-0.5 backdrop-blur-sm">
+      <div class="pointer-events-auto flex items-center gap-0.5 rounded-md border border-border/60 bg-background/85 p-0.5">
         <button
           class="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           @click="scrollBy(-300)"
@@ -109,12 +109,10 @@ const widgetSizeClass: Record<DashboardWidgetSize, string> = {
       @update:model-value="handleReorder"
     >
       <div
-        v-for="(widget, index) in localWidgets"
+        v-for="widget in localWidgets"
         :key="widget.id"
-        class="group/card relative h-55 shrink-0 overflow-hidden rounded-2xl border border-primary/40 bg-card/30 shadow-sm backdrop-blur-[1px]"
+        class="group/card relative h-55 shrink-0 overflow-hidden rounded-2xl border border-primary/40 bg-card/60 shadow-sm"
         :class="widgetSizeClass[widgetLayout[widget.type].size]"
-        style="animation: dashboardWidgetFadeUp 0.35s ease both"
-        :style="{ animationDelay: `${index * 80}ms` }"
       >
         <component :is="widgetComponents[widget.type]" :size="widgetLayout[widget.type].size" />
         <!-- Drag handle — visible on card hover -->
@@ -127,16 +125,3 @@ const widgetSizeClass: Record<DashboardWidgetSize, string> = {
     </VueDraggable>
   </section>
 </template>
-
-<style scoped>
-@keyframes dashboardWidgetFadeUp {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-</style>

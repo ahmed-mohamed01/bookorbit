@@ -3,7 +3,8 @@ import type { BookCard, BookFileRef, CoverAspectRatio } from '@bookorbit/types'
 import { getBookMediaProfile, isAudioFormat, READER_OPENABLE_FORMATS } from '@bookorbit/types'
 import BookFormatChip from './BookFormatChip.vue'
 import { bookFormatEntries, fileFormatKey, formatKeyName } from '../lib/book-formats'
-import { computed, inject, ref, watch, onMounted, onUnmounted } from 'vue'
+import { computed, inject, ref, watch, onUnmounted } from 'vue'
+import { onClickOutside } from '@vueuse/core'
 import { useRoute, useRouter } from 'vue-router'
 import {
   BookOpen,
@@ -310,6 +311,7 @@ function handleCardClick(event: MouseEvent) {
   }
 
   if (isTouch.value) {
+    revealOverlay()
     showMobileOverlay.value = !showMobileOverlay.value
     return
   }
@@ -324,13 +326,17 @@ function handleClickOutside(event: MouseEvent) {
   }
 }
 
-onMounted(() => {
-  window.addEventListener('click', handleClickOutside)
+let stopClickOutside: (() => void) | undefined
+watch(showMobileOverlay, (open) => {
+  stopClickOutside?.()
+  stopClickOutside = open ? onClickOutside(root, handleClickOutside) : undefined
 })
+onUnmounted(() => stopClickOutside?.())
 
-onUnmounted(() => {
-  window.removeEventListener('click', handleClickOutside)
-})
+const overlayReady = ref(false)
+function revealOverlay() {
+  overlayReady.value = true
+}
 
 function openQuickView() {
   emit('action', 'quick-view')
@@ -417,15 +423,20 @@ const secondaryLabelText = computed(() => resolveBookLabel(gridCardSecondaryLabe
 <template>
   <div
     ref="root"
-    class="flex flex-col @container touch-manipulation"
+    class="group/card flex flex-col @container touch-manipulation"
+    :tabindex="selectionMode ? undefined : 0"
+    :role="selectionMode ? undefined : 'group'"
+    :aria-label="selectionMode ? undefined : book.title?.trim() || t('notifications.readAloud.untitledBook')"
     :class="[selectionMode || isPrimaryClickAvailable ? 'cursor-pointer' : 'cursor-default', selectionMode ? 'select-none' : '']"
+    @pointerenter="revealOverlay"
+    @focusin="revealOverlay"
     @click="handleCardClick"
     @contextmenu.prevent
   >
     <!-- Cover -->
     <div class="group">
       <BookCoverSurface
-        class="book-cover-surface--spine-fitted relative w-full rounded-sm overflow-hidden transition-[box-shadow,transform,ring] duration-150 will-change-transform"
+        class="book-cover-surface--spine-fitted relative w-full rounded-sm overflow-hidden transition-[box-shadow,transform,ring] duration-150"
         :class="isMissing || selectionMode ? '' : 'group-hover:[transform:var(--cover-hover-transform)] motion-reduce:group-hover:[transform:none]'"
         :interactive="!isMissing && !selectionMode"
         :disable-spine="isAudiobook"
@@ -519,7 +530,7 @@ const secondaryLabelText = computed(() => resolveBookLabel(gridCardSecondaryLabe
           <div
             v-if="showProgressBar && !selectionMode"
             data-testid="reading-progress-bar"
-            class="absolute bottom-0 left-0 z-10 h-0.75 transition-[width,opacity] duration-500 [box-shadow:0_-1px_0_rgba(255,255,255,0.25)]"
+            class="absolute bottom-0 left-0 z-10 h-0.75 transition-opacity duration-500 [box-shadow:0_-1px_0_rgba(255,255,255,0.25)]"
             style="transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1)"
             :class="[localReadStatus === 'read' ? 'bg-green-500/80' : 'bg-primary/70', overlayFadeClass]"
             :style="{ width: `${book.readingProgress}%` }"
@@ -557,11 +568,13 @@ const secondaryLabelText = computed(() => resolveBookLabel(gridCardSecondaryLabe
 
           <!-- Hover overlay -->
           <div
-            v-if="!selectionMode"
+            v-if="!selectionMode && overlayReady"
             class="absolute inset-0 flex flex-col p-2 transition-opacity duration-150"
             :class="[
               overlayBackground,
-              showMobileOverlay ? 'opacity-100' : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto',
+              showMobileOverlay
+                ? 'opacity-100'
+                : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-visible/card:opacity-100 group-focus-visible/card:pointer-events-auto group-has-focus-visible/card:opacity-100 group-has-focus-visible/card:pointer-events-auto',
             ]"
           >
             <!-- Top row: Quick View + explicit Read (when thumbnail click prefers details) -->

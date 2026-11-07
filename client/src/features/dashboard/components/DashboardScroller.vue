@@ -103,14 +103,10 @@ function handleBookAction(book: BookCard, action: BookActionType) {
 function coverWidthClass(book: BookCard): string {
   return book.coverAspectRatio === '1/1' ? SQUARE_COVER_WIDTH_CLASS : PORTRAIT_COVER_WIDTH_CLASS
 }
-
-function coverAnimationDelay(index: number): string {
-  return `${index * 35}ms`
-}
 </script>
 
 <template>
-  <section v-bind="attrs" class="group/scroller overflow-hidden rounded-2xl border border-primary/40 bg-card/30 shadow-sm backdrop-blur-[1px]">
+  <section v-bind="attrs" class="group/scroller overflow-hidden rounded-2xl border border-primary/40 bg-card/60 shadow-sm">
     <!-- Header -->
     <div class="mb-2 flex items-center justify-between px-5 pt-4">
       <div class="flex items-center gap-2.5">
@@ -179,14 +175,7 @@ function coverAnimationDelay(index: number): string {
     <div v-else ref="scrollEl" class="overflow-x-auto px-5 pb-5 pt-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       <div class="flex w-max flex-col gap-5">
         <div v-for="(band, bandIndex) in bands" :key="bandIndex" data-testid="shelf-band" class="flex items-end gap-5">
-          <div
-            v-for="(book, index) in band"
-            :key="book.id"
-            class="shrink-0"
-            :class="coverWidthClass(book)"
-            style="animation: dashboardFadeUp 0.35s ease both"
-            :style="{ animationDelay: coverAnimationDelay(index) }"
-          >
+          <div v-for="book in band" :key="book.id" class="shrink-0" :class="coverWidthClass(book)">
             <BookCoverCard :book="book" :cover-aspect-ratio="book.coverAspectRatio" @action="handleBookAction(book, $event)" />
           </div>
         </div>
@@ -205,16 +194,3 @@ function coverAnimationDelay(index: number): string {
 
   <DeleteBookDialog :open="deleteBookId !== null" :deleting="deletingBook" @confirm="confirmDelete" @cancel="cancelDelete" />
 </template>
-
-<style scoped>
-@keyframes dashboardFadeUp {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-</style>

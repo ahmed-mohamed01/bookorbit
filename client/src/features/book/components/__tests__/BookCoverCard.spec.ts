@@ -200,6 +200,14 @@ describe('BookCoverCard — cover aspect override', () => {
 })
 
 describe('BookCoverCard - present state', () => {
+  it('mounts hover controls on first keyboard focus and keeps them mounted', async () => {
+    const wrapper = mountCard(presentBook)
+    expect(wrapper.find('[data-testid="grid-card-primary-action"]').exists()).toBe(false)
+    await wrapper.get('.touch-manipulation').trigger('focusin')
+    expect(wrapper.find('[data-testid="grid-card-primary-action"]').exists()).toBe(true)
+    await wrapper.get('.touch-manipulation').trigger('focusout')
+    expect(wrapper.find('[data-testid="grid-card-primary-action"]').exists()).toBe(true)
+  })
   it('marks the EPUB format overlay for media-overlay read-along files', () => {
     cardOverlays.value = ['format']
     const wrapper = mountCard({
@@ -233,6 +241,7 @@ describe('BookCoverCard - present state', () => {
   it('opens book details from the primary overlay action when thumbnail clicks prefer details', async () => {
     thumbnailClickAction.value = 'details'
     const wrapper = mountCard(presentBook)
+    await wrapper.get('.touch-manipulation').trigger('pointerenter')
 
     await wrapper.get('[data-testid="grid-card-primary-action"]').trigger('click')
 
@@ -240,8 +249,9 @@ describe('BookCoverCard - present state', () => {
     expect(routerPushMock).not.toHaveBeenCalledWith(expect.objectContaining({ name: 'reader' }))
   })
 
-  it('labels and describes the quick-view and start-reading actions', () => {
+  it('labels and describes the quick-view and start-reading actions', async () => {
     const wrapper = mountCard(presentBook)
+    await wrapper.get('.touch-manipulation').trigger('pointerenter')
 
     expect(wrapper.get('button[aria-label="Quick View"]')).toBeTruthy()
     expect(wrapper.get('[data-testid="grid-card-primary-action"]').attributes('aria-label')).toBe('Start reading')
@@ -250,15 +260,17 @@ describe('BookCoverCard - present state', () => {
     )
   })
 
-  it('uses a continue-reading label when the book has progress', () => {
+  it('uses a continue-reading label when the book has progress', async () => {
     const wrapper = mountCard({ ...presentBook, readingProgress: 20 })
+    await wrapper.get('.touch-manipulation').trigger('pointerenter')
 
     expect(wrapper.get('[data-testid="grid-card-primary-action"]').attributes('aria-label')).toBe('Continue reading')
   })
 
-  it('labels the explicit reading action when thumbnail clicks prefer details', () => {
+  it('labels the explicit reading action when thumbnail clicks prefer details', async () => {
     thumbnailClickAction.value = 'details'
     const wrapper = mountCard(presentBook)
+    await wrapper.get('.touch-manipulation').trigger('pointerenter')
 
     expect(wrapper.get('[data-testid="grid-card-primary-action"]').attributes('aria-label')).toBe('Book Details')
     expect(wrapper.get('button[aria-label="Start reading"]')).toBeTruthy()
@@ -325,13 +337,15 @@ describe('BookCoverCard - present state', () => {
     expect(fallbackAuthor.exists()).toBe(false)
   })
 
-  it('anchors the kebab menu button to the lower-right corner', () => {
+  it('anchors the kebab menu button to the lower-right corner', async () => {
     const wrapper = mountCard(presentBook)
+    await wrapper.get('.touch-manipulation').trigger('pointerenter')
     expect(wrapper.find('div.absolute.bottom-2.right-2.z-20').exists()).toBe(true)
   })
 
-  it('does not render a trailing separator when no post-status actions are visible', () => {
+  it('does not render a trailing separator when no post-status actions are visible', async () => {
     const wrapper = mountCard(presentBook)
+    await wrapper.get('.touch-manipulation').trigger('pointerenter')
     expect(wrapper.text()).toContain('Set Status')
     expect(wrapper.text()).not.toContain('Send via Email')
     expect(wrapper.text()).not.toContain('Delete')

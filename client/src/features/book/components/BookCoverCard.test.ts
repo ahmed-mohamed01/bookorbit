@@ -234,6 +234,11 @@ function setTouchMode(value: boolean) {
 // -- tests -------------------------------------------------------------------
 
 describe('BookCoverCard', () => {
+  it.each(['', '   ', null])('labels a card with title %s as an untitled book', (title) => {
+    const wrapper = mountCard({ book: makeBook({ title }) })
+    expect(wrapper.get('[role="group"]').attributes('aria-label')).toBe('Untitled book')
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     mockRefreshing.value = false
@@ -259,20 +264,23 @@ describe('BookCoverCard', () => {
   // ── hover overlay pointer-events (the bug fix) ────────────────────────────
 
   describe('hover overlay pointer events', () => {
-    it('has pointer-events-none by default so the overlay does not block content below', () => {
+    it('has pointer-events-none by default so the overlay does not block content below', async () => {
       const wrapper = mountCard()
+      await wrapper.get('.touch-manipulation').trigger('pointerenter')
       const overlay = wrapper.find('.bg-black\\/70')
       expect(overlay.classes()).toContain('pointer-events-none')
     })
 
-    it('has group-hover:pointer-events-auto so buttons become clickable on desktop hover', () => {
+    it('has group-hover:pointer-events-auto so buttons become clickable on desktop hover', async () => {
       const wrapper = mountCard()
+      await wrapper.get('.touch-manipulation').trigger('pointerenter')
       const overlay = wrapper.find('.bg-black\\/70')
       expect(overlay.classes()).toContain('group-hover:pointer-events-auto')
     })
 
-    it('has group-hover:opacity-100 to become visible on desktop hover', () => {
+    it('has group-hover:opacity-100 to become visible on desktop hover', async () => {
       const wrapper = mountCard()
+      await wrapper.get('.touch-manipulation').trigger('pointerenter')
       const overlay = wrapper.find('.bg-black\\/70')
       expect(overlay.classes()).toContain('group-hover:opacity-100')
     })
@@ -295,10 +303,40 @@ describe('BookCoverCard', () => {
       expect(overlay.classes()).not.toContain('group-hover:pointer-events-auto')
     })
 
-    it('is absent in selection mode (no hover overlay rendered)', () => {
+    it('is absent in selection mode (no hover overlay rendered)', async () => {
       const wrapper = mountCard({ selectionMode: true })
-      // The v-if="!selectionMode" removes the overlay entirely
+      await wrapper.get('.touch-manipulation').trigger('pointerenter')
+      await wrapper.get('.touch-manipulation').trigger('focusin')
       expect(wrapper.find('.bg-black\\/70').exists()).toBe(false)
+    })
+
+    it('reveals on keyboard focus only, so a mouse click that leaves focus inside the card does not pin it open', async () => {
+      const wrapper = mountCard()
+      const root = wrapper.get('.touch-manipulation')
+      await root.trigger('pointerenter')
+      await root.trigger('click')
+      const overlay = wrapper.get('.bg-black\\/70')
+      expect(overlay.classes().some((cls) => cls.includes('focus-within'))).toBe(false)
+      expect(overlay.classes()).toContain('group-focus-visible/card:opacity-100')
+      expect(overlay.classes()).toContain('group-has-focus-visible/card:opacity-100')
+    })
+
+    it('mounts the overlay controls on keyboard focus without a prior hover', async () => {
+      const wrapper = mountCard()
+      expect(wrapper.find('[data-testid="dropdown-trigger"]').exists()).toBe(false)
+      await wrapper.get('.touch-manipulation').trigger('focusin')
+      expect(wrapper.find('[data-testid="dropdown-trigger"]').exists()).toBe(true)
+    })
+
+    it('makes the card root a labelled tab stop outside selection mode only', () => {
+      const root = mountCard().get('.touch-manipulation')
+      expect(root.attributes('tabindex')).toBe('0')
+      expect(root.attributes('role')).toBe('group')
+      expect(root.attributes('aria-label')).toBe('Dune')
+
+      const selectionRoot = mountCard({ selectionMode: true }).get('.touch-manipulation')
+      expect(selectionRoot.attributes('tabindex')).toBeUndefined()
+      expect(selectionRoot.attributes('role')).toBeUndefined()
     })
   })
 
@@ -307,6 +345,7 @@ describe('BookCoverCard', () => {
   describe('quick view button', () => {
     it('emits action:quick-view when quick view button is clicked', async () => {
       const wrapper = mountCard()
+      await wrapper.get('.touch-manipulation').trigger('pointerenter')
       const overlayBtns = wrapper.find('.bg-black\\/70').findAll('button')
       await overlayBtns[0]?.trigger('click')
       expect(wrapper.emitted('action')?.[0]).toEqual(['quick-view'])
@@ -358,6 +397,7 @@ describe('BookCoverCard', () => {
     it('does not open file when clicking a button (event target is button)', async () => {
       setTouchMode(false)
       const wrapper = mountCard()
+      await wrapper.get('.touch-manipulation').trigger('pointerenter')
       const btn = wrapper.find('button')
       await btn.trigger('click')
       // The card click handler returns early for button clicks
@@ -403,6 +443,7 @@ describe('BookCoverCard', () => {
       mockThumbnailClickAction.value = 'details'
       const book = makeBook({ id: 44, files: [makeFile({ id: 12, format: 'epub', role: 'primary' })] })
       const wrapper = mountCard({ book })
+      await wrapper.get('.touch-manipulation').trigger('pointerenter')
 
       const overlayButtons = wrapper.find('.bg-black\\/70').findAll('button')
       await overlayButtons[1]!.trigger('click')
@@ -503,15 +544,17 @@ describe('BookCoverCard', () => {
   // ── book metadata display ─────────────────────────────────────────────────
 
   describe('text metadata', () => {
-    it('shows book title', () => {
+    it('shows book title', async () => {
       const wrapper = mountCard({ book: makeBook({ title: 'Foundation' }) })
+      await wrapper.get('.touch-manipulation').trigger('pointerenter')
       expect(wrapper.text()).toContain('Foundation')
     })
 
-    it('does not render hover title when no cover is loaded yet', () => {
+    it('does not render hover title when no cover is loaded yet', async () => {
       // hasCover true but image not loaded - placeholder not shown, hover title hidden
       const book = makeBook({ hasCover: true, title: 'Foundation' })
       const wrapper = mountCard({ book })
+      await wrapper.get('.touch-manipulation').trigger('pointerenter')
       // coverLoaded defaults to false; showHoverText = false → title not in overlay p tag
       const overlay = wrapper.find('.bg-black\\/70')
       const pTags = overlay.findAll('p')
@@ -519,9 +562,10 @@ describe('BookCoverCard', () => {
       expect(pTags.filter((p) => p.text().includes('Foundation')).length).toBe(0)
     })
 
-    it('shows author in hover overlay when no cover (placeholder shown)', () => {
+    it('shows author in hover overlay when no cover (placeholder shown)', async () => {
       const book = makeBook({ hasCover: false, authors: ['Frank Herbert'] })
       const wrapper = mountCard({ book })
+      await wrapper.get('.touch-manipulation').trigger('pointerenter')
       expect(wrapper.find('.bg-black\\/70').text()).toContain('Frank Herbert')
     })
   })
@@ -556,6 +600,7 @@ describe('BookCoverCard', () => {
     it('navigates to authors page when author button clicked', async () => {
       const book = makeBook({ hasCover: false, authors: ['Frank Herbert'] })
       const wrapper = mountCard({ book })
+      await wrapper.get('.touch-manipulation').trigger('pointerenter')
       const authorBtn = wrapper.findAll('.bg-black\\/70 button').find((b) => b.text().includes('Frank Herbert'))
       expect(authorBtn).toBeDefined()
       await authorBtn!.trigger('click')
@@ -592,14 +637,17 @@ describe('BookCoverCard', () => {
   // ── dropdown menu actions ─────────────────────────────────────────────────
 
   describe('dropdown menu', () => {
-    it('renders the kebab menu trigger button', () => {
+    it('renders the kebab menu trigger button', async () => {
       const wrapper = mountCard()
+      await wrapper.get('.touch-manipulation').trigger('pointerenter')
       // The dropdown trigger wraps a button with MoreVertical icon
       expect(wrapper.find('[data-testid="dropdown-trigger"]').exists()).toBe(true)
     })
 
-    it('does not render dropdown in selection mode', () => {
+    it('does not render dropdown in selection mode', async () => {
       const wrapper = mountCard({ selectionMode: true })
+      await wrapper.get('.touch-manipulation').trigger('pointerenter')
+      await wrapper.get('.touch-manipulation').trigger('focusin')
       expect(wrapper.find('[data-testid="dropdown-menu"]').exists()).toBe(false)
     })
 
@@ -609,6 +657,7 @@ describe('BookCoverCard', () => {
         files: [makeFile({ id: 10, format: 'mp3', role: 'primary' }), makeFile({ id: 11, format: 'mp3', role: 'content' })],
       })
       const wrapper = mountCard({ book })
+      await wrapper.get('.touch-manipulation').trigger('pointerenter')
       const downloadItem = wrapper.findAll('[data-testid="dropdown-item"]').find((item) => item.text().trim() === 'Download')
 
       expect(downloadItem).toBeDefined()
@@ -628,6 +677,7 @@ describe('BookCoverCard', () => {
         ],
       })
       const wrapper = mountCard({ book })
+      await wrapper.get('.touch-manipulation').trigger('pointerenter')
       const audioZipItem = wrapper.findAll('[data-testid="dropdown-item"]').find((item) => item.text().trim() === 'Audiobook (ZIP)')
 
       expect(audioZipItem).toBeDefined()
@@ -650,6 +700,7 @@ describe('BookCoverCard', () => {
       const fetchMock = vi.fn<() => Promise<{ ok: boolean }>>().mockResolvedValue({ ok: false })
       vi.stubGlobal('fetch', fetchMock)
       const wrapper = mountCard({ book: makeBook({ id: 42 }) })
+      await wrapper.get('.touch-manipulation').trigger('pointerenter')
       const regenerate = wrapper.findAll('[data-testid="dropdown-item"]').find((item) => item.text().trim() === 'Regenerate Cover')
 
       await regenerate!.trigger('click')
@@ -664,6 +715,7 @@ describe('BookCoverCard', () => {
     it('refreshes the cover after a successful regeneration', async () => {
       vi.stubGlobal('fetch', vi.fn<() => Promise<{ ok: boolean }>>().mockResolvedValue({ ok: true }))
       const wrapper = mountCard({ book: makeBook({ id: 42 }) })
+      await wrapper.get('.touch-manipulation').trigger('pointerenter')
       const regenerate = wrapper.findAll('[data-testid="dropdown-item"]').find((item) => item.text().trim() === 'Regenerate Cover')
 
       await regenerate!.trigger('click')
