@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { mount, flushPromises, enableAutoUnmount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
-import type { ScrollerType } from '@bookorbit/types'
+import type { ScrollerType, BookProgressChangedEvent } from '@bookorbit/types'
 
 const bookEventsMock = vi.hoisted(() => ({
-  progressChangedCallback: null as (() => void) | null,
+  progressChangedCallback: null as ((event: BookProgressChangedEvent) => void) | null,
 }))
 
 vi.mock('@/lib/api', () => ({
@@ -13,7 +13,7 @@ vi.mock('@/lib/api', () => ({
 
 vi.mock('@/features/book/composables/useBookEvents', () => ({
   useBookEvents: () => ({
-    onBookProgressChanged: (callback: () => void) => {
+    onBookProgressChanged: (callback: (event: BookProgressChangedEvent) => void) => {
       bookEventsMock.progressChangedCallback = callback
       return () => undefined
     },
@@ -23,6 +23,8 @@ vi.mock('@/features/book/composables/useBookEvents', () => ({
 import { api } from '@/lib/api'
 import { useDashboardScroller } from '../useDashboardScroller'
 import { PROGRESS_REFRESH_MIN_INTERVAL_MS } from '@/features/book/composables/useBookProgressRefresh'
+
+enableAutoUnmount(afterEach)
 
 const mockApi = vi.mocked(api)
 
@@ -156,8 +158,8 @@ describe('useDashboardScroller', () => {
     await flushPromises()
     mockApi.mockClear()
 
-    bookEventsMock.progressChangedCallback?.()
-    bookEventsMock.progressChangedCallback?.()
+    bookEventsMock.progressChangedCallback?.({ bookId: 42, progress: 0.5, source: 'kobo' })
+    bookEventsMock.progressChangedCallback?.({ bookId: 42, progress: 0.5, source: 'kobo' })
     await vi.advanceTimersByTimeAsync(249)
     expect(mockApi).not.toHaveBeenCalled()
 
@@ -182,7 +184,7 @@ describe('useDashboardScroller', () => {
       const body = JSON.parse(String(init?.body)) as { items: Array<{ id: string }> }
       return mockResponse({ items: body.items.map((item) => ({ id: item.id, books: [{ id: 2 }], failed: false })) })
     })
-    bookEventsMock.progressChangedCallback?.()
+    bookEventsMock.progressChangedCallback?.({ bookId: 42, progress: 0.5, source: 'kobo' })
     await vi.advanceTimersByTimeAsync(250)
     expect(mockApi).toHaveBeenCalledTimes(2)
     expect(state.loading.value).toBe(false)
@@ -192,7 +194,7 @@ describe('useDashboardScroller', () => {
     expect(state.books.value).toEqual([{ id: 2 }])
 
     mockSuccessfulBatch([], true)
-    bookEventsMock.progressChangedCallback?.()
+    bookEventsMock.progressChangedCallback?.({ bookId: 42, progress: 0.5, source: 'kobo' })
     await vi.advanceTimersByTimeAsync(PROGRESS_REFRESH_MIN_INTERVAL_MS)
     await flushPromises()
     expect(state.books.value).toEqual([{ id: 2 }])
@@ -206,13 +208,13 @@ describe('useDashboardScroller', () => {
     await flushPromises()
     mockApi.mockClear()
 
-    bookEventsMock.progressChangedCallback?.()
+    bookEventsMock.progressChangedCallback?.({ bookId: 42, progress: 0.5, source: 'kobo' })
     await vi.advanceTimersByTimeAsync(250)
     await flushPromises()
     expect(mockApi).toHaveBeenCalledOnce()
 
     for (let i = 0; i < 10; i++) {
-      bookEventsMock.progressChangedCallback?.()
+      bookEventsMock.progressChangedCallback?.({ bookId: 42, progress: 0.5, source: 'kobo' })
       await vi.advanceTimersByTimeAsync(2_500)
     }
     expect(mockApi).toHaveBeenCalledOnce()
@@ -220,5 +222,16 @@ describe('useDashboardScroller', () => {
     await vi.advanceTimersByTimeAsync(PROGRESS_REFRESH_MIN_INTERVAL_MS)
     await flushPromises()
     expect(mockApi).toHaveBeenCalledTimes(2)
+  })
+  it.each(['recently-added', 'random'] as const)('refreshes progress-bearing shelves only: %s', async (type) => {
+    vi.useFakeTimers()
+    mockSuccessfulBatch([{ id: 42 }])
+    mountComposable(type, 5)
+    await flushPromises()
+    mockApi.mockClear()
+    bookEventsMock.progressChangedCallback?.({ bookId: 42, progress: 50, source: 'kobo' })
+    await vi.advanceTimersByTimeAsync(250)
+    await flushPromises()
+    expect(mockApi).toHaveBeenCalledTimes(type === 'recently-added' ? 1 : 0)
   })
 })

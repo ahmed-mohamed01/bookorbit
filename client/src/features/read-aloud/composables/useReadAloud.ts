@@ -12,6 +12,26 @@ import { api } from '@/lib/api'
 import { createAuthenticatedSocket } from '@/lib/socket'
 import { isActiveJob, isCompletedJob } from '../lib/read-aloud'
 
+const capabilityRequests = new Map<number, Promise<ReadAloudCapability>>()
+export function invalidateReadAloudCapability(bookId: number) {
+  capabilityRequests.delete(bookId)
+}
+export function fetchReadAloudCapability(bookId: number): Promise<ReadAloudCapability> {
+  const cached = capabilityRequests.get(bookId)
+  if (cached) return cached
+  const request = (async () => {
+    const response = await api(`/api/v1/books/${bookId}/read-aloud`)
+    if (!response.ok) throw new HttpStatusError(response.status)
+    return (await response.json()) as ReadAloudCapability
+  })()
+  capabilityRequests.set(bookId, request)
+  const clear = () => {
+    if (capabilityRequests.get(bookId) === request) capabilityRequests.delete(bookId)
+  }
+  void request.finally(clear).catch(() => undefined)
+  return request
+}
+
 /**
  * Jobs run for hours, so the poll only has to notice a job someone else is running, or a socket
  * that went quiet. The requester gets every change pushed and keeps this as a fallback.
@@ -175,6 +195,7 @@ export function useReadAloud(options: UseReadAloudOptions) {
     }
 
     // A job that just stopped frees the book's slot and may have added a file, so availability moved.
+    if (source === 'update') invalidateReadAloudCapability(bookId.value)
     if (source === 'update' && isActiveJob(previous) && !isActiveJob(next)) void loadCapability()
 
     syncLiveUpdates()
@@ -189,10 +210,7 @@ export function useReadAloud(options: UseReadAloudOptions) {
     checking.value = true
     const seqAtStart = jobUpdateSeq
     try {
-      const response = await api(`/api/v1/books/${bookId.value}/read-aloud`, { signal: controller.signal })
-      if (current !== generation || controller.signal.aborted) return
-      if (!response.ok) throw new HttpStatusError(response.status)
-      const result = (await response.json()) as ReadAloudCapability
+      const result = await fetchReadAloudCapability(bookId.value)
       if (current !== generation || controller.signal.aborted) return
       capability.value = result
       loadFailed.value = false
@@ -282,6 +300,7 @@ export function useReadAloud(options: UseReadAloudOptions) {
   async function create(input: CreateReadAloudJobRequest): Promise<ReadAloudCreateResult> {
     if (action.value !== null || !canRun()) return { ok: false, errorKey: `${ERRORS}.create` }
     const gen = generation
+    invalidateReadAloudCapability(bookId.value)
     action.value = 'create'
     try {
       const response = await api(`/api/v1/books/${bookId.value}/read-aloud-jobs`, {
@@ -328,6 +347,7 @@ export function useReadAloud(options: UseReadAloudOptions) {
   }
 
   function reload(): Promise<void> {
+    invalidateReadAloudCapability(bookId.value)
     return loadCapability()
   }
 

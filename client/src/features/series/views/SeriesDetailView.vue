@@ -91,6 +91,7 @@ const leadDescriptionExpanded = ref(false)
 const leadGenresExpanded = ref(false)
 const leadCoverBookIds = ref<number[]>([])
 const failedLeadCovers = ref(new Set<number>())
+const leadCoverVersions = ref(new Map<number, string>())
 const leadCoverRatios = ref(new Map<number, number>())
 const leadBook = ref<{
   id: number
@@ -285,6 +286,7 @@ async function loadLeadBookPreview(preserveCurrent = false) {
     leadBookError.value = null
     loadingLeadBook.value = false
     leadCoverBookIds.value = []
+    leadCoverVersions.value = new Map()
     leadCoverRatios.value = new Map<number, number>()
     return
   }
@@ -294,6 +296,7 @@ async function loadLeadBookPreview(preserveCurrent = false) {
   if (!preserveCurrent) {
     leadBook.value = null
     leadCoverBookIds.value = []
+    leadCoverVersions.value = new Map()
     failedLeadCovers.value = new Set<number>()
     leadCoverRatios.value = new Map<number, number>()
   }
@@ -310,6 +313,7 @@ async function loadLeadBookPreview(preserveCurrent = false) {
     })
 
     if (token !== leadBookRequestToken) return
+    leadCoverVersions.value = new Map(firstPage.items.map((book) => [book.id, book.coverVersion]))
     leadCoverBookIds.value = firstPage.items
       .filter((book) => book.hasCover)
       .map((book) => book.id)
@@ -518,7 +522,7 @@ defineOptions({ name: 'SeriesDetailView' })
                   }"
                 >
                   <BookCoverArtwork
-                    :src="coverUrl(bookId)"
+                    :src="coverUrl(bookId, 'thumbnail', leadCoverVersions.get(bookId))"
                     :has-cover="true"
                     :title="seriesInfo.name"
                     :seed="`${seriesInfo.name}-${bookId}`"

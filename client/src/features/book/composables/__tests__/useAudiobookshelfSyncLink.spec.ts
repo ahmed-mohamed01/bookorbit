@@ -15,7 +15,7 @@ vi.mock('@/features/auth/composables/usePermissions', () => ({
   usePermissions: () => ({ hasPermission: permissionMocks.hasPermission }),
 }))
 
-import { useAudiobookshelfSyncLink } from '../useAudiobookshelfSyncLink'
+import { invalidateAudiobookshelfSyncSettings, useAudiobookshelfSyncLink } from '../useAudiobookshelfSyncLink'
 
 function makeLink(overrides: Partial<AudiobookshelfBookSyncLink> = {}): AudiobookshelfBookSyncLink {
   return {
@@ -51,6 +51,7 @@ const synced: AudiobookshelfBookSyncLive = {
 
 describe('useAudiobookshelfSyncLink', () => {
   beforeEach(() => {
+    invalidateAudiobookshelfSyncSettings()
     apiMocks.fetchAudiobookshelfSyncLink.mockReset()
     apiMocks.fetchAudiobookshelfSyncLive.mockReset()
     apiMocks.fetchAudiobookshelfSettings.mockReset()
@@ -311,6 +312,10 @@ describe('useAudiobookshelfSyncLink', () => {
     await loadConfigured()
     expect(configured.value).toBe(true)
 
+    await loadConfigured()
+    expect(apiMocks.fetchAudiobookshelfSettings).toHaveBeenCalledTimes(1)
+
+    invalidateAudiobookshelfSyncSettings()
     apiMocks.fetchAudiobookshelfSettings.mockRejectedValueOnce(new Error('offline'))
     await loadConfigured()
     expect(configured.value).toBe(true)
@@ -318,6 +323,7 @@ describe('useAudiobookshelfSyncLink', () => {
     apiMocks.fetchAudiobookshelfSettings.mockResolvedValueOnce({ effectiveEnabled: false })
     await loadConfigured()
     expect(configured.value).toBe(false)
+    expect(apiMocks.fetchAudiobookshelfSettings).toHaveBeenCalledTimes(3)
   })
 
   it('never reads the settings without the sync permission', async () => {

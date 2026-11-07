@@ -1,7 +1,10 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
+import type { useCoverVersions } from '@/features/book/composables/useCoverVersions'
 import type { LongWaitWidgetData } from '@bookorbit/types'
 import LongWaitWidget from '../LongWaitWidget.vue'
+
+const coverUrl = vi.fn<ReturnType<typeof useCoverVersions>['coverUrl']>(() => '/cover.jpg')
 
 const fetchLongWait = vi.fn<() => Promise<LongWaitWidgetData | null>>()
 
@@ -10,7 +13,7 @@ vi.mock('@/features/dashboard/api/dashboard-widget.api', () => ({
 }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn<(...args: unknown[]) => void>() }) }))
 vi.mock('@/features/book/composables/useCoverVersions', () => ({
-  useCoverVersions: () => ({ coverUrl: () => '/cover.jpg' }),
+  useCoverVersions: () => ({ coverUrl }),
 }))
 
 const CoverSurfaceStub = {
@@ -27,6 +30,7 @@ const CoverArtworkStub = {
 function data(fileFormat: string | null): LongWaitWidgetData {
   return {
     bookId: 1,
+    coverVersion: 'face-v1',
     title: 'Bone',
     hasCover: true,
     addedAt: '2024-01-01',
@@ -51,6 +55,7 @@ describe('LongWaitWidget comic spine flag', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="surface"]').attributes('data-comic')).toBe('true')
+    expect(coverUrl).toHaveBeenCalledWith(1, 'thumbnail', 'face-v1')
     expect(wrapper.find('[data-testid="artwork"]').attributes('data-comic')).toBe('true')
   })
 

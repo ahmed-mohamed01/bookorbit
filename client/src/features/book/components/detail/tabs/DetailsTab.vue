@@ -155,7 +155,6 @@ const {
 
 onMounted(() => {
   void fetchWeights()
-  void reloadReadingLog()
   void loadProviderLinkSettings()
 })
 
@@ -559,7 +558,7 @@ async function savePersonalNote() {
 }
 
 const bookIdRef = computed(() => props.book.id)
-const { sessions: readingSessions, stats: readingStats, loading: readingLogLoading, reload: reloadReadingLog } = useBookReadingLog(bookIdRef)
+const { sessions: readingSessions, stats: readingStats, loading: readingLogLoading } = useBookReadingLog(bookIdRef)
 
 const { setStatus, updateStatus } = useBookStatus()
 
@@ -897,10 +896,6 @@ const editionProgress = computed<EditionProgress[]>(() => {
   return [...byKey.values()]
 })
 
-watch(bookIdRef, () => {
-  void reloadReadingLog()
-})
-
 function handleEditionReset(key: string) {
   const row = editionProgress.value.find((entry) => entry.key === key)
   if (row) void handleResetFileProgress(row)
@@ -1087,9 +1082,12 @@ function openBook() {
   openBookWithMode()
 }
 
-useBookProgressRefresh(() => {
-  void loadSupplemental()
-})
+useBookProgressRefresh(
+  () => {
+    void loadSupplemental()
+  },
+  () => props.book.id,
+)
 
 function peekBook() {
   openBookWithMode('peek')

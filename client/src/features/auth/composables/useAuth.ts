@@ -1,3 +1,4 @@
+import { clearSessionState } from '@/lib/session-reset'
 import { ref } from 'vue'
 import type { AuthUser, AuthResponse } from '@bookorbit/types'
 import {
@@ -79,6 +80,7 @@ function clearAuth() {
   disconnectAuthorEnrichmentSocket()
   disconnectBookMetadataFetchSocket()
   resetWhatsNew()
+  clearSessionState()
 }
 
 setOnAuthFailure(() => {
@@ -101,11 +103,10 @@ async function hydratePreferences(options: { refreshUser?: boolean } = {}): Prom
     await me()
   }
 
-  if (user.value?.settings?.syncThemePreferences) {
-    await loadFromServer()
-    await loadDisplaySettingsFromServer()
-  }
-  await hydrateLocalePreference()
+  await Promise.all([
+    ...(user.value?.settings?.syncThemePreferences ? [loadFromServer(), loadDisplaySettingsFromServer()] : []),
+    hydrateLocalePreference(),
+  ])
 
   initThemeSync()
   initDisplaySettingsSync()

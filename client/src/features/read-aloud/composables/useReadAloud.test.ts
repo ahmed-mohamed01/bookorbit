@@ -38,7 +38,7 @@ const mocks = vi.hoisted(() => {
 vi.mock('@/lib/api', () => ({ api: mocks.api }))
 vi.mock('@/lib/socket', () => ({ createAuthenticatedSocket: mocks.createAuthenticatedSocket }))
 
-import { READ_ALOUD_POLL_INTERVAL_MS, useReadAloud } from './useReadAloud'
+import { READ_ALOUD_POLL_INTERVAL_MS, fetchReadAloudCapability, useReadAloud } from './useReadAloud'
 
 const CAPABILITY_URL = `/api/v1/books/${BOOK_ID}/read-aloud`
 const JOB_URL = `/api/v1/read-aloud-jobs/${JOB_ID}`
@@ -312,7 +312,7 @@ describe('useReadAloud', () => {
     await flushPromises()
 
     expect(callsTo('GET', CAPABILITY_URL)).toBe(2)
-    expect(mocks.api).toHaveBeenLastCalledWith(CAPABILITY_URL, expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(mocks.api).toHaveBeenLastCalledWith(CAPABILITY_URL)
     expect(result.capability.value?.eligible).toBe(true)
     // A silent recheck never puts the entry back into its first-load state.
     expect(result.loading.value).toBe(false)
@@ -423,4 +423,15 @@ describe('useReadAloud', () => {
     expect(result.loadFailed.value).toBe(false)
     expect(result.failedChecks.value).toBe(0)
   })
+})
+
+it('shares simultaneous capability lookups and allows a later fresh read', async () => {
+  mocks.api.mockImplementation(async () => jsonResponse(makeCapability()))
+  const first = fetchReadAloudCapability(987654)
+  const second = fetchReadAloudCapability(987654)
+  expect(second).toBe(first)
+  await first
+  expect(mocks.api).toHaveBeenCalledTimes(1)
+  await fetchReadAloudCapability(987654)
+  expect(mocks.api).toHaveBeenCalledTimes(2)
 })

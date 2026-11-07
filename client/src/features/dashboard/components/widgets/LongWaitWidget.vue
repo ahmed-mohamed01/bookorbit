@@ -77,7 +77,7 @@ function startReading() {
           @click="goToBook"
         >
           <BookCoverArtwork
-            :src="coverUrl(data.bookId)"
+            :src="coverUrl(data.bookId, 'thumbnail', data.coverVersion)"
             :has-cover="data.hasCover"
             :title="data.title"
             :author-line="null"

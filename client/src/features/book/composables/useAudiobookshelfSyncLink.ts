@@ -1,11 +1,10 @@
 import { ref, watch, type Ref } from 'vue'
 import { Permission, type AudiobookshelfBookSyncLink, type AudiobookshelfBookSyncLive } from '@bookorbit/types'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
-import {
-  fetchAudiobookshelfSettings,
-  fetchAudiobookshelfSyncLink,
-  fetchAudiobookshelfSyncLive,
-} from '@/features/audiobookshelf/api/audiobookshelf.api'
+import { fetchAudiobookshelfSyncLink, fetchAudiobookshelfSyncLive } from '@/features/audiobookshelf/api/audiobookshelf.api'
+
+import { audiobookshelfSettingsRequest } from '@/features/audiobookshelf/api/cached-settings'
+export { invalidateAudiobookshelfSyncSettings } from '@/features/audiobookshelf/api/cached-settings'
 
 // A live check that fails still has to leave the Audiobookshelf row with a way to act, which the unreachable state offers.
 const UNREACHABLE: AudiobookshelfBookSyncLive = { status: 'unreachable', progress: null, local: null, divergedReason: null }
@@ -92,7 +91,7 @@ export function useAudiobookshelfSyncLink(audioBookId: Ref<number | null>) {
       return
     }
     try {
-      configured.value = (await fetchAudiobookshelfSettings()).effectiveEnabled
+      configured.value = (await audiobookshelfSettingsRequest.get()).effectiveEnabled
     } catch {
       // A failed read keeps the last answer, so a flaky request does not make the rows flicker.
     }

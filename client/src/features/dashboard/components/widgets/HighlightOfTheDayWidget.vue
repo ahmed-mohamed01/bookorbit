@@ -55,7 +55,7 @@ function goToBook() {
       <button class="flex cursor-pointer items-center gap-2 rounded-lg pb-1 pl-1 text-left transition-colors hover:bg-muted/40" @click="goToBook">
         <BookCoverSurface size="mini" class="book-cover-surface--spine-fitted h-9 w-6 shrink-0 overflow-hidden rounded-xs">
           <BookCoverArtwork
-            :src="coverUrl(data.bookId)"
+            :src="coverUrl(data.bookId, 'thumbnail', data.coverVersion)"
             :has-cover="data.hasCover"
             :title="data.bookTitle"
             :author-line="null"

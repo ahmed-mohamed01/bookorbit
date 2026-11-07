@@ -74,7 +74,7 @@ async function addToQueue() {
         @click="goToBook"
       >
         <BookCoverArtwork
-          :src="coverUrl(currentGem.bookId)"
+          :src="coverUrl(currentGem.bookId, 'thumbnail', currentGem.coverVersion)"
           :has-cover="currentGem.hasCover"
           :title="currentGem.title"
           :author-line="null"

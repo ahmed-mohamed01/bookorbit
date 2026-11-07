@@ -38,13 +38,13 @@ export function useHardcoverSync() {
       if (status?.status !== 'running') {
         stopSyncTracking()
         await fetchPendingSummary()
-        await useHardcoverSettings().fetchSettings()
+        await useHardcoverSettings().fetchSettings({ force: true })
       }
     }, controller.signal)
       .then(async () => {
         if (generation !== streamGeneration) return
         await fetchPendingSummary()
-        await useHardcoverSettings().fetchSettings()
+        await useHardcoverSettings().fetchSettings({ force: true })
       })
       .catch(async () => {
         if (generation !== streamGeneration) return
@@ -71,7 +71,7 @@ export function useHardcoverSync() {
       const { runId } = await startHardcoverSync()
       if (runId <= 0) {
         error.value = 'Hardcover sync is not available right now'
-        await Promise.all([fetchPendingSummary(), useHardcoverSettings().fetchSettings()])
+        await Promise.all([fetchPendingSummary(), useHardcoverSettings().fetchSettings({ force: true })])
         return
       }
       activeSyncStatus.value = {

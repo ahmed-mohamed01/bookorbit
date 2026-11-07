@@ -1,3 +1,5 @@
+import { onSessionCleared } from '@/lib/session-reset'
+import { createCachedRequest } from '@/lib/cached-request'
 import { ref } from 'vue'
 import type { StorygraphSettings, UpsertStorygraphSettingsPayload } from '@bookorbit/types'
 import { disconnectStorygraph, fetchStorygraphSettings, upsertStorygraphSettings, validateStorygraphCookies } from '../api/storygraph.api'
@@ -8,17 +10,40 @@ const saving = ref(false)
 const validating = ref(false)
 const error = ref<string | null>(null)
 
-export function useStorygraphSettings() {
-  async function fetchSettings(): Promise<void> {
-    loading.value = true
-    error.value = null
-    try {
-      settings.value = await fetchStorygraphSettings()
-    } catch (err) {
-      error.value = err instanceof Error ? err.message : 'Failed to load settings'
-    } finally {
+const settingsRequest = createCachedRequest(loadSettings)
+export function invalidateStorygraphSettings() {
+  settingsRequest.invalidate()
+}
+
+async function loadSettings(isCurrent: () => boolean): Promise<void> {
+  loading.value = true
+  error.value = null
+  try {
+    const nextSettings = await fetchStorygraphSettings()
+    if (isCurrent()) settings.value = nextSettings
+  } catch (err) {
+    if (isCurrent()) {
       loading.value = false
+      settingsRequest.invalidate()
+      error.value = err instanceof Error ? err.message : 'Failed to load settings'
     }
+  } finally {
+    if (isCurrent()) loading.value = false
+  }
+}
+
+export function resetStorygraphSettings() {
+  invalidateStorygraphSettings()
+  loading.value = false
+  error.value = null
+  settings.value = null
+}
+
+onSessionCleared(resetStorygraphSettings)
+
+export function useStorygraphSettings() {
+  function fetchSettings(options: { force?: boolean } = {}): Promise<void> {
+    return settingsRequest.get(options)
   }
 
   async function saveSettings(payload: UpsertStorygraphSettingsPayload): Promise<boolean> {
@@ -26,6 +51,7 @@ export function useStorygraphSettings() {
     error.value = null
     try {
       settings.value = await upsertStorygraphSettings(payload)
+      invalidateStorygraphSettings()
       return true
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to save settings'
@@ -41,6 +67,7 @@ export function useStorygraphSettings() {
     try {
       await disconnectStorygraph()
       settings.value = null
+      invalidateStorygraphSettings()
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to disconnect'
     } finally {

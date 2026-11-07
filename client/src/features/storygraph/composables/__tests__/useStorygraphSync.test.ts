@@ -161,4 +161,20 @@ describe('useStorygraphSync', () => {
 
     expect(c.activeSyncStatus.value).toBeNull()
   })
+  it('reloads cached settings after sync completion', async () => {
+    const { useStorygraphSettings } = await import('../useStorygraphSettings')
+    const settings = useStorygraphSettings()
+    await settings.fetchSettings()
+    mockStatus.mockResolvedValue(RUNNING_STATUS)
+    let finish!: (status: typeof RUNNING_STATUS | null) => void
+    mockStream.mockImplementation((callback) => {
+      finish = callback
+      return new Promise(() => {})
+    })
+    const sync = await loadComposable()
+    await sync.fetchStatus()
+    await finish({ ...RUNNING_STATUS, status: 'completed' })
+    expect(mockFetchSettings).toHaveBeenCalledTimes(2)
+    sync.stopSyncTracking()
+  })
 })

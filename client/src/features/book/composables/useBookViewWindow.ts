@@ -1,4 +1,4 @@
-import { computed, getCurrentInstance, onActivated, ref, watch, type Ref } from 'vue'
+import { computed, getCurrentInstance, onActivated, onDeactivated, ref, watch, type Ref } from 'vue'
 import { useElementSize, useWindowSize } from '@vueuse/core'
 import {
   MAX_RANDOM_SORT_SEED,
@@ -125,10 +125,27 @@ export function useBookViewWindow(options: {
     maxBuckets: railCapacity,
   })
 
-  useBookProgressRefresh(() => {
+  let active = true
+  let refreshDue = false
+  function refreshProgress() {
+    if (!active) {
+      refreshDue = true
+      return
+    }
+    refreshDue = false
     window.reset()
     return bucketsApi.refresh()
-  })
+  }
+  if (getCurrentInstance()) {
+    onDeactivated(() => {
+      active = false
+    })
+    onActivated(() => {
+      active = true
+      if (refreshDue) void refreshProgress()
+    })
+  }
+  useBookProgressRefresh(refreshProgress)
 
   const railVisible = computed(() => railEligible.value && bucketsApi.buckets.value.length >= 2)
   const activeBucketKey = computed(() => bucketsApi.activeBucket.value?.key ?? null)

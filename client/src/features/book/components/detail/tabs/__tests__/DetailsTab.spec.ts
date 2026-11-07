@@ -1,3 +1,4 @@
+import { invalidateProviderLinkSettings } from '@/features/book/composables/useProviderLinkSettings'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import { defineComponent, ref } from 'vue'
@@ -183,6 +184,7 @@ describe('DetailsTab cover surface', () => {
   const { bookSpineOverlay, bookCoverDisplayMode } = useDisplaySettings()
 
   beforeEach(() => {
+    invalidateProviderLinkSettings()
     resizeObserverCallbacks = []
     mocks.api.mockReset()
     mocks.push.mockReset()

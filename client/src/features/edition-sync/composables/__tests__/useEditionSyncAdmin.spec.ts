@@ -3,6 +3,7 @@ import { effectScope } from 'vue'
 import type { EditionSyncAdminSettings, EditionSyncAdminStatus, EditionSyncClearUnusedResult } from '@bookorbit/types'
 
 const mocks = vi.hoisted(() => ({
+  invalidate: vi.fn<() => void>(),
   fetchStatus: vi.fn<() => Promise<EditionSyncAdminStatus>>(),
   fetchSettings: vi.fn<() => Promise<EditionSyncAdminSettings>>(),
   updateSettings: vi.fn<(payload: unknown) => Promise<EditionSyncAdminSettings>>(),
@@ -19,6 +20,8 @@ vi.mock('../../api/edition-sync.api', () => ({
   stopEditionSyncRun: mocks.stop,
   clearUnusedEditionSyncData: mocks.clear,
 }))
+
+vi.mock('../useEditionSyncSettings', () => ({ invalidateEditionSyncSettings: mocks.invalidate }))
 
 import { EDITION_SYNC_ADMIN_POLL_MS, useEditionSyncAdmin } from '../useEditionSyncAdmin'
 
@@ -84,6 +87,7 @@ describe('useEditionSyncAdmin', () => {
     await api.load()
 
     expect(await api.saveSchedule({ cronExpression: null, runHours: 4 })).toBe(true)
+    expect(mocks.invalidate).toHaveBeenCalledOnce()
     expect(mocks.updateSettings).toHaveBeenCalledWith({ cronExpression: null, runHours: 4 })
     expect(api.settings.value?.runHours).toBe(4)
     scope.stop()

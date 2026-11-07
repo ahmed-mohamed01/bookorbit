@@ -67,8 +67,12 @@ export function useSidebarDataSync() {
   })
 
   if (requestProgress) {
+    // The initial summary is already fetched at mount, so only reconnects need a refresh.
+    let hadConnection = requestProgress.connected.value
     watch(requestProgress.connected, (connected) => {
-      if (connected && showBookRequests.value) void refreshBookRequestSummary()
+      if (!connected) return
+      if (hadConnection && showBookRequests.value) void refreshBookRequestSummary()
+      hadConnection = true
     })
   }
 

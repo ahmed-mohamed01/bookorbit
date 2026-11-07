@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowLeftRight, BookOpen, Headphones, Pencil } from '@lucide/vue'
 import type { BookDetail, CoverMedium } from '@bookorbit/types'
-import { useCoverVersions } from '@/features/book/composables/useCoverVersions'
+import { coverStackUrl } from '@/features/book/composables/useCoverTint'
 import { COVER_STACK_ASPECT_RATIO } from '@/features/book/lib/cover-stack'
 import BookCoverArtwork from '@/features/book/components/BookCoverArtwork.vue'
 import BookCoverSurface from '@/features/book/components/BookCoverSurface.vue'
@@ -18,7 +18,6 @@ const props = defineProps<{
 const emit = defineEmits<{ open: [medium: CoverMedium]; edit: [] }>()
 
 const { t } = useI18n()
-const { coverUrl } = useCoverVersions()
 
 const front = ref<CoverMedium>(props.face)
 watch(
@@ -38,7 +37,7 @@ const cards = computed(() =>
   MEDIA.map((medium) => ({
     medium,
     isFront: medium === front.value,
-    src: coverUrl(props.book.id, 'cover', props.book.covers[medium]?.updatedAt ?? props.book.coverVersion, medium),
+    src: coverStackUrl(props.book, medium),
     label: medium === front.value ? t('book.detail.details.viewCover') : t(`book.detail.details.coverStack.show.${medium}`),
   })),
 )
@@ -95,7 +94,7 @@ function handleEdit() {
           :alt="''"
           :frame-aspect-ratio="card.medium === 'audio' ? '1/1' : '2/3'"
           :spine="card.medium === 'ebook'"
-          loading="eager"
+          :loading="card.isFront ? 'eager' : 'lazy'"
           backdrop-class="blur-lg brightness-50"
         />
         <span

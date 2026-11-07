@@ -1,3 +1,5 @@
+import { onSessionCleared } from '@/lib/session-reset'
+import { createCachedRequest } from '@/lib/cached-request'
 import { ref } from 'vue'
 import { i18n } from '@/i18n'
 import type { EditionSyncSettings, UpsertEditionSyncSettingsPayload } from '@bookorbit/types'
@@ -12,18 +14,41 @@ function messageOf(err: unknown, fallbackKey: string): string {
   return err instanceof Error && err.message ? err.message : i18n.global.t(fallbackKey)
 }
 
-export function useEditionSyncSettings() {
-  async function fetchSettings(): Promise<void> {
-    loading.value = true
-    error.value = null
-    try {
-      settings.value = await fetchEditionSyncSettings()
-    } catch (err) {
+const settingsRequest = createCachedRequest(loadSettings)
+export function invalidateEditionSyncSettings() {
+  settingsRequest.invalidate()
+}
+
+async function loadSettings(isCurrent: () => boolean): Promise<void> {
+  loading.value = true
+  error.value = null
+  try {
+    const nextSettings = await fetchEditionSyncSettings()
+    if (isCurrent()) settings.value = nextSettings
+  } catch (err) {
+    if (isCurrent()) {
+      loading.value = false
+      settingsRequest.invalidate()
       settings.value = null
       error.value = messageOf(err, 'editionSync.errors.settingsLoadFailed')
-    } finally {
-      loading.value = false
     }
+  } finally {
+    if (isCurrent()) loading.value = false
+  }
+}
+
+export function resetEditionSyncSettings() {
+  invalidateEditionSyncSettings()
+  loading.value = false
+  error.value = null
+  settings.value = null
+}
+
+onSessionCleared(resetEditionSyncSettings)
+
+export function useEditionSyncSettings() {
+  function fetchSettings(options: { force?: boolean } = {}): Promise<void> {
+    return settingsRequest.get(options)
   }
 
   async function saveSettings(payload: UpsertEditionSyncSettingsPayload): Promise<boolean> {
@@ -31,6 +56,7 @@ export function useEditionSyncSettings() {
     error.value = null
     try {
       settings.value = await updateEditionSyncSettings(payload)
+      invalidateEditionSyncSettings()
       return true
     } catch (err) {
       error.value = messageOf(err, 'editionSync.user.toast.saveFailed')

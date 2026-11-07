@@ -87,7 +87,7 @@ function handleOpen() {
         :style="{ zIndex: 3 - i, height: 'var(--index-cover-height)', width: 'var(--index-cover-width)' }"
       >
         <BookCoverArtwork
-          :src="slot.bookId === null ? null : coverUrl(slot.bookId)"
+          :src="slot.bookId === null ? null : coverUrl(slot.bookId, 'thumbnail', series.coverVersions?.[slot.bookId])"
           :has-cover="slot.bookId !== null"
           :title="slot.title ?? series.name"
           :seed="`${series.name}-${slot.bookId ?? i}`"

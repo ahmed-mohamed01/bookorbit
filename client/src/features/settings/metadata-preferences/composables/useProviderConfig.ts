@@ -1,3 +1,4 @@
+import { invalidateProviderLinkSettings } from '@/features/book/composables/useProviderLinkSettings'
 import { ref } from 'vue'
 import { toast } from 'vue-sonner'
 import { api } from '@/lib/api'
@@ -61,6 +62,7 @@ export function useProviderConfig() {
         body: JSON.stringify(patch),
       })
       if (res.ok) {
+        invalidateProviderLinkSettings()
         await fetchConfig()
         toast.success('Provider settings saved')
       } else {

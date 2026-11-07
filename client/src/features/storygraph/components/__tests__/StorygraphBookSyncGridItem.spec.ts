@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import type { StorygraphBookSyncState, StorygraphSettings } from '@bookorbit/types'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import { api } from '@/lib/api'
-import { useStorygraphSettings } from '../../composables/useStorygraphSettings'
+import { invalidateStorygraphSettings, useStorygraphSettings } from '../../composables/useStorygraphSettings'
 import StorygraphBookSyncGridItem from '../StorygraphBookSyncGridItem.vue'
 
 type ApiFn = (input: RequestInfo | URL, init?: RequestInit & { _isRetry?: boolean }) => Promise<Response>
@@ -87,6 +87,7 @@ describe('StorygraphBookSyncGridItem', () => {
   let wrappers: Array<{ unmount: () => void }> = []
 
   beforeEach(() => {
+    invalidateStorygraphSettings()
     vi.clearAllMocks()
     settings.value = null
     mocks.hasPermission.mockReturnValue(true)
@@ -275,6 +276,25 @@ describe('StorygraphBookSyncGridItem', () => {
 
     expect(wrapper.text()).toBe('')
     expect(mockApi).not.toHaveBeenCalledWith('/api/v1/storygraph/books/12/sync-state')
+  })
+
+  it('reuses settings on remount until invalidated', async () => {
+    const first = mountItem()
+    await flushPromises()
+    first.unmount()
+    mocks.settings.value = makeSettings({ enabled: false, effectiveEnabled: false })
+    const second = mountItem()
+    await flushPromises()
+    expect(mockApi.mock.calls.filter(([url]) => String(url).endsWith('/storygraph/settings'))).toHaveLength(1)
+    expect(second.text()).not.toBe('')
+    second.unmount()
+
+    invalidateStorygraphSettings()
+    const third = mountItem()
+    wrappers.push(third)
+    await flushPromises()
+    expect(mockApi.mock.calls.filter(([url]) => String(url).endsWith('/storygraph/settings'))).toHaveLength(2)
+    expect(third.text()).toBe('')
   })
 
   it('saves the per-book exclusion setting', async () => {

@@ -15,7 +15,7 @@ export function useInfiniteScrollSentinel(opts: UseInfiniteScrollSentinelOptions
   function checkSentinel() {
     if (!opts.hasMore.value || opts.loading.value) return
     const element = sentinel.value
-    if (!element) return
+    if (!element?.isConnected) return
     if (element.getBoundingClientRect().top < window.innerHeight + 300) void opts.loadMore()
   }
 

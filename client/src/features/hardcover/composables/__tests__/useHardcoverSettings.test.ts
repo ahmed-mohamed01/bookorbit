@@ -43,6 +43,23 @@ describe('useHardcoverSettings', () => {
     vi.restoreAllMocks()
   })
 
+  it('does not restore settings when reset during a fetch', async () => {
+    let resolve!: (settings: HardcoverSettings) => void
+    mockFetchSettings.mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done
+        }),
+    )
+    const { useHardcoverSettings, resetHardcoverSettings } = await import('../useHardcoverSettings')
+    const c = useHardcoverSettings()
+    const pending = c.fetchSettings()
+    resetHardcoverSettings()
+    resolve(SETTINGS)
+    await pending
+    expect(c.settings.value).toBeNull()
+  })
+
   it('fetchSettings populates settings on success', async () => {
     mockFetchSettings.mockResolvedValue(SETTINGS)
     const c = await loadComposable()

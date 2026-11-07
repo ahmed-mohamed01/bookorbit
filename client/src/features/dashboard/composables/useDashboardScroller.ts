@@ -17,6 +17,15 @@ type PendingScrollerRequest = {
   reject: (reason?: unknown) => void
 }
 
+const PROGRESS_SCROLLER_TYPES = new Set<ScrollerType>([
+  'recently-added',
+  'continue-reading',
+  'continue-listening',
+  'want-to-read',
+  'up-next-in-series',
+  'smart-scope',
+])
+
 const pendingRequests: PendingScrollerRequest[] = []
 let batchScheduled = false
 let requestSequence = 0
@@ -93,6 +102,7 @@ export function useDashboardScroller(type: ScrollerType, limit = 20, smartScopeI
   // Background refreshes keep the current books on screen instead of flashing the skeleton, and
   // keep them if the refresh fails.
   async function refreshInBackground() {
+    if (!PROGRESS_SCROLLER_TYPES.has(type)) return
     if (loading.value || error.value) return load()
     try {
       const result = await requestScroller(type, limit, smartScopeId)

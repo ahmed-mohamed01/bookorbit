@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, nextTick, reactive, ref, type PropType } from 'vue'
-import { mount } from '@vue/test-utils'
+import { enableAutoUnmount, mount } from '@vue/test-utils'
 import type { BookDetail, BookProgressChangedEvent } from '@bookorbit/types'
 import BookDetailView from '../BookDetailView.vue'
 
@@ -156,6 +156,8 @@ const EditMetadataTabStub = defineComponent({
   template: '<div data-test="edit-rating">{{ book.rating }}</div>',
 })
 
+enableAutoUnmount(afterEach)
+
 describe('BookDetailView', () => {
   beforeEach(() => {
     mockState.route = reactive({
@@ -261,8 +263,10 @@ describe('BookDetailView', () => {
     expect(wrapper.get('[data-test="details-rating"]').text()).toBe('')
   })
 
-  it('refetches the open book when external reader progress changes', () => {
-    mount(BookDetailView, {
+  it('refetches the open book when external reader progress changes', async () => {
+    vi.useFakeTimers()
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false })
+    const wrapper = mount(BookDetailView, {
       global: {
         stubs: {
           BookDetailLayout: { template: '<div><slot /></div>' },
@@ -278,6 +282,10 @@ describe('BookDetailView', () => {
     expect(mockState.fetch).not.toHaveBeenCalled()
 
     mockState.progressChangedCallback?.({ bookId: 217, progress: 61.02, source: 'koreader' })
+    expect(mockState.fetch).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(250)
     expect(mockState.fetch).toHaveBeenCalledExactlyOnceWith(217)
+    wrapper.unmount()
+    vi.useRealTimers()
   })
 })

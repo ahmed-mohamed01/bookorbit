@@ -75,7 +75,7 @@ function handleOpen() {
       class="relative shrink-0 bg-linear-to-b from-surface-2 to-card px-2.5 pt-2 max-[519px]:flex max-[519px]:w-[136px] max-[519px]:flex-col max-[519px]:px-2 max-[519px]:py-2.5"
     >
       <div class="cover-stack relative isolate w-full" style="aspect-ratio: 5 / 4">
-        <span class="absolute inset-x-[22%] bottom-[3%] h-3 rounded-full bg-black/25 blur-xl" aria-hidden="true" />
+        <span class="absolute inset-x-[22%] bottom-[3%] h-3 rounded-full bg-foreground/10 shadow-lg" aria-hidden="true" />
 
         <div
           v-for="(slot, i) in stackSlots"
@@ -84,7 +84,7 @@ function handleOpen() {
           :style="stackLayout[i]"
         >
           <BookCoverArtwork
-            :src="slot.bookId === null ? null : coverUrl(slot.bookId)"
+            :src="slot.bookId === null ? null : coverUrl(slot.bookId, 'thumbnail', series.coverVersions?.[slot.bookId])"
             :has-cover="slot.bookId !== null"
             :title="slot.title ?? series.name"
             :seed="`${series.name}-${slot.bookId ?? i}`"
@@ -97,7 +97,7 @@ function handleOpen() {
 
         <span
           v-if="facts.ownedVolumes > 1"
-          class="absolute right-1 top-1 z-20 inline-flex h-[21px] items-center gap-1 rounded-md border border-border bg-background/85 px-1.5 text-[11.5px] font-semibold tabular-nums text-foreground backdrop-blur-sm"
+          class="absolute right-1 top-1 z-20 inline-flex h-[21px] items-center gap-1 rounded-md border border-border bg-background/85 px-1.5 text-[11.5px] font-semibold tabular-nums text-foreground"
           :title="t('series.card.volumeCount', { count: facts.ownedVolumes })"
         >
           <Layers :size="11" class="text-muted-foreground" />

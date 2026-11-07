@@ -159,10 +159,13 @@ const bookTitle = computed(() => props.book.title ?? t('book.detail.readingLog.u
 const emptyStageDismissed = ref(false)
 const attemptsRef = ref<InstanceType<typeof ReadingLogAttempts> | null>(null)
 
-useBookProgressRefresh(() => {
-  void reload()
-  void reloadAttempts({ silent: true })
-})
+useBookProgressRefresh(
+  () => {
+    void reload()
+    void reloadAttempts({ silent: true })
+  },
+  () => props.book.id,
+)
 
 // Both lists have to have landed before the tab can claim there is nothing here: deciding on the
 // sessions alone flashes the empty stage and then jumps back to the full layout.

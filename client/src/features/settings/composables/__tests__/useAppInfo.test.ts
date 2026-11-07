@@ -52,7 +52,7 @@ describe('useAppInfo', () => {
     )
 
     const { version, updateAvailable, latestVersion, isLoading, loadAppInfo } = useAppInfo()
-    const promise = loadAppInfo()
+    const promise = loadAppInfo({ force: true })
     expect(isLoading.value).toBe(true)
     await promise
     await flushPromises()
@@ -73,7 +73,7 @@ describe('useAppInfo', () => {
     )
 
     const { updateAvailable, latestVersion, loadAppInfo } = useAppInfo()
-    await loadAppInfo()
+    await loadAppInfo({ force: true })
 
     expect(updateAvailable.value).toBe(true)
     expect(latestVersion.value).toBe('v1.3.0')
@@ -89,7 +89,7 @@ describe('useAppInfo', () => {
     )
 
     const { updateAvailable, version, loadAppInfo } = useAppInfo()
-    await loadAppInfo()
+    await loadAppInfo({ force: true })
 
     expect(version.value).toBe('Local build')
     expect(updateAvailable.value).toBeNull()
@@ -99,7 +99,7 @@ describe('useAppInfo', () => {
     mockApi.mockRejectedValue(new Error('network failure'))
 
     const { error, version, loadAppInfo } = useAppInfo()
-    await expect(loadAppInfo()).resolves.not.toThrow()
+    await expect(loadAppInfo({ force: true })).resolves.not.toThrow()
 
     expect(error.value).toBe('network failure')
     expect(version.value).toBe('')
@@ -109,7 +109,7 @@ describe('useAppInfo', () => {
     mockApi.mockResolvedValue(makeErrorResponse(500))
 
     const { error, loadAppInfo } = useAppInfo()
-    await loadAppInfo()
+    await loadAppInfo({ force: true })
 
     expect(error.value).toMatch(/HTTP 500/)
   })
@@ -118,7 +118,7 @@ describe('useAppInfo', () => {
     mockApi.mockRejectedValue(new Error('fail'))
 
     const { isLoading, loadAppInfo } = useAppInfo()
-    await loadAppInfo()
+    await loadAppInfo({ force: true })
 
     expect(isLoading.value).toBe(false)
   })
@@ -133,7 +133,7 @@ describe('useAppInfo', () => {
     )
 
     const { loadAppInfo } = useAppInfo()
-    const first = loadAppInfo()
+    const first = loadAppInfo({ force: true })
     const second = loadAppInfo()
 
     resolveFirst(
@@ -146,5 +146,26 @@ describe('useAppInfo', () => {
     await Promise.all([first, second])
 
     expect(mockApi).toHaveBeenCalledOnce()
+  })
+  it('reuses the loaded promise until forced', async () => {
+    mockApi.mockResolvedValue(makeOkResponse({ version: 'v2.0.0' }))
+    const { loadAppInfo } = useAppInfo()
+    const first = loadAppInfo({ force: true })
+    expect(loadAppInfo()).toBe(first)
+    await first
+    await loadAppInfo()
+    expect(mockApi).toHaveBeenCalledTimes(1)
+    await loadAppInfo({ force: true })
+    expect(mockApi).toHaveBeenCalledTimes(2)
+  })
+  it('refetches an unresolved update check for the next caller', async () => {
+    mockApi
+      .mockResolvedValueOnce(makeOkResponse({ version: 'v1', updateAvailable: null }))
+      .mockResolvedValueOnce(makeOkResponse({ version: 'v1', updateAvailable: true, latestVersion: 'v2' }))
+    const state = useAppInfo()
+    await state.loadAppInfo({ force: true })
+    await state.loadAppInfo()
+    expect(mockApi).toHaveBeenCalledTimes(2)
+    expect(state.updateAvailable.value).toBe(true)
   })
 })

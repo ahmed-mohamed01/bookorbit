@@ -79,7 +79,7 @@ function continueReading(bookId: number, fileId: number | null, fileFormat: stri
             :is-comic="isComic(book.fileFormat)"
           >
             <BookCoverArtwork
-              :src="coverUrl(book.bookId)"
+              :src="coverUrl(book.bookId, 'thumbnail', book.coverVersion)"
               :has-cover="book.hasCover"
               :title="book.title"
               :author-line="book.authors.length > 0 ? book.authors.join(', ') : null"

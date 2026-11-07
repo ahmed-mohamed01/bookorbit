@@ -15,8 +15,12 @@ import { hasChaptersTab, normalizeBookDetailTab } from '@/features/book/lib/book
 import { useLibraryPermissions } from '@/features/library/composables/useLibraryPermissions'
 import { useLibraries } from '@/features/library/composables/useLibraries'
 import { COVER_ASPECT_RATIO_KEY, DEFAULT_COVER_ASPECT_RATIO } from '@/features/book/lib/cover-aspect-ratio'
+import { useBookProgressRefresh } from '@/features/book/composables/useBookProgressRefresh'
+import { useBookCoverAspectRatio } from '@/features/book/composables/useBookCoverAspectRatio'
 import { useCoverVersions } from '@/features/book/composables/useCoverVersions'
-import { useCoverTint } from '@/features/book/composables/useCoverTint'
+import { hasCoverPair } from '@/features/book/lib/cover-stack'
+import { faceMedium } from '@/features/book/lib/cover-slots'
+import { coverStackUrl, useCoverTint } from '@/features/book/composables/useCoverTint'
 import { useDisplaySettings } from '@/composables/useDisplaySettings'
 import EntityNotFound from '@/components/EntityNotFound.vue'
 
@@ -80,10 +84,11 @@ usePageTitle(pageTitle)
 // and tables the same colour reads as noise.
 const { coverUrl } = useCoverVersions()
 const { bookDetailCoverTint } = useDisplaySettings()
+const tintAspectRatio = useBookCoverAspectRatio(() => detail.value)
 const tintSource = computed(() => {
   const book = detail.value
   if (bookDetailCoverTint.value === 'off' || tab.value !== 'details' || !book || book.coverSource === null) return null
-  return coverUrl(book.id, 'cover', book.coverVersion)
+  return hasCoverPair(book) ? coverStackUrl(book, faceMedium(book, tintAspectRatio.value)) : coverUrl(book.id, 'cover', book.coverVersion)
 })
 const { tint } = useCoverTint(tintSource)
 const coverTint = computed(() => {
@@ -100,7 +105,7 @@ watch(
   },
 )
 
-const { onBookMissing, onBookRestored, onBookMoved, onBookTransferred, onBookProgressChanged } = useBookEvents()
+const { onBookMissing, onBookRestored, onBookMoved, onBookTransferred } = useBookEvents()
 onBookMissing((bookIds) => {
   if (detail.value && bookIds.includes(detail.value.id)) {
     detail.value = { ...detail.value, status: 'missing' }
@@ -115,9 +120,12 @@ onBookMoved((bookIds) => {
 onBookTransferred((event) => {
   if (detail.value && event.bookIds.includes(detail.value.id)) fetch(detail.value.id)
 })
-onBookProgressChanged((event) => {
-  if (event.bookId === bookId.value) fetch(event.bookId)
-})
+useBookProgressRefresh(
+  (event) => {
+    fetch(event.bookId)
+  },
+  () => bookId.value,
+)
 
 watch(bookId, (id) => fetch(id), { immediate: true })
 

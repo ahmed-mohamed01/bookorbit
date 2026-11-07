@@ -1,9 +1,16 @@
+import type { BookDetail, CoverMedium } from '@bookorbit/types'
+import { useCoverVersions } from './useCoverVersions'
 import { ref, watch, type Ref } from 'vue'
 import { extractCoverTint, type CoverTint } from '../lib/cover-tint'
 
 // Covers are immutable per URL (the URL carries a version token), so a decoded
 // result stays valid; revisiting a book costs nothing.
+const { coverUrl } = useCoverVersions()
 const cache = new Map<string, CoverTint | null>()
+
+export function coverStackUrl(book: Pick<BookDetail, 'id' | 'covers' | 'coverVersion'>, medium: CoverMedium): string {
+  return coverUrl(book.id, 'thumbnail', book.covers[medium]?.updatedAt ?? book.coverVersion, medium)
+}
 
 export function useCoverTint(src: Ref<string | null>) {
   const tint = ref<CoverTint | null>(null)

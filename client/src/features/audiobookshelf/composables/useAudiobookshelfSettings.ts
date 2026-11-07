@@ -1,27 +1,29 @@
+import {
+  audiobookshelfSettings as settings,
+  audiobookshelfSettingsError as error,
+  audiobookshelfSettingsRequest,
+  invalidateAudiobookshelfSyncSettings,
+} from '../api/cached-settings'
 import { ref } from 'vue'
 import type {
   AudiobookshelfConnectionTestPayload,
   AudiobookshelfConnectionTestResult,
   AudiobookshelfLibrary,
   AudiobookshelfMappingSuggestions,
-  AudiobookshelfSettings,
   UpsertAudiobookshelfSettingsPayload,
 } from '@bookorbit/types'
 import {
   disconnectAudiobookshelf,
   fetchAudiobookshelfLibraries,
-  fetchAudiobookshelfSettings,
   suggestAudiobookshelfPathMappings,
   testAudiobookshelfConnection,
   updateAudiobookshelfSettings,
 } from '../api/audiobookshelf.api'
 
-const settings = ref<AudiobookshelfSettings | null>(null)
 const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
 const suggestingMappings = ref(false)
-const error = ref<string | null>(null)
 const testError = ref<string | null>(null)
 const libraries = ref<AudiobookshelfLibrary[]>([])
 const localFolderPaths = ref<string[]>([])
@@ -31,13 +33,13 @@ const librariesError = ref<string | null>(null)
 let currentLibraryRequestId = 0
 
 export function useAudiobookshelfSettings() {
-  async function fetchSettings(): Promise<void> {
+  async function fetchSettings(options: { force?: boolean } = {}): Promise<void> {
     loading.value = true
     error.value = null
     try {
-      settings.value = await fetchAudiobookshelfSettings()
-    } catch (err) {
-      error.value = err instanceof Error ? err.message : 'Failed to load Audiobookshelf settings'
+      await audiobookshelfSettingsRequest.get(options)
+    } catch {
+      // The shared loader records errors only for the current request.
     } finally {
       loading.value = false
     }
@@ -68,6 +70,7 @@ export function useAudiobookshelfSettings() {
     error.value = null
     try {
       const nextSettings = await updateAudiobookshelfSettings(payload)
+      invalidateAudiobookshelfSyncSettings()
       settings.value = nextSettings
       if (credentialsChanged && nextSettings.serverUrl && nextSettings.tokenConfigured) {
         await fetchLibraries()
@@ -101,6 +104,7 @@ export function useAudiobookshelfSettings() {
     error.value = null
     try {
       await disconnectAudiobookshelf()
+      invalidateAudiobookshelfSyncSettings()
       settings.value = null
       currentLibraryRequestId++
       libraries.value = []

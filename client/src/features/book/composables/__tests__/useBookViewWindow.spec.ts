@@ -1,12 +1,13 @@
-import { defineComponent, nextTick, ref } from 'vue'
+import { defineComponent, effectScope, nextTick, ref } from 'vue'
 import { mount } from '@vue/test-utils'
+import type { BookProgressChangedEvent } from '@bookorbit/types'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BookCard, BooksPage, GroupRule, JumpBucket, SortSpec } from '@bookorbit/types'
 import { COLLECTION_DEFAULT_SORT } from '../../lib/sort-defaults'
 
 const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<unknown>>()
 const bookEventsMock = vi.hoisted(() => ({
-  progressChangedCallback: null as (() => void) | null,
+  progressChangedCallback: null as ((event: BookProgressChangedEvent) => void) | null,
 }))
 
 vi.mock('@/lib/api', () => ({
@@ -15,7 +16,7 @@ vi.mock('@/lib/api', () => ({
 
 vi.mock('../useBookEvents', () => ({
   useBookEvents: () => ({
-    onBookProgressChanged: (callback: () => void) => {
+    onBookProgressChanged: (callback: (event: BookProgressChangedEvent) => void) => {
       bookEventsMock.progressChangedCallback = callback
       return () => undefined
     },
@@ -91,6 +92,8 @@ async function flush() {
   await nextTick()
 }
 
+const scopes: ReturnType<typeof effectScope>[] = []
+
 function setup(
   options: {
     scope?: number | null
@@ -111,17 +114,21 @@ function setup(
   const selectionMode = ref(options.selectionMode ?? false)
   const collapseEnabled = useEffectiveSeriesCollapse(collapsePreference, selectionMode)
   const q = ref(options.q ?? '')
-  const win = useBookViewWindow({
-    scopeId,
-    listEndpoint: (id) => `/api/v1/libraries/${id}/books`,
-    bucketsEndpoint: (id) => `/api/v1/libraries/${id}/books/jump-buckets`,
-    viewMode,
-    railEnabled,
-    collapseEnabled,
-    q,
-    enabled,
-    defaultSort: options.defaultSort,
-  })
+  const scope = effectScope()
+  scopes.push(scope)
+  const win = scope.run(() =>
+    useBookViewWindow({
+      scopeId,
+      listEndpoint: (id) => `/api/v1/libraries/${id}/books`,
+      bucketsEndpoint: (id) => `/api/v1/libraries/${id}/books/jump-buckets`,
+      viewMode,
+      railEnabled,
+      collapseEnabled,
+      q,
+      enabled,
+      defaultSort: options.defaultSort,
+    }),
+  )!
   return { win, scopeId, viewMode, railEnabled, enabled, collapsePreference, selectionMode, collapseEnabled, q }
 }
 
@@ -148,6 +155,7 @@ describe('useBookViewWindow', () => {
   })
 
   afterEach(() => {
+    for (const scope of scopes.splice(0)) scope.stop()
     vi.useRealTimers()
   })
 
@@ -192,14 +200,15 @@ describe('useBookViewWindow', () => {
 
   it('debounces external progress events and reloads the current book window', async () => {
     vi.useFakeTimers()
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false })
     mockApi(250)
     setup()
     await flush()
     fetchMock.mockClear()
 
-    bookEventsMock.progressChangedCallback?.()
-    bookEventsMock.progressChangedCallback?.()
-    bookEventsMock.progressChangedCallback?.()
+    bookEventsMock.progressChangedCallback?.({ bookId: 12, progress: 40, source: 'koreader' })
+    bookEventsMock.progressChangedCallback?.({ bookId: 12, progress: 40, source: 'koreader' })
+    bookEventsMock.progressChangedCallback?.({ bookId: 12, progress: 40, source: 'koreader' })
     await vi.advanceTimersByTimeAsync(249)
     expect(fetchMock).not.toHaveBeenCalled()
 
@@ -500,5 +509,46 @@ describe('useBookViewWindow', () => {
 
     expect(listRequestBodies().at(-1)?.randomSeed).not.toBe(first)
     wrapper.unmount()
+  })
+  it('defers progress refresh while deactivated and refreshes once on activation', async () => {
+    vi.useFakeTimers()
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false })
+    mockApi(250, [bucket('A', 0), bucket('B', 120)])
+    const visible = ref(true)
+    const Source = defineComponent({
+      setup() {
+        useBookViewWindow({
+          scopeId: ref(1),
+          listEndpoint: (id) => `/api/v1/libraries/${id}/books`,
+          bucketsEndpoint: (id) => `/api/v1/libraries/${id}/books/jump-buckets`,
+          viewMode: ref('grid'),
+        })
+        return () => null
+      },
+    })
+    const wrapper = mount(
+      defineComponent({
+        components: { Source },
+        setup: () => ({ visible }),
+        template: '<KeepAlive><Source v-if="visible" /></KeepAlive>',
+      }),
+    )
+    try {
+      await flush()
+      await flush()
+      visible.value = false
+      await nextTick()
+      fetchMock.mockClear()
+      bookEventsMock.progressChangedCallback?.({ bookId: 12, progress: 40, source: 'koreader' })
+      await vi.advanceTimersByTimeAsync(250)
+      expect(fetchMock).not.toHaveBeenCalled()
+      visible.value = true
+      await flush()
+      await flush()
+      expect(listRequests()).toEqual([0])
+      expect(jumpRequestCount()).toBe(1)
+    } finally {
+      wrapper.unmount()
+    }
   })
 })

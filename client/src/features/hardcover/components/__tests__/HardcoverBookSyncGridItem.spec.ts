@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import type { HardcoverBookSyncState, HardcoverSettings } from '@bookorbit/types'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import { api } from '@/lib/api'
-import { useHardcoverSettings } from '../../composables/useHardcoverSettings'
+import { invalidateHardcoverSettings, useHardcoverSettings } from '../../composables/useHardcoverSettings'
 import HardcoverBookSyncGridItem from '../HardcoverBookSyncGridItem.vue'
 
 type ApiFn = (input: RequestInfo | URL, init?: RequestInit & { _isRetry?: boolean }) => Promise<Response>
@@ -89,6 +89,7 @@ describe('HardcoverBookSyncGridItem', () => {
   let wrappers: Array<{ unmount: () => void }> = []
 
   beforeEach(() => {
+    invalidateHardcoverSettings()
     vi.clearAllMocks()
     settings.value = null
     mocks.hasPermission.mockReturnValue(true)
@@ -277,6 +278,25 @@ describe('HardcoverBookSyncGridItem', () => {
 
     expect(wrapper.text()).toBe('')
     expect(mockApi).not.toHaveBeenCalledWith('/api/v1/hardcover/books/12/sync-state')
+  })
+
+  it('reuses settings on remount until invalidated', async () => {
+    const first = mountItem()
+    await flushPromises()
+    first.unmount()
+    mocks.settings.value = makeSettings({ enabled: false, effectiveEnabled: false })
+    const second = mountItem()
+    await flushPromises()
+    expect(mockApi.mock.calls.filter(([url]) => String(url).endsWith('/hardcover/settings'))).toHaveLength(1)
+    expect(second.text()).not.toBe('')
+    second.unmount()
+
+    invalidateHardcoverSettings()
+    const third = mountItem()
+    wrappers.push(third)
+    await flushPromises()
+    expect(mockApi.mock.calls.filter(([url]) => String(url).endsWith('/hardcover/settings'))).toHaveLength(2)
+    expect(third.text()).toBe('')
   })
 
   it('saves the per-book exclusion setting', async () => {

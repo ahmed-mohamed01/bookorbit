@@ -1,3 +1,4 @@
+import { invalidateEditionSyncSettings } from '../useEditionSyncSettings'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { effectScope, nextTick, ref } from 'vue'
 import type { EditionSyncBookState, EditionSyncSettings } from '@bookorbit/types'
@@ -76,6 +77,7 @@ function setup(bookId = 1) {
 
 describe('useEditionSyncBookState', () => {
   beforeEach(() => {
+    invalidateEditionSyncSettings()
     vi.useFakeTimers()
     Object.values(mocks).forEach((mock) => mock.mockReset())
     mocks.hasPermission.mockReturnValue(true)

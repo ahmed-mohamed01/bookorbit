@@ -47,7 +47,7 @@ describe('useReadAloudInvite', () => {
     await flushPromises()
 
     expect(invite.value).toBe(true)
-    expect(mocks.api).toHaveBeenCalledWith(CAPABILITY_URL, expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(mocks.api).toHaveBeenCalledWith(CAPABILITY_URL)
   })
 
   it('does not ask, or invite, without the permission', async () => {
@@ -154,7 +154,7 @@ describe('useReadAloudInvite', () => {
 
     expect(invite.value).toBe(false)
     await flushPromises()
-    expect(mocks.api).toHaveBeenLastCalledWith(`/api/v1/books/${BOOK_ID + 1}/read-aloud`, expect.any(Object))
+    expect(mocks.api).toHaveBeenLastCalledWith(`/api/v1/books/${BOOK_ID + 1}/read-aloud`)
     expect(invite.value).toBe(false)
 
     answer(jsonResponse(makeCapability()))

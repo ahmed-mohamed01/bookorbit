@@ -36,7 +36,7 @@ export function resetWhatsNew(): void {
 }
 
 export function useWhatsNew() {
-  const { version, loadAppInfo } = useAppInfo()
+  const { version, loadAppInfo, error: appInfoError } = useAppInfo()
 
   const hasUnseen = computed(() => releases.value.length > 0)
 
@@ -72,17 +72,25 @@ export function useWhatsNew() {
     error.value = null
     try {
       await loadAppInfo()
+      if (appInfoError?.value) throw new Error(appInfoError.value)
       await loadPrefs()
 
       const current = version.value
-      if (!isSemverTag(current)) return
-
-      if (lastSeenVersion.value === null) {
-        await saveLastSeen(current)
+      if (!isSemverTag(current)) {
+        evaluated = true
         return
       }
 
-      if (!isNewer(current, lastSeenVersion.value)) return
+      if (lastSeenVersion.value === null) {
+        await saveLastSeen(current)
+        evaluated = true
+        return
+      }
+
+      if (!isNewer(current, lastSeenVersion.value)) {
+        evaluated = true
+        return
+      }
 
       const res = await api(`/api/v1/release-notes?since=${encodeURIComponent(lastSeenVersion.value)}`)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)

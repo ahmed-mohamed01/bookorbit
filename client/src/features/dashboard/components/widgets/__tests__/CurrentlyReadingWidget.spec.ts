@@ -1,7 +1,10 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
+import type { useCoverVersions } from '@/features/book/composables/useCoverVersions'
 import type { CurrentlyReadingWidgetData } from '@bookorbit/types'
 import CurrentlyReadingWidget from '../CurrentlyReadingWidget.vue'
+
+const coverUrl = vi.fn<ReturnType<typeof useCoverVersions>['coverUrl']>(() => '/cover.jpg')
 
 const fetchCurrentlyReading = vi.fn<() => Promise<CurrentlyReadingWidgetData>>()
 
@@ -10,7 +13,7 @@ vi.mock('@/features/dashboard/api/dashboard-widget.api', () => ({
 }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn<(...args: unknown[]) => void>() }) }))
 vi.mock('@/features/book/composables/useCoverVersions', () => ({
-  useCoverVersions: () => ({ coverUrl: () => '/cover.jpg' }),
+  useCoverVersions: () => ({ coverUrl }),
 }))
 
 const CoverSurfaceStub = {
@@ -27,6 +30,7 @@ const CoverArtworkStub = {
 function book(fileFormat: string | null) {
   return {
     bookId: 1,
+    coverVersion: 'face-v1',
     title: 'Saga',
     authors: ['Brian K. Vaughan'],
     progress: 40,
@@ -53,6 +57,7 @@ describe('CurrentlyReadingWidget comic spine flag', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="surface"]').attributes('data-comic')).toBe('true')
+    expect(coverUrl).toHaveBeenCalledWith(1, 'thumbnail', 'face-v1')
     expect(wrapper.find('[data-testid="artwork"]').attributes('data-comic')).toBe('true')
   })
 

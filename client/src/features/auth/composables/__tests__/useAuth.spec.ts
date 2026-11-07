@@ -216,4 +216,24 @@ describe('useAuth', () => {
     expect(setAccessTokenMock).toHaveBeenCalledWith(null)
     expect(routerPushMock).not.toHaveBeenCalled()
   })
+  it('clears per-user connection settings and reloads after auth failure', async () => {
+    apiMock.mockResolvedValue({ ok: true, json: async () => ({ enabled: true, effectiveEnabled: true }) } as Response)
+    const { useAuth } = await import('../useAuth')
+    useAuth()
+    const { useHardcoverSettings } = await import('@/features/hardcover/composables/useHardcoverSettings')
+    const { useStorygraphSettings } = await import('@/features/storygraph/composables/useStorygraphSettings')
+    const { useEditionSyncSettings } = await import('@/features/edition-sync/composables/useEditionSyncSettings')
+    const { useAudiobookshelfSettings } = await import('@/features/audiobookshelf/composables/useAudiobookshelfSettings')
+    const connections = [useHardcoverSettings(), useStorygraphSettings(), useEditionSyncSettings(), useAudiobookshelfSettings()]
+    await Promise.all(connections.map((connection) => connection.fetchSettings()))
+    for (const connection of connections) expect(connection.settings.value).not.toBeNull()
+    const settings = connections[0]!
+    await settings.fetchSettings()
+    expect(settings.settings.value).not.toBeNull()
+    const before = apiMock.mock.calls.length
+    setOnAuthFailureMock.mock.calls.at(-1)![0]()
+    for (const connection of connections) expect(connection.settings.value).toBeNull()
+    await settings.fetchSettings()
+    expect(apiMock.mock.calls.length).toBe(before + 1)
+  })
 })

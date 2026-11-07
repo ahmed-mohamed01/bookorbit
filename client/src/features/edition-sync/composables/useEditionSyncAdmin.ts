@@ -1,3 +1,4 @@
+import { invalidateEditionSyncSettings } from './useEditionSyncSettings'
 import { computed, inject, onScopeDispose, provide, ref, type InjectionKey } from 'vue'
 import type { EditionSyncAdminSettings, EditionSyncAdminStatus, UpdateEditionSyncAdminSettingsPayload } from '@bookorbit/types'
 import {
@@ -68,6 +69,7 @@ export function useEditionSyncAdmin() {
     error.value = null
     try {
       settings.value = await updateEditionSyncAdminSettings(payload)
+      invalidateEditionSyncSettings()
       await refreshStatus()
       return true
     } catch (err) {

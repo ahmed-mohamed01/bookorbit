@@ -1,3 +1,4 @@
+import { invalidateEditionSyncSettings } from '../../composables/useEditionSyncSettings'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EditionSyncSettings } from '@bookorbit/types'
@@ -22,6 +23,7 @@ const SETTINGS: EditionSyncSettings = { enabled: true, effectiveEnabled: true, d
 
 describe('EditionSyncSettings', () => {
   beforeEach(() => {
+    invalidateEditionSyncSettings()
     Object.values(mocks).forEach((mock) => mock.mockReset())
     useEditionSyncSettings().settings.value = null
   })

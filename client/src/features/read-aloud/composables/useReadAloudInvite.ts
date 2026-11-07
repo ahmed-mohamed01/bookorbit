@@ -1,6 +1,6 @@
 import { computed, onScopeDispose, shallowRef, watch, type Ref } from 'vue'
 import { Permission, type BookDetail, type ReadAloudCapability } from '@bookorbit/types'
-import { api } from '@/lib/api'
+import { fetchReadAloudCapability } from './useReadAloud'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { resolveReadAloudEntry } from '../lib/read-aloud'
 
@@ -26,13 +26,7 @@ export function useReadAloudInvite(book: Ref<Pick<BookDetail, 'id' | 'files'>>) 
     const current = new AbortController()
     controller = current
     try {
-      const response = await api(`/api/v1/books/${bookId}/read-aloud`, { signal: current.signal })
-      if (current.signal.aborted) return
-      if (!response.ok) {
-        answer.value = null
-        return
-      }
-      const capability = (await response.json()) as ReadAloudCapability
+      const capability = await fetchReadAloudCapability(bookId)
       if (current.signal.aborted) return
       answer.value = { bookId, capability }
     } catch {

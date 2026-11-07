@@ -203,4 +203,20 @@ describe('useHardcoverSync', () => {
 
     expect(c.activeSyncStatus.value).toBeNull()
   })
+  it('reloads cached settings after sync completion', async () => {
+    const { useHardcoverSettings } = await import('../useHardcoverSettings')
+    const settings = useHardcoverSettings()
+    await settings.fetchSettings()
+    mockStatus.mockResolvedValue(RUNNING_STATUS)
+    let finish!: (status: typeof RUNNING_STATUS | null) => void
+    mockStream.mockImplementation((callback) => {
+      finish = callback
+      return new Promise(() => {})
+    })
+    const sync = await loadComposable()
+    await sync.fetchStatus()
+    await finish({ ...RUNNING_STATUS, status: 'completed' })
+    expect(mockFetchSettings).toHaveBeenCalledTimes(2)
+    sync.stopSyncTracking()
+  })
 })

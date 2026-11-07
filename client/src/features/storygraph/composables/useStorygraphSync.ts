@@ -44,13 +44,13 @@ export function useStorygraphSync() {
       if (status?.status !== 'running') {
         stopSyncTracking()
         await Promise.all([fetchPendingSummary(), fetchSyncFailures()])
-        await useStorygraphSettings().fetchSettings()
+        await useStorygraphSettings().fetchSettings({ force: true })
       }
     }, controller.signal)
       .then(async () => {
         if (generation !== streamGeneration) return
         await fetchPendingSummary()
-        await useStorygraphSettings().fetchSettings()
+        await useStorygraphSettings().fetchSettings({ force: true })
       })
       .catch(async () => {
         if (generation !== streamGeneration) return
@@ -78,7 +78,7 @@ export function useStorygraphSync() {
       const { runId } = await startStorygraphSync()
       if (runId <= 0) {
         error.value = 'StoryGraph sync is not available right now'
-        await Promise.all([fetchPendingSummary(), useStorygraphSettings().fetchSettings()])
+        await Promise.all([fetchPendingSummary(), useStorygraphSettings().fetchSettings({ force: true })])
         return
       }
       activeSyncStatus.value = {
