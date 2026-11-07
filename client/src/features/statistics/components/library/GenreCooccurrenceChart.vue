@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import VChart from 'vue-echarts'
+import VChart from '@/components/charts/AppChart.vue'
 import { GitMerge } from '@lucide/vue'
 import type { ChordDiagramData } from '@bookorbit/types'
 

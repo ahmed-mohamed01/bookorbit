@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import IntlMessageFormat from 'intl-messageformat'
 import { createI18n } from 'vue-i18n'
 import type { Locale } from '@bookorbit/types'
 import cs from '@/locales/cs.json'
@@ -65,6 +66,18 @@ function createCatalogI18n(locale: Locale, catalog: MessageTree) {
 }
 
 describe('ICU message compilation', () => {
+  it('defers parsing until use and memoises both formatter variants', () => {
+    const resolveLocale = vi.spyOn(IntlMessageFormat, 'resolveLocale')
+    const messages = compileIcuCatalog({ books: '{count, plural, one {# book} other {# books}}' }, 'en')
+    expect(resolveLocale).not.toHaveBeenCalled()
+    const testI18n = createI18n({ legacy: false, locale: 'en', messages: { en: messages } })
+    expect(testI18n.global.t('books', { count: 2 })).toBe('2 books')
+    expect(resolveLocale).toHaveBeenCalledTimes(1)
+    testI18n.global.t('books', icuCountValues(3))
+    testI18n.global.t('books', icuCountValues(4))
+    expect(resolveLocale).toHaveBeenCalledTimes(2)
+  })
+
   it('suppresses warnings for intentional English catalog fallback', () => {
     expect(applicationI18n.global.missingWarn).toBe(false)
     expect(applicationI18n.global.fallbackWarn).toBe(false)

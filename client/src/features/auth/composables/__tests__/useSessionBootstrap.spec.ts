@@ -46,6 +46,22 @@ afterEach(() => {
 })
 
 describe('bootstrapSession', () => {
+  it('starts the session check before setup status settles', async () => {
+    let finishSetup!: (value: boolean) => void
+    fetchSetupStatusMock.mockReturnValue(
+      new Promise((resolve) => {
+        finishSetup = resolve
+      }),
+    )
+    initMock.mockResolvedValue('authenticated')
+    const boot = await loadBootstrap()
+    const pending = boot.bootstrapSession()
+    expect(initMock).toHaveBeenCalledOnce()
+    finishSetup(false)
+    await pending
+    expect(boot.useSessionBootstrap().unreachable.value).toBe(false)
+  })
+
   it('lets the router through at once when the server answers', async () => {
     initMock.mockResolvedValue('anonymous')
     const boot = await loadBootstrap()
@@ -56,13 +72,14 @@ describe('bootstrapSession', () => {
     await expect(boot.whenSessionResolved()).resolves.toBeUndefined()
   })
 
-  it('skips the session check while the server still needs setup', async () => {
+  it('ignores the concurrent session outcome while the server still needs setup', async () => {
+    initMock.mockResolvedValue('unreachable')
     setupState.needsSetup.value = true
     const boot = await loadBootstrap()
 
     await boot.bootstrapSession()
 
-    expect(initMock).not.toHaveBeenCalled()
+    expect(initMock).toHaveBeenCalledOnce()
     expect(boot.useSessionBootstrap().unreachable.value).toBe(false)
   })
 

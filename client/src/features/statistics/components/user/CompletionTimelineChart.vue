@@ -2,7 +2,7 @@
 import { computed, ref, shallowRef, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import VChart from 'vue-echarts'
+import VChart from '@/components/charts/AppChart.vue'
 import { CalendarRange } from '@lucide/vue'
 
 import { useUserCompletionTimeline } from '../../composables/useUserCompletionTimeline'

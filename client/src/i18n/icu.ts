@@ -73,15 +73,19 @@ function markIcuCounts(elements: MessageFormatElement[]): MessageFormatElement[]
 }
 
 function compileIcuMessage(message: string, locale: Locale): MessageFunction {
-  const formatter = new IntlMessageFormat(message, locale)
-  const countMarkerFormatter = new IntlMessageFormat(markIcuCounts(formatter.getAst()), locale)
+  let formatter: IntlMessageFormat | undefined
+  let countMarkerFormatter: IntlMessageFormat | undefined
 
   return (context: MessageContext): string => {
     const values = (context.values ?? {}) as Record<string, unknown>
-    const activeFormatter = values[ICU_COUNT_MARKER_ARGUMENT] === true ? countMarkerFormatter : formatter
 
     // ICU formatting throws on missing arguments, so degrade to the raw message instead of breaking the render.
     try {
+      formatter ??= new IntlMessageFormat(message, locale)
+      const activeFormatter =
+        values[ICU_COUNT_MARKER_ARGUMENT] === true
+          ? (countMarkerFormatter ??= new IntlMessageFormat(markIcuCounts(formatter.getAst()), locale))
+          : formatter
       const formatted = activeFormatter.format(values)
       return Array.isArray(formatted) ? formatted.join('') : String(formatted)
     } catch (error) {

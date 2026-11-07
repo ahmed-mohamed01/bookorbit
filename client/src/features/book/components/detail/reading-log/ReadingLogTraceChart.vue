@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, shallowRef, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
-import VChart from 'vue-echarts'
+import VChart from '@/components/charts/AppChart.vue'
 import type { BookReadingSession, BookReadingSessionStats, ReadingSessionSourceBucket } from '@bookorbit/types'
 import { toReadingSessionSourceBucket, READING_SESSION_SOURCE_BUCKET_LABELS } from '@bookorbit/types'
 import { formatDate } from '@/i18n/formatters'

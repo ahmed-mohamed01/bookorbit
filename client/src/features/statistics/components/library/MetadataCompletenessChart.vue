@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { shallowRef, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
-import VChart from 'vue-echarts'
+import VChart from '@/components/charts/AppChart.vue'
 import { ListChecks } from '@lucide/vue'
 
 import { useMetadataCompleteness } from '../../composables/useMetadataCompleteness'

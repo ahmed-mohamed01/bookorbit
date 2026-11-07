@@ -16,13 +16,16 @@ let failedRetries = 0
 /** True once the server has answered, whatever the answer was. */
 async function askServer(): Promise<boolean> {
   const { fetchSetupStatus, needsSetup } = useSetupStatus()
+  const session = useAuth()
+    .init()
+    .catch(() => 'unreachable' as const)
   try {
     await Promise.all([fetchSetupStatus(), useLoginOptions().fetchLoginOptions()])
   } catch {
     // The session check below decides whether the server is there at all.
   }
   if (needsSetup.value === true) return true
-  return (await useAuth().init()) !== 'unreachable'
+  return (await session) !== 'unreachable'
 }
 
 function scheduleRetry(): void {

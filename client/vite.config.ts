@@ -213,6 +213,19 @@ export default defineConfig({
       },
     }),
   ],
+  build: {
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            { name: 'icons', test: /node_modules[\\/](?:@lucide[\\/]vue|lucide-vue-next)[\\/]/ },
+            // Groups pull in their dependencies, so the icons group would otherwise claim the Vue runtime that lucide imports.
+            { name: 'vendor', test: /node_modules[\\/](?:vue|@vue|vue-router|pinia|vue-i18n|@intlify|@vueuse|reka-ui)[\\/]/, priority: 1 },
+          ],
+        },
+      },
+    },
+  },
   resolve: {
     dedupe: ['vue'],
     alias: {

@@ -1,5 +1,4 @@
 import './assets/main.css'
-import './lib/echarts'
 
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
@@ -8,6 +7,7 @@ import App from './App.vue'
 import router from './router'
 import { i18n } from './i18n'
 import { useLocaleStore } from './stores/locale'
+import { useAuth } from './features/auth/composables/useAuth'
 import { bootstrapSession } from './features/auth/composables/useSessionBootstrap'
 
 // Chrome 124+ blocks aria-hidden from being applied to an element that contains
@@ -39,27 +39,29 @@ const app = createApp(App)
 app.use(createPinia())
 app.use(i18n)
 
-// Load and apply the initial locale (stored preference or browser language) before mount
-// so the first paint is already localized. Server-synced locale is applied later during auth.
-const localeStore = useLocaleStore()
-await localeStore.setLocale(localeStore.locale)
+async function boot() {
+  const localeStore = useLocaleStore()
+  // Not awaited: login and setup never render the shell, and the router's lazy import reuses this request.
+  void import('./components/AppLayout.vue').catch(() => undefined)
+  await Promise.all([localeStore.setLocale(localeStore.locale), bootstrapSession()])
+  app.use(router)
+  app.mount('#app')
 
-// Resolve setup status/auth before installing router.
-// app.use(router) triggers initial navigation and guard execution.
-await bootstrapSession()
-
-app.use(router)
-app.mount('#app')
+  const connection = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection
+  if (!useAuth().user.value || connection?.saveData) return
+  const idleWindow = window as Window & { requestIdleCallback?: (callback: () => void) => number }
+  if (idleWindow.requestIdleCallback) idleWindow.requestIdleCallback(prefetchPdfReader)
+  else window.setTimeout(prefetchPdfReader, 5_000)
+}
 
 function prefetchPdfReader() {
-  void Promise.all([import('./features/reader/pdf-v4/PdfV4ReaderView.vue'), import('@embedpdf/pdfium/pdfium.wasm?url')]).then(([, wasm]) => {
-    void fetch(wasm.default, { cache: 'force-cache' })
+  if (!useAuth().user.value) return
+  void import('@embedpdf/pdfium/pdfium.wasm?url').then((wasm) => {
+    const link = document.createElement('link')
+    link.rel = 'prefetch'
+    link.href = wasm.default
+    document.head.append(link)
   })
 }
 
-const idleWindow = window as Window & { requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number }
-if (idleWindow.requestIdleCallback) {
-  idleWindow.requestIdleCallback(prefetchPdfReader, { timeout: 10_000 })
-} else {
-  window.setTimeout(prefetchPdfReader, 5_000)
-}
+void boot()
