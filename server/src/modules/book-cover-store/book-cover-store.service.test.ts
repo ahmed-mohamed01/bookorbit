@@ -4,7 +4,7 @@ import { join } from 'path';
 import sharp from 'sharp';
 
 import { bookCoverDirPath, bookCoverSlotDirPath } from '../../common/book-cover-storage';
-import type { BookCoverContext, BookCoverSlotState } from './book-cover-store.repository';
+import { BookCoverStoreRepository, type BookCoverContext, type BookCoverSlotState } from './book-cover-store.repository';
 import { BookCoverStore } from './book-cover-store.service';
 
 function slot(medium: 'ebook' | 'audio', source: 'extracted' | 'custom' = 'extracted'): BookCoverSlotState {
@@ -27,6 +27,7 @@ function context(overrides: Partial<BookCoverContext> = {}): BookCoverContext {
     libraryId: 3,
     coverAspectRatio: '2/3',
     primaryFileId: 70,
+    formatPriority: ['epub', 'm4b'],
     coverSource: 'extracted',
     coverUpdatedAt: new Date('2026-01-01T00:00:00.000Z'),
     metadataUpdatedAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -147,6 +148,91 @@ describe('BookCoverStore', () => {
     await store.enrichCardFaces([card as never]);
 
     expect(card).toMatchObject({ coverAspectRatio: '1/1', coverVersion: 'audio:2026-01-01T00:00:00.000Z:2026-01-01T00:00:00.000Z' });
+  });
+
+  it.each([
+    ['epub', 'm4b'],
+    ['m4b', 'epub'],
+  ])('uses the same fallback token without a primary for priority %s, %s', async (first, second) => {
+    const files = [
+      { bookId: 7, id: 1, format: 'jpg', role: 'cover', sizeBytes: 100, mediaOverlayAvailable: false },
+      { bookId: 7, id: 2, format: 'm4b', role: 'content', sizeBytes: 100, mediaOverlayAvailable: false },
+      { bookId: 7, id: 3, format: 'epub', role: 'content', sizeBytes: 100, mediaOverlayAvailable: false },
+    ];
+    const bookRows = [
+      {
+        bookId: 7,
+        primaryFileId: null,
+        primaryFormat: 'm4b',
+        formatPriority: [first, second],
+        coverAspectRatio: '2/3',
+        hasEbook: true,
+        hasAudio: true,
+        updatedAt: new Date('2026-01-01'),
+        addedAt: new Date('2026-01-01'),
+      },
+    ];
+    const bookQuery = { from: vi.fn().mockReturnThis(), innerJoin: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue(bookRows) };
+    const fileQuery = { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockResolvedValue(files) };
+    const db = { select: vi.fn().mockReturnValueOnce(bookQuery).mockReturnValueOnce(fileQuery) };
+    const realRepository = new BookCoverStoreRepository(db as never);
+    const { store, repository } = makeStore(join(tmpdir(), 'unused-cover-store'), context({ primaryFileId: null }));
+    Object.assign(repository, { findFaceRows: realRepository.findFaceRows.bind(realRepository) });
+    repository.slotsFor.mockResolvedValue(new Map([[7, [slot('ebook'), slot('audio')]]]));
+    const card = {
+      id: 7,
+      coverAspectRatio: '2/3',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      files: first === 'epub' ? [files[2], files[1], files[0]] : [files[1], files[2], files[0]],
+      coverVersion: '',
+    };
+    const faces = await store.facesFor([7]);
+    await store.enrichCardFaces([card as never]);
+    const detailContext = context({
+      primaryFileId: null,
+      formatPriority: [first, second],
+      files: [
+        { id: 1, format: 'm4b', role: 'content', mediaOverlayAvailable: false },
+        { id: 2, format: 'epub', role: 'content', mediaOverlayAvailable: false },
+      ],
+    });
+    expect(store.faceForContext(detailContext, '2026-01-01T00:00:00.000Z')).toEqual(faces.get(7));
+    expect(faces.get(7)?.coverVersion).toBe(card.coverVersion);
+    expect(card.coverVersion).toBe(`${first === 'epub' ? 'ebook' : 'audio'}:2026-01-01T00:00:00.000Z:2026-01-01T00:00:00.000Z`);
+  });
+
+  it('matches auxiliary-only cards and faces to the library face token', async () => {
+    const files = [
+      { bookId: 7, id: 1, format: 'jpg', role: 'cover', sizeBytes: 100, mediaOverlayAvailable: false },
+      { bookId: 7, id: 2, format: 'json', role: 'metadata', sizeBytes: 100, mediaOverlayAvailable: false },
+    ];
+    const bookQuery = {
+      from: vi.fn().mockReturnThis(),
+      innerJoin: vi.fn().mockReturnThis(),
+      where: vi.fn().mockResolvedValue([
+        {
+          bookId: 7,
+          primaryFileId: null,
+          formatPriority: [],
+          coverAspectRatio: '1/1',
+          hasEbook: false,
+          hasAudio: false,
+          updatedAt: new Date('2026-01-01'),
+          addedAt: new Date('2026-01-01'),
+        },
+      ]),
+    };
+    const fileQuery = { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), orderBy: vi.fn().mockResolvedValue(files) };
+    const realRepository = new BookCoverStoreRepository({ select: vi.fn().mockReturnValueOnce(bookQuery).mockReturnValueOnce(fileQuery) } as never);
+    const { store, repository } = makeStore(join(tmpdir(), 'unused-cover-store'), context());
+    Object.assign(repository, { findFaceRows: realRepository.findFaceRows.bind(realRepository) });
+    repository.slotsFor.mockResolvedValue(new Map([[7, [slot('ebook'), slot('audio')]]]));
+    const card = { id: 7, coverAspectRatio: '1/1', updatedAt: '2026-01-01T00:00:00.000Z', files, coverVersion: '' };
+    const faces = await store.facesFor([7]);
+    await store.enrichCardFaces([card as never]);
+    expect(card.coverVersion).toBe('audio:2026-01-01T00:00:00.000Z:2026-01-01T00:00:00.000Z');
+    expect(card.coverAspectRatio).toBe('1/1');
+    expect(faces.get(7)).toEqual({ coverAspectRatio: '1/1', coverVersion: card.coverVersion });
   });
 
   it('resolves faces for rows with no files of their own from one row and one slot query', async () => {

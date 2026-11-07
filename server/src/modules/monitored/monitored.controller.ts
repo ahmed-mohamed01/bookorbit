@@ -1,4 +1,6 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Put, Query, Res, UseFilters } from '@nestjs/common';
+import { PortraitReadQueryDto } from '../../common/dto/portrait-read-query.dto';
+import { sendImageConditional } from '../../common/utils/image-conditional.utils';
+import { Body, Controller, Delete, Get, Headers, HttpCode, HttpStatus, Param, Patch, Post, Put, Query, Res, UseFilters } from '@nestjs/common';
 import { createReadStream } from 'fs';
 import { stat } from 'fs/promises';
 import type { FastifyReply } from 'fastify';
@@ -112,7 +114,13 @@ export class MonitoredController {
   }
 
   @Get('authors/:id/portrait')
-  async getAuthorPortrait(@Param('id') id: string, @CurrentUser() user: RequestUser, @Res() reply: FastifyReply) {
+  async getAuthorPortrait(
+    @Param('id') id: string,
+    @CurrentUser() user: RequestUser,
+    @Res() reply: FastifyReply,
+    @Query() query: PortraitReadQueryDto = {},
+    @Headers('if-none-match') ifNoneMatch?: string,
+  ) {
     const portraitPath = await this.service.getAuthorPortraitPath(id, user);
     if (!portraitPath) {
       reply.status(404).send({ message: `No portrait for monitored author ${id}` });
@@ -129,8 +137,7 @@ export class MonitoredController {
       }
       throw error;
     }
-    reply.header('Cache-Control', 'no-cache');
-    reply.header('ETag', `"${Math.floor(mtimeMs)}"`);
+    if (sendImageConditional(reply, { mtimeMs, versioned: query.t !== undefined, ifNoneMatch })) return;
     reply.type(imageContentTypeFromPath(portraitPath));
     reply.send(createReadStream(portraitPath));
   }

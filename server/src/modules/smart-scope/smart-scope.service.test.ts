@@ -113,6 +113,55 @@ describe('SmartScopeService', () => {
     await expect(service.findOne(5, makeUser({ id: 12 }))).resolves.toEqual({ ...smartScope, isOwner: false, koboSyncEnabled: false });
   });
 
+  it('counts read-status scopes fresh after user state changes', async () => {
+    const { service, smartScopeRepo, libraryService, bookReadService } = makeService();
+    smartScopeRepo.findAllForUser.mockResolvedValue([
+      makeSmartScope({
+        filter: {
+          type: 'group',
+          join: 'AND',
+          rules: [{ type: 'rule', field: 'readStatus', operator: 'includesAny', value: ['reading'] }],
+        },
+      }),
+    ]);
+    libraryService.findAccessibleLibraryIds.mockResolvedValue([1]);
+    bookReadService.countWhere.mockResolvedValueOnce(1).mockResolvedValueOnce(2);
+    expect((await service.findAll(makeUser()))[0].bookCount).toBe(1);
+    expect((await service.findAll(makeUser()))[0].bookCount).toBe(2);
+    expect(bookReadService.countWhere).toHaveBeenCalledTimes(2);
+  });
+
+  it('caches counts by user and filter, expires them, and invalidates after a scope write', async () => {
+    const { service, smartScopeRepo, libraryService, bookReadService } = makeService();
+    const scope = makeSmartScope({
+      filter: { type: 'group', join: 'AND', rules: [{ type: 'rule', field: 'title', operator: 'contains', value: 'space' }] },
+    });
+    smartScopeRepo.findAllForUser.mockResolvedValue([scope]);
+    smartScopeRepo.findById.mockResolvedValue([scope]);
+    smartScopeRepo.delete.mockResolvedValue(undefined);
+    libraryService.findAccessibleLibraryIds.mockResolvedValue([1]);
+    bookReadService.countWhere.mockResolvedValue(7);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(100_000);
+    try {
+      await service.findAll(makeUser());
+      await service.findAll(makeUser());
+      expect(bookReadService.countWhere).toHaveBeenCalledTimes(1);
+      await service.findAll(makeUser({ id: 13 }));
+      expect(bookReadService.countWhere).toHaveBeenCalledTimes(2);
+      clock.mockReturnValue(160_001);
+      await service.findAll(makeUser());
+      expect(bookReadService.countWhere).toHaveBeenCalledTimes(3);
+      await service.remove(scope.id, makeUser());
+      await service.findAll(makeUser());
+      expect(bookReadService.countWhere).toHaveBeenCalledTimes(4);
+      scope.filter = { type: 'group', join: 'AND', rules: [{ type: 'rule', field: 'title', operator: 'contains', value: 'moon' }] };
+      await service.findAll(makeUser());
+      expect(bookReadService.countWhere).toHaveBeenCalledTimes(5);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it('findAll returns bookCount=0 without querying for filter-less smart scopes', async () => {
     const { service, smartScopeRepo, libraryService, queryBuilder, bookReadService } = makeService();
     const user = makeUser({ id: 8 });

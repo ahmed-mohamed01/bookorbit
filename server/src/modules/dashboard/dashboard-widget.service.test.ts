@@ -1,4 +1,5 @@
-import type { CurrentlyReadingWidgetData, LibraryOverviewWidgetData, NeglectedGemsWidgetData, ReadingStreakWidgetData } from '@bookorbit/types';
+import type { DashboardWidgetRepository } from './dashboard-widget.repository';
+import type { LibraryOverviewWidgetData, ReadingStreakWidgetData } from '@bookorbit/types';
 
 import { EventEmitter } from 'events';
 
@@ -56,8 +57,9 @@ function makeService() {
 
   const events = new ReadingAttemptEventsService();
   const achievementEvents = new EventEmitter();
-  const service = new DashboardWidgetService(widgetRepo as never, libraryService as never, events, achievementEvents as never);
-  return { service, widgetRepo, libraryService, events, achievementEvents };
+  const coverStore = { facesFor: vi.fn().mockResolvedValue(new Map()) };
+  const service = new DashboardWidgetService(widgetRepo as never, libraryService as never, events, coverStore as never, achievementEvents as never);
+  return { service, widgetRepo, libraryService, events, achievementEvents, coverStore };
 }
 
 describe('DashboardWidgetService', () => {
@@ -109,12 +111,43 @@ describe('DashboardWidgetService', () => {
     });
   });
 
+  it('batches face versions and refreshes them independently of cached widget rows', async () => {
+    const { service, widgetRepo, libraryService, coverStore } = makeService();
+    libraryService.findAccessibleLibraryIds.mockResolvedValue([1]);
+    widgetRepo.getCurrentlyReadingBooks.mockResolvedValue({ books: [{ bookId: 10 }, { bookId: 20 }] });
+    coverStore.facesFor.mockResolvedValueOnce(
+      new Map([
+        [10, { coverVersion: 'v1' }],
+        [20, { coverVersion: 'v2' }],
+      ]),
+    );
+    expect((await service.getCurrentlyReading(makeUser())).books.map((book) => book.coverVersion)).toEqual(['v1', 'v2']);
+    expect(coverStore.facesFor).toHaveBeenCalledWith([10, 20]);
+    coverStore.facesFor.mockResolvedValueOnce(new Map([[10, { coverVersion: 'v3' }]]));
+    expect((await service.getCurrentlyReading(makeUser())).books[0].coverVersion).toBe('v3');
+    expect(widgetRepo.getCurrentlyReadingBooks).toHaveBeenCalledTimes(1);
+  });
+
   describe('getCurrentlyReading', () => {
     it('delegates to widgetRepo with accessible library ids', async () => {
       const { service, widgetRepo, libraryService } = makeService();
       const user = makeUser({ id: 7 });
-      const mockData: CurrentlyReadingWidgetData = {
-        books: [{ bookId: 10, title: 'Test Book', authors: ['Author'], progress: 45, hasCover: true }],
+      const mockData: Awaited<ReturnType<DashboardWidgetRepository['getCurrentlyReadingBooks']>> = {
+        books: [
+          {
+            bookId: 10,
+            title: 'Test Book',
+            authors: ['Author'],
+            progress: 45,
+            hasCover: true,
+            fileId: null,
+            fileFormat: null,
+            readFileId: null,
+            readFileFormat: null,
+            readAlongFileId: null,
+            hasAudio: false,
+          },
+        ],
       };
       libraryService.findAccessibleLibraryIds.mockResolvedValue([3, 5]);
       widgetRepo.getCurrentlyReadingBooks.mockResolvedValue(mockData);
@@ -123,7 +156,7 @@ describe('DashboardWidgetService', () => {
 
       expect(libraryService.findAccessibleLibraryIds).toHaveBeenCalledWith(user);
       expect(widgetRepo.getCurrentlyReadingBooks).toHaveBeenCalledWith(7, [3, 5], EMPTY_CONTENT_FILTER_RULES);
-      expect(result).toEqual(mockData);
+      expect(result).toEqual({ books: mockData.books.map((book) => ({ ...book, coverVersion: '' })) });
     });
 
     it('intersects widget queries with the saved dashboard library selection', async () => {
@@ -147,8 +180,8 @@ describe('DashboardWidgetService', () => {
       const first = await service.getCurrentlyReading(firstUser);
       const second = await service.getCurrentlyReading(secondUser);
 
-      expect(first.books).toEqual([{ bookId: 3 }]);
-      expect(second.books).toEqual([{ bookId: 5 }]);
+      expect(first.books).toEqual([{ bookId: 3, coverVersion: '' }]);
+      expect(second.books).toEqual([{ bookId: 5, coverVersion: '' }]);
       expect(widgetRepo.getCurrentlyReadingBooks).toHaveBeenCalledTimes(2);
       expect(widgetRepo.getCurrentlyReadingBooks).toHaveBeenNthCalledWith(1, 7, [3], EMPTY_CONTENT_FILTER_RULES);
       expect(widgetRepo.getCurrentlyReadingBooks).toHaveBeenNthCalledWith(2, 7, [5], EMPTY_CONTENT_FILTER_RULES);
@@ -163,7 +196,7 @@ describe('DashboardWidgetService', () => {
       const beforeRevocation = await service.getCurrentlyReading(user);
       const afterRevocation = await service.getCurrentlyReading(user);
 
-      expect(beforeRevocation.books).toEqual([{ bookId: 5 }]);
+      expect(beforeRevocation.books).toEqual([{ bookId: 5, coverVersion: '' }]);
       expect(afterRevocation.books).toEqual([]);
       expect(widgetRepo.getCurrentlyReadingBooks).toHaveBeenCalledTimes(2);
       expect(widgetRepo.getCurrentlyReadingBooks).toHaveBeenNthCalledWith(1, 7, [3, 5], EMPTY_CONTENT_FILTER_RULES);
@@ -232,17 +265,18 @@ describe('DashboardWidgetService', () => {
 
   describe('getHighlightOfTheDay', () => {
     it('returns null when no annotations exist', async () => {
-      const { service, widgetRepo, libraryService } = makeService();
+      const { service, widgetRepo, libraryService, coverStore } = makeService();
       libraryService.findAccessibleLibraryIds.mockResolvedValue([1]);
       widgetRepo.getAnnotationCount.mockResolvedValue(0);
 
       const result = await service.getHighlightOfTheDay(makeUser());
       expect(result).toBeNull();
       expect(widgetRepo.getAnnotationByOffset).not.toHaveBeenCalled();
+      expect(coverStore.facesFor).not.toHaveBeenCalled();
     });
 
     it('fetches annotation by offset when annotations exist', async () => {
-      const { service, widgetRepo, libraryService } = makeService();
+      const { service, widgetRepo, libraryService, coverStore } = makeService();
       libraryService.findAccessibleLibraryIds.mockResolvedValue([1]);
       widgetRepo.getAnnotationCount.mockResolvedValue(10);
       widgetRepo.getAnnotationByOffset.mockResolvedValue({
@@ -255,10 +289,14 @@ describe('DashboardWidgetService', () => {
         createdAt: '2026-01-01T00:00:00.000Z',
       });
 
+      coverStore.facesFor.mockResolvedValue(new Map([[5, { coverVersion: 'fresh' }]]));
+
       const result = await service.getHighlightOfTheDay(makeUser());
       expect(result).not.toBeNull();
       expect(result!.text).toBe('A great quote');
       expect(widgetRepo.getAnnotationByOffset).toHaveBeenCalled();
+      expect(coverStore.facesFor).toHaveBeenCalledWith([5]);
+      expect(result).toMatchObject({ coverVersion: 'fresh' });
     });
   });
 
@@ -419,17 +457,32 @@ describe('DashboardWidgetService', () => {
     });
   });
 
+  it('does not enrich empty gems or missing daily annotations', async () => {
+    const { service, widgetRepo, libraryService, coverStore } = makeService();
+    libraryService.findAccessibleLibraryIds.mockResolvedValue([1]);
+    widgetRepo.getNeglectedGems.mockResolvedValue({ gems: [] });
+    widgetRepo.getAnnotationCount.mockResolvedValue(1);
+    widgetRepo.getAnnotationByOffset.mockResolvedValue(null);
+    expect(await service.getNeglectedGems(makeUser())).toEqual({ gems: [] });
+    expect(await service.getHighlightOfTheDay(makeUser())).toBeNull();
+    expect(coverStore.facesFor).not.toHaveBeenCalled();
+  });
+
   describe('getNeglectedGems', () => {
     it('delegates to repo and returns result', async () => {
-      const { service, widgetRepo, libraryService } = makeService();
-      const mockData: NeglectedGemsWidgetData = {
+      const { service, widgetRepo, libraryService, coverStore } = makeService();
+      const mockData: Awaited<ReturnType<DashboardWidgetRepository['getNeglectedGems']>> = {
         gems: [{ bookId: 1, title: 'Gem', hasCover: true, rating: 5, waitingDays: 100, genre: 'Fantasy' }],
       };
       libraryService.findAccessibleLibraryIds.mockResolvedValue([1]);
       widgetRepo.getNeglectedGems.mockResolvedValue(mockData);
 
+      coverStore.facesFor.mockResolvedValue(new Map([[1, { coverVersion: 'fresh' }]]));
+
       const result = await service.getNeglectedGems(makeUser());
       expect(result.gems).toHaveLength(1);
+      expect(coverStore.facesFor).toHaveBeenCalledWith([1]);
+      expect(result.gems[0]).toMatchObject({ coverVersion: 'fresh' });
     });
   });
 
@@ -474,16 +527,17 @@ describe('DashboardWidgetService', () => {
 
   describe('getLongWait', () => {
     it('returns null when repo returns null', async () => {
-      const { service, widgetRepo, libraryService } = makeService();
+      const { service, widgetRepo, libraryService, coverStore } = makeService();
       libraryService.findAccessibleLibraryIds.mockResolvedValue([1]);
       widgetRepo.getLongWait.mockResolvedValue(null);
 
       const result = await service.getLongWait(makeUser());
       expect(result).toBeNull();
+      expect(coverStore.facesFor).not.toHaveBeenCalled();
     });
 
     it('returns book data when found', async () => {
-      const { service, widgetRepo, libraryService } = makeService();
+      const { service, widgetRepo, libraryService, coverStore } = makeService();
       libraryService.findAccessibleLibraryIds.mockResolvedValue([1]);
       widgetRepo.getLongWait.mockResolvedValue({
         bookId: 7,
@@ -495,9 +549,13 @@ describe('DashboardWidgetService', () => {
         genre: 'Mystery',
       });
 
+      coverStore.facesFor.mockResolvedValue(new Map([[7, { coverVersion: 'fresh' }]]));
+
       const result = await service.getLongWait(makeUser());
       expect(result!.bookId).toBe(7);
       expect(result!.waitingDays).toBe(847);
+      expect(coverStore.facesFor).toHaveBeenCalledWith([7]);
+      expect(result).toMatchObject({ coverVersion: 'fresh' });
     });
   });
 

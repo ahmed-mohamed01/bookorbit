@@ -118,7 +118,7 @@ describe('AuthorsService', () => {
       enrichmentExecutor as any,
       enrichmentOrchestrator as any,
       metadataScoreService as any,
-      { enrichCardFaces: vi.fn().mockResolvedValue(undefined) } as any,
+      { enrichCardFaces: vi.fn().mockResolvedValue(undefined), facesFor: vi.fn().mockResolvedValue(new Map()) } as any,
     );
     libraryService.findAll.mockResolvedValue([{ id: 1 }, { id: 2 }]);
     libraryService.findAccessibleLibraryIds.mockResolvedValue([1, 2]);
@@ -344,7 +344,7 @@ describe('AuthorsService', () => {
   });
 
   it('findAll returns an empty page when user has no accessible libraries', async () => {
-    libraryService.findAll.mockResolvedValue([]);
+    libraryService.findAccessibleLibraryIds.mockResolvedValue([]);
 
     const page = await service.findAll(reqUser(), {});
 
@@ -397,7 +397,7 @@ describe('AuthorsService', () => {
   });
 
   it('findBooks returns empty page when user has no accessible libraries', async () => {
-    libraryService.findAll.mockResolvedValue([]);
+    libraryService.findAccessibleLibraryIds.mockResolvedValue([]);
 
     const page = await service.findBooks(reqUser(), 99, {});
 
@@ -508,7 +508,7 @@ describe('AuthorsService', () => {
 
     it('scopes the collapsed query by author id, libraries, and content filters', async () => {
       bookReadService.findCardsCollapsed.mockResolvedValue(emptyCollapsedResult([], 0));
-      libraryService.findAll.mockResolvedValue([{ id: 3 }]);
+      libraryService.findAccessibleLibraryIds.mockResolvedValue([3]);
 
       await service.findBooks({ ...reqUser(), contentFilters: EMPTY_CONTENT_FILTER_RULES }, 10, { collapseSeries: true });
 
@@ -653,7 +653,7 @@ describe('AuthorsService', () => {
   });
 
   it('findBooks scopes results to user-accessible libraries only', async () => {
-    libraryService.findAll.mockResolvedValue([{ id: 3 }]);
+    libraryService.findAccessibleLibraryIds.mockResolvedValue([3]);
     authorsRepo.findById.mockResolvedValue({ id: 8, name: 'Author', bookCount: 2 });
     authorsRepo.findBookIdsPage.mockResolvedValue({ bookIds: [], total: 0, page: 0, size: 50 });
 
@@ -1207,7 +1207,6 @@ describe('AuthorsService', () => {
     });
 
     it('returns an empty rail when the user has no accessible libraries', async () => {
-      libraryService.findAll.mockResolvedValue([]);
       libraryService.findAccessibleLibraryIds.mockResolvedValue([]);
 
       const response = await service.findJumpBuckets(reqUser(), {});

@@ -56,6 +56,7 @@ export class SeriesService {
       contentFilters: user.isSuperuser ? undefined : user.contentFilters,
     });
 
+    const faces = await this.coverStore.facesFor(result.items.flatMap((row) => row.coverBookIds));
     const items: SeriesSummary[] = result.items.map((row) => {
       const ladder = buildVolumeLadder({
         members: row.members,
@@ -73,6 +74,7 @@ export class SeriesService {
         readingCount: row.readingCount,
         authors: row.authors,
         coverBookIds: row.coverBookIds,
+        coverVersions: Object.fromEntries(row.coverBookIds.map((id) => [id, faces.get(id)?.coverVersion ?? ''])),
         lastAddedAt: row.lastAddedAt ?? null,
         libraryNames: row.libraryNames,
         expectedBookCount: normalizeSeriesTotalBooks(row.expectedBookCount) ?? null,
@@ -238,8 +240,7 @@ export class SeriesService {
   }
 
   private async resolveLibraryIds(user: RequestUser, scopedLibraryId?: number): Promise<number[]> {
-    const libraries = await this.libraryService.findAll(user);
-    const accessibleIds = libraries.map((library) => library.id);
+    const accessibleIds = await this.libraryService.findAccessibleLibraryIds(user);
 
     if (!scopedLibraryId) return accessibleIds;
     return accessibleIds.includes(scopedLibraryId) ? [scopedLibraryId] : [];

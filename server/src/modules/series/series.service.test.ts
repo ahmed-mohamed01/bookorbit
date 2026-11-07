@@ -62,16 +62,14 @@ describe('SeriesService', () => {
     findAccessibleLibraryIds: vi.fn(),
   };
 
+  const coverStore = { enrichCardFaces: vi.fn(), facesFor: vi.fn() };
   let service: SeriesService;
 
   beforeEach(() => {
     vi.resetAllMocks();
-    service = new SeriesService(
-      seriesRepo as any,
-      bookReadService as any,
-      libraryService as any,
-      { enrichCardFaces: vi.fn().mockResolvedValue(undefined) } as any,
-    );
+    coverStore.enrichCardFaces.mockResolvedValue(undefined);
+    coverStore.facesFor.mockResolvedValue(new Map());
+    service = new SeriesService(seriesRepo as any, bookReadService as any, libraryService as any, coverStore as any);
     libraryService.findAll.mockResolvedValue([{ id: 1 }, { id: 2 }]);
     libraryService.findAccessibleLibraryIds.mockResolvedValue([1, 2]);
   });
@@ -94,7 +92,7 @@ describe('SeriesService', () => {
     });
 
     it('returns empty when no libraries are accessible', async () => {
-      libraryService.findAll.mockResolvedValue([]);
+      libraryService.findAccessibleLibraryIds.mockResolvedValue([]);
       await expect(service.findOwnedVolumes(reqUser(), ['Dune'], 3)).resolves.toEqual(new Map());
       expect(seriesRepo.findOwnedVolumes).not.toHaveBeenCalled();
     });
@@ -123,8 +121,22 @@ describe('SeriesService', () => {
   });
 
   describe('findAll', () => {
+    it('batches representative cover versions for the current page', async () => {
+      seriesRepo.findPage.mockResolvedValue({ items: [summaryRow({ coverBookIds: [10, 20] })], total: 1, page: 0, size: 50, facets: EMPTY_FACETS });
+      coverStore.facesFor.mockResolvedValue(
+        new Map([
+          [10, { coverVersion: 'face-10' }],
+          [20, { coverVersion: 'face-20' }],
+        ]),
+      );
+      const result = await service.findAll(reqUser(), {});
+      expect(coverStore.facesFor).toHaveBeenCalledOnce();
+      expect(coverStore.facesFor).toHaveBeenCalledWith([10, 20]);
+      expect(result.items[0].coverVersions).toEqual({ 10: 'face-10', 20: 'face-20' });
+    });
+
     it('returns empty page when user has no library access', async () => {
-      libraryService.findAll.mockResolvedValue([]);
+      libraryService.findAccessibleLibraryIds.mockResolvedValue([]);
       const result = await service.findAll(reqUser(), { page: 0, size: 50 });
       expect(result).toEqual({ items: [], total: 0, page: 0, size: 50, facets: EMPTY_FACETS });
       expect(seriesRepo.findPage).not.toHaveBeenCalled();
@@ -319,7 +331,7 @@ describe('SeriesService', () => {
 
   describe('findBooks', () => {
     it('throws NotFoundException when no libraries accessible', async () => {
-      libraryService.findAll.mockResolvedValue([]);
+      libraryService.findAccessibleLibraryIds.mockResolvedValue([]);
       await expect(service.findBooks(reqUser(), 42, {})).rejects.toBeInstanceOf(NotFoundException);
     });
 
@@ -740,7 +752,7 @@ describe('SeriesService', () => {
     });
 
     it('returns no next book without querying when the user has no library access', async () => {
-      libraryService.findAll.mockResolvedValue([]);
+      libraryService.findAccessibleLibraryIds.mockResolvedValue([]);
 
       await expect(service.findNextBook(reqUser(), 42, 90, {})).resolves.toEqual({ next: null });
       expect(seriesRepo.findNextReadableBook).not.toHaveBeenCalled();

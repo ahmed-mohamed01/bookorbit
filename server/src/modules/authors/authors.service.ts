@@ -746,8 +746,7 @@ export class AuthorsService {
   }
 
   private async resolveLibraryIds(user: RequestUser, scopedLibraryId?: number): Promise<number[]> {
-    const libraries = await this.libraryService.findAll(user);
-    const accessibleIds = libraries.map((library) => library.id);
+    const accessibleIds = await this.libraryService.findAccessibleLibraryIds(user);
 
     if (!scopedLibraryId) return accessibleIds;
     return accessibleIds.includes(scopedLibraryId) ? [scopedLibraryId] : [];

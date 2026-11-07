@@ -124,6 +124,7 @@ export interface ReadingGoalWidgetData {
 }
 
 export interface CurrentlyReadingBook {
+  coverVersion: BookCard["coverVersion"];
   bookId: number;
   title: string | null;
   authors: string[];
@@ -164,6 +165,7 @@ export interface LibraryOverviewWidgetData {
 }
 
 export interface HighlightOfTheDayWidgetData {
+  coverVersion: BookCard["coverVersion"];
   text: string;
   note: string | null;
   bookTitle: string | null;
@@ -199,6 +201,7 @@ export interface YearProjectionWidgetData {
 }
 
 export interface NeglectedGem {
+  coverVersion: BookCard["coverVersion"];
   bookId: number;
   title: string | null;
   hasCover: boolean;
@@ -227,6 +230,7 @@ export interface ReadingDnaWidgetData {
 }
 
 export interface LongWaitWidgetData {
+  coverVersion: BookCard["coverVersion"];
   bookId: number;
   title: string | null;
   hasCover: boolean;

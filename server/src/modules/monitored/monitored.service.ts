@@ -739,6 +739,7 @@ export class MonitoredService {
                 releaseDate,
               ),
             };
+      this.store.invalidateSummary(entry.monitor.ownerUserId);
       const work = await this.readWork(workId, user);
       this.logger.log(
         `[monitored.release_dates.set] [end] workId="${sanitizeLogValue(workId)}" userId=${user.id} format=${format} durationMs=${Date.now() - startedAt} cleared=${outcome.cleared} ledgerResets=${outcome.ledgerResets} - release date write completed`,
@@ -805,7 +806,9 @@ export class MonitoredService {
   async refreshWorkReleaseDates(user: RequestUser, workId: string): Promise<MonitoredWork> {
     const entry = await this.getWritableWork(workId, user);
     await this.releaseProbe.refreshWork({ id: entry.monitor.id, ownerUserId: entry.monitor.ownerUserId }, workId);
-    return this.readWork(workId, user);
+    this.store.invalidateSummary(entry.monitor.ownerUserId);
+    const work = await this.readWork(workId, user);
+    return work;
   }
 
   async getWorkByBook(user: RequestUser, bookId: number): Promise<MonitoredBookWork> {

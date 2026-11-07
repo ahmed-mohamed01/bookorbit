@@ -1,6 +1,7 @@
+import { rankFileRowsByBook } from '../../common/utils/primary-file-selection.utils';
 import { Inject, Injectable } from '@nestjs/common';
-import { AUDIO_FORMAT_LIST, type CoverMedia, type CoverMedium } from '@bookorbit/types';
-import { and, eq, getTableName, getTableColumns, gt, inArray, isNotNull, lte, sql, type SQL } from 'drizzle-orm';
+import { AUDIO_FORMAT_LIST, isContentBookFile, type CoverMedia, type CoverMedium } from '@bookorbit/types';
+import { and, asc, eq, getTableName, getTableColumns, gt, inArray, isNotNull, lte, sql, type SQL } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
@@ -98,6 +99,7 @@ export type BookCoverContext = {
   libraryId: number;
   coverAspectRatio: string;
   primaryFileId: number | null;
+  formatPriority: string[];
   coverSource: BookCoverSource | null;
   coverUpdatedAt: Date | null;
   metadataUpdatedAt: Date | null;
@@ -176,6 +178,7 @@ export class BookCoverStoreRepository {
         libraryId: books.libraryId,
         coverAspectRatio: libraries.coverAspectRatio,
         primaryFileId: books.primaryFileId,
+        formatPriority: libraries.formatPriority,
         coverSource: bookMetadata.coverSource,
         coverUpdatedAt: bookMetadata.coverUpdatedAt,
         metadataUpdatedAt: bookMetadata.updatedAt,
@@ -198,7 +201,8 @@ export class BookCoverStoreRepository {
           mediaOverlayAvailable: bookFiles.mediaOverlayAvailable,
         })
         .from(bookFiles)
-        .where(eq(bookFiles.bookId, bookId)),
+        .where(eq(bookFiles.bookId, bookId))
+        .orderBy(asc(bookFiles.sortOrder), asc(bookFiles.id)),
       this.db.select(slotProjection()).from(bookCovers).where(eq(bookCovers.bookId, bookId)),
     ]);
 
@@ -207,6 +211,7 @@ export class BookCoverStoreRepository {
       libraryId: book.libraryId,
       coverAspectRatio: book.coverAspectRatio,
       primaryFileId: book.primaryFileId,
+      formatPriority: book.formatPriority,
       coverSource: (book.coverSource as BookCoverSource | null) ?? null,
       coverUpdatedAt: book.coverUpdatedAt ?? null,
       metadataUpdatedAt: book.metadataUpdatedAt ?? null,
@@ -232,29 +237,48 @@ export class BookCoverStoreRepository {
   /** What `BookCoverStore.facesFor` needs per book, for lists that carry no files of their own. */
   async findFaceRows(bookIds: readonly number[]): Promise<BookCoverFaceRow[]> {
     if (bookIds.length === 0) return [];
-    const outer = outerBookIdSql(books.id);
     const rows = await this.db
       .select({
         bookId: books.id,
+        primaryFileId: books.primaryFileId,
+        formatPriority: libraries.formatPriority,
         coverAspectRatio: libraries.coverAspectRatio,
-        primaryFormat: sql<string | null>`coalesce(
-          ${bookFiles.format},
-          (select first_content.format from ${bookFiles} as first_content
-            where first_content.book_id = ${outer} and first_content.role in ('content', 'primary')
-            order by first_content.id limit 1)
-        )`,
         updatedAt: books.updatedAt,
         addedAt: books.addedAt,
         ...coverMediaSql(books.id),
       })
       .from(books)
       .innerJoin(libraries, eq(libraries.id, books.libraryId))
-      .leftJoin(bookFiles, eq(bookFiles.id, books.primaryFileId))
       .where(inArray(books.id, [...bookIds]));
+    const files = await this.db
+      .select({
+        bookId: bookFiles.bookId,
+        id: bookFiles.id,
+        format: bookFiles.format,
+        role: bookFiles.role,
+        sizeBytes: bookFiles.sizeBytes,
+        mediaOverlayAvailable: bookFiles.mediaOverlayAvailable,
+      })
+      .from(bookFiles)
+      .where(inArray(bookFiles.bookId, [...bookIds]))
+      .orderBy(asc(bookFiles.bookId), asc(bookFiles.sortOrder), asc(bookFiles.id));
+    const ranked = rankFileRowsByBook(
+      files,
+      new Map(rows.map((row) => [row.bookId, { primaryFileId: row.primaryFileId, formatPriority: row.formatPriority }])),
+    );
+    const primaryIds = new Map(rows.map((row) => [row.bookId, row.primaryFileId]));
+    const filesByBook = new Map<number, typeof ranked>();
+    for (const file of ranked) {
+      const list = filesByBook.get(file.bookId) ?? [];
+      list.push(file.id === primaryIds.get(file.bookId) ? { ...file, role: 'primary' } : file);
+      filesByBook.set(file.bookId, list);
+    }
     return rows.map((row) => ({
       bookId: row.bookId,
       libraryCoverAspectRatio: row.coverAspectRatio,
-      primaryFormat: row.primaryFormat,
+      primaryFormat:
+        ((filesByBook.get(row.bookId) ?? []).find((file) => file.role === 'primary') ?? (filesByBook.get(row.bookId) ?? []).find(isContentBookFile))
+          ?.format ?? null,
       media: { hasEbook: row.hasEbook, hasAudio: row.hasAudio },
       legacyVersion: (row.updatedAt ?? row.addedAt).toISOString(),
     }));

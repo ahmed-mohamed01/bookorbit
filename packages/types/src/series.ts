@@ -31,6 +31,7 @@ export type SeriesSummary = {
   readCount: number;
   authors: string[];
   coverBookIds: number[];
+  coverVersions?: Record<number, string>;
   lastAddedAt: string | null;
   /** Books the user has in progress. */
   readingCount: number;

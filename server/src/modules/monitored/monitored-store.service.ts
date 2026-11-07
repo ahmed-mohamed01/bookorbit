@@ -1,3 +1,4 @@
+import { StatsCache } from '../../common/cache/stats-cache';
 import { assertOffsetWithinLimit } from '../../common/constants/pagination.constants';
 import { randomUUID } from 'node:crypto';
 
@@ -286,6 +287,7 @@ export type MonitoredWorkSearchRow = Omit<MonitoredWorkSearchItem, 'isOwner'> & 
 
 @Injectable()
 export class MonitoredStoreService {
+  private readonly summaryCache = new StatsCache({ ttlMs: 60_000, maxEntries: 2000 });
   private readonly logger = new Logger(MonitoredStoreService.name);
 
   constructor(
@@ -975,31 +977,36 @@ export class MonitoredStoreService {
   }
 
   async upsertAuthor(input: AuthorWrite, actor?: RequestUser): Promise<MonitoredAuthorConfig> {
-    const id = input.id ?? randomUUID();
-    if (input.id && actor) await this.assertAuthorWritable(id, actor, true);
-    await this.db.transaction(async (tx) => {
-      await tx
-        .insert(schema.monitoredAuthors)
-        .values(this.authorValues({ ...input, id }))
-        .onConflictDoUpdate({ target: schema.monitoredAuthors.id, set: this.authorUpdateValues(input) });
-      await tx.delete(schema.authorProviderIdentities).where(eq(schema.authorProviderIdentities.monitorAuthorId, id));
-      const identities = Object.entries(input.providerIds).flatMap(([source, providerId]) =>
-        providerId ? [{ monitorAuthorId: id, source, providerId }] : [],
-      );
-      if (identities.length) await tx.insert(schema.authorProviderIdentities).values(identities);
-    });
-    return {
-      id,
-      ownerUserId: input.ownerUserId,
-      authorName: input.authorName,
-      localAuthorId: input.localAuthorId,
-      providerIds: input.providerIds,
-      formats: input.formats,
-      paused: input.paused,
-      addedAt: input.addedAt,
-      lastRefreshedAt: input.lastRefreshedAt,
-      fetch: { state: input.fetchState ?? 'idle', errorKind: null, errorAt: null, retryAt: null },
-    };
+    const previousOwner = input.id ? await this.ownerOf('author', input.id) : null;
+    return this.invalidatingSummary(input.ownerUserId, () =>
+      this.invalidatingSummary(previousOwner ?? input.ownerUserId, async () => {
+        const id = input.id ?? randomUUID();
+        if (input.id && actor) await this.assertAuthorWritable(id, actor, true);
+        await this.db.transaction(async (tx) => {
+          await tx
+            .insert(schema.monitoredAuthors)
+            .values(this.authorValues({ ...input, id }))
+            .onConflictDoUpdate({ target: schema.monitoredAuthors.id, set: this.authorUpdateValues(input) });
+          await tx.delete(schema.authorProviderIdentities).where(eq(schema.authorProviderIdentities.monitorAuthorId, id));
+          const identities = Object.entries(input.providerIds).flatMap(([source, providerId]) =>
+            providerId ? [{ monitorAuthorId: id, source, providerId }] : [],
+          );
+          if (identities.length) await tx.insert(schema.authorProviderIdentities).values(identities);
+        });
+        return {
+          id,
+          ownerUserId: input.ownerUserId,
+          authorName: input.authorName,
+          localAuthorId: input.localAuthorId,
+          providerIds: input.providerIds,
+          formats: input.formats,
+          paused: input.paused,
+          addedAt: input.addedAt,
+          lastRefreshedAt: input.lastRefreshedAt,
+          fetch: { state: input.fetchState ?? 'idle', errorKind: null, errorAt: null, retryAt: null },
+        };
+      }),
+    );
   }
 
   async markFetchQueued(monitorId: string): Promise<boolean> {
@@ -1116,51 +1123,55 @@ export class MonitoredStoreService {
   }
 
   async updateAuthorFields(id: string, fields: AuthorFields, actor?: RequestUser): Promise<MonitoredAuthorConfig> {
-    if (actor) await this.assertAuthorWritable(id, actor);
-    const values = this.authorFieldUpdateValues(fields);
-    await this.db.transaction(async (tx) => {
-      if (Object.keys(values).length) {
-        const updated = await tx
-          .update(schema.monitoredAuthors)
-          .set(values)
-          .where(eq(schema.monitoredAuthors.id, id))
-          .returning({ id: schema.monitoredAuthors.id });
-        if (!updated.length) throw new NotFoundException('Monitored author not found');
-      }
-      for (const [source, providerId] of Object.entries(fields.providerIds ?? {})) {
-        if (!providerId) continue;
-        await tx
-          .insert(schema.authorProviderIdentities)
-          .values({ monitorAuthorId: id, source, providerId })
-          .onConflictDoUpdate({
-            target: [schema.authorProviderIdentities.monitorAuthorId, schema.authorProviderIdentities.source],
-            set: { providerId },
-          });
-      }
+    return this.invalidatingSummary(await this.ownerOf('author', id), async () => {
+      if (actor) await this.assertAuthorWritable(id, actor);
+      const values = this.authorFieldUpdateValues(fields);
+      await this.db.transaction(async (tx) => {
+        if (Object.keys(values).length) {
+          const updated = await tx
+            .update(schema.monitoredAuthors)
+            .set(values)
+            .where(eq(schema.monitoredAuthors.id, id))
+            .returning({ id: schema.monitoredAuthors.id });
+          if (!updated.length) throw new NotFoundException('Monitored author not found');
+        }
+        for (const [source, providerId] of Object.entries(fields.providerIds ?? {})) {
+          if (!providerId) continue;
+          await tx
+            .insert(schema.authorProviderIdentities)
+            .values({ monitorAuthorId: id, source, providerId })
+            .onConflictDoUpdate({
+              target: [schema.authorProviderIdentities.monitorAuthorId, schema.authorProviderIdentities.source],
+              set: { providerId },
+            });
+        }
+      });
+      const updated = await this.getAuthor(id);
+      if (!updated) throw new NotFoundException('Monitored author not found');
+      return updated;
     });
-    const updated = await this.getAuthor(id);
-    if (!updated) throw new NotFoundException('Monitored author not found');
-    return updated;
   }
 
   async removeAuthor(id: string, actor?: RequestUser): Promise<boolean> {
-    const startedAt = Date.now();
-    this.logger.log(`[monitored.store.remove_author] [start] monitorId="${sanitizeLogValue(id)}" - monitored author cascade started`);
-    try {
-      if (actor) await this.assertAuthorWritable(id, actor);
-      const result = await this.db
-        .delete(schema.monitoredAuthors)
-        .where(eq(schema.monitoredAuthors.id, id))
-        .returning({ id: schema.monitoredAuthors.id });
-      if (!result.length) throw new NotFoundException('Monitored author not found');
-      this.logger.log(
-        `[monitored.store.remove_author] [end] monitorId="${sanitizeLogValue(id)}" durationMs=${Date.now() - startedAt} deleted=1 - monitored author cascade completed`,
-      );
-      return true;
-    } catch (error) {
-      this.logFailure('monitored.store.remove_author', 'monitorId', id, startedAt, error);
-      throw error;
-    }
+    return this.invalidatingSummary(await this.ownerOf('author', id), async () => {
+      const startedAt = Date.now();
+      this.logger.log(`[monitored.store.remove_author] [start] monitorId="${sanitizeLogValue(id)}" - monitored author cascade started`);
+      try {
+        if (actor) await this.assertAuthorWritable(id, actor);
+        const result = await this.db
+          .delete(schema.monitoredAuthors)
+          .where(eq(schema.monitoredAuthors.id, id))
+          .returning({ id: schema.monitoredAuthors.id });
+        if (!result.length) throw new NotFoundException('Monitored author not found');
+        this.logger.log(
+          `[monitored.store.remove_author] [end] monitorId="${sanitizeLogValue(id)}" durationMs=${Date.now() - startedAt} deleted=1 - monitored author cascade completed`,
+        );
+        return true;
+      } catch (error) {
+        this.logFailure('monitored.store.remove_author', 'monitorId', id, startedAt, error);
+        throw error;
+      }
+    });
   }
 
   /**
@@ -1195,28 +1206,35 @@ export class MonitoredStoreService {
   }
 
   async upsertBook(input: BookWrite, actor?: RequestUser): Promise<MonitoredBookEntry> {
-    const id = input.id ?? randomUUID();
-    if (input.id && actor) await this.assertBookWritable(id, actor);
-    await this.db
-      .insert(schema.monitoredBooks)
-      .values(this.bookValues({ ...input, id }))
-      .onConflictDoUpdate({ target: schema.monitoredBooks.id, set: this.bookUpdateValues(input) });
-    return {
-      id,
-      ownerUserId: input.ownerUserId,
-      monitorAuthorId: input.monitorAuthorId,
-      workId: input.workId,
-      formats: input.formats,
-      paused: input.paused,
-      addedAt: input.addedAt,
-    };
+    const previousOwner = input.id ? await this.ownerOf('book', input.id) : null;
+    return this.invalidatingSummary(input.ownerUserId, () =>
+      this.invalidatingSummary(previousOwner ?? input.ownerUserId, async () => {
+        const id = input.id ?? randomUUID();
+        if (input.id && actor) await this.assertBookWritable(id, actor);
+        await this.db
+          .insert(schema.monitoredBooks)
+          .values(this.bookValues({ ...input, id }))
+          .onConflictDoUpdate({ target: schema.monitoredBooks.id, set: this.bookUpdateValues(input) });
+        return {
+          id,
+          ownerUserId: input.ownerUserId,
+          monitorAuthorId: input.monitorAuthorId,
+          workId: input.workId,
+          formats: input.formats,
+          paused: input.paused,
+          addedAt: input.addedAt,
+        };
+      }),
+    );
   }
 
   async removeBook(id: string, actor?: RequestUser): Promise<boolean> {
-    if (actor) await this.assertBookWritable(id, actor);
-    const result = await this.db.delete(schema.monitoredBooks).where(eq(schema.monitoredBooks.id, id)).returning({ id: schema.monitoredBooks.id });
-    if (!result.length) throw new NotFoundException('Monitored book not found');
-    return true;
+    return this.invalidatingSummary(await this.ownerOf('book', id), async () => {
+      if (actor) await this.assertBookWritable(id, actor);
+      const result = await this.db.delete(schema.monitoredBooks).where(eq(schema.monitoredBooks.id, id)).returning({ id: schema.monitoredBooks.id });
+      if (!result.length) throw new NotFoundException('Monitored book not found');
+      return true;
+    });
   }
 
   async getCatalog(monitorId: string, viewer?: RequestUser): Promise<MonitoredCatalog | null> {
@@ -1363,55 +1381,59 @@ export class MonitoredStoreService {
   }
 
   async updateWorkUserState(workId: string, patch: WorkStatePatch, actor: RequestUser): Promise<MonitoredWork> {
-    await this.assertWorkWritable(workId, actor);
-    const [work] = await this.db.select().from(schema.authorCatalogWorks).where(eq(schema.authorCatalogWorks.id, workId)).limit(1);
-    if (!work) throw new NotFoundException('Monitored work not found');
-    const overlayState = overlayStateWrite(patch);
-    const values = {
-      workId,
-      monitorAuthorId: work.monitorAuthorId,
-      ...(patch.monitorState !== undefined ? { monitorState: patch.monitorState } : {}),
-      ...(patch.monitorEbook !== undefined ? { monitorEbook: patch.monitorEbook } : {}),
-      ...(patch.monitorAudiobook !== undefined ? { monitorAudiobook: patch.monitorAudiobook } : {}),
-      ...(patch.autoDownloadEbook !== undefined ? { autoDownloadEbook: patch.autoDownloadEbook } : {}),
-      ...(patch.autoDownloadAudiobook !== undefined ? { autoDownloadAudiobook: patch.autoDownloadAudiobook } : {}),
-      ...overlayState.values,
-      ...(patch.requestIds?.ebook !== undefined ? { ebookRequestId: patch.requestIds.ebook } : {}),
-      ...(patch.requestIds?.audiobook !== undefined ? { audiobookRequestId: patch.requestIds.audiobook } : {}),
-    };
-    const set: {
-      [K in keyof typeof schema.monitoredAuthorWorks.$inferInsert]?: (typeof schema.monitoredAuthorWorks.$inferInsert)[K] | SQL;
-    } = { ...values, ...overlayState.conflictSet };
-    await this.db.insert(schema.monitoredAuthorWorks).values(values).onConflictDoUpdate({ target: schema.monitoredAuthorWorks.workId, set });
-    const [composed] = await this.composeWorks([work], actor);
-    if (!composed) throw new NotFoundException('Monitored work not found');
-    return composed.work;
+    return this.invalidatingSummary(actor.id, async () => {
+      await this.assertWorkWritable(workId, actor);
+      const [work] = await this.db.select().from(schema.authorCatalogWorks).where(eq(schema.authorCatalogWorks.id, workId)).limit(1);
+      if (!work) throw new NotFoundException('Monitored work not found');
+      const overlayState = overlayStateWrite(patch);
+      const values = {
+        workId,
+        monitorAuthorId: work.monitorAuthorId,
+        ...(patch.monitorState !== undefined ? { monitorState: patch.monitorState } : {}),
+        ...(patch.monitorEbook !== undefined ? { monitorEbook: patch.monitorEbook } : {}),
+        ...(patch.monitorAudiobook !== undefined ? { monitorAudiobook: patch.monitorAudiobook } : {}),
+        ...(patch.autoDownloadEbook !== undefined ? { autoDownloadEbook: patch.autoDownloadEbook } : {}),
+        ...(patch.autoDownloadAudiobook !== undefined ? { autoDownloadAudiobook: patch.autoDownloadAudiobook } : {}),
+        ...overlayState.values,
+        ...(patch.requestIds?.ebook !== undefined ? { ebookRequestId: patch.requestIds.ebook } : {}),
+        ...(patch.requestIds?.audiobook !== undefined ? { audiobookRequestId: patch.requestIds.audiobook } : {}),
+      };
+      const set: {
+        [K in keyof typeof schema.monitoredAuthorWorks.$inferInsert]?: (typeof schema.monitoredAuthorWorks.$inferInsert)[K] | SQL;
+      } = { ...values, ...overlayState.conflictSet };
+      await this.db.insert(schema.monitoredAuthorWorks).values(values).onConflictDoUpdate({ target: schema.monitoredAuthorWorks.workId, set });
+      const [composed] = await this.composeWorks([work], actor);
+      if (!composed) throw new NotFoundException('Monitored work not found');
+      return composed.work;
+    });
   }
 
   async updateWorksUserState(workIds: string[], patch: MonitoredBulkWorkPatch, actor: RequestUser): Promise<MonitoredWork[]> {
-    if (!workIds.length) return [];
-    const works = await this.db.transaction(async (tx) => {
-      const rows = await tx.select().from(schema.authorCatalogWorks).where(inArray(schema.authorCatalogWorks.id, workIds));
-      if (!rows.length) return [];
-      const overlayState = overlayStateWrite(patch);
-      const values = rows.map((work) => ({
-        workId: work.id,
-        monitorAuthorId: work.monitorAuthorId,
-        ...(patch.monitorEbook !== undefined ? { monitorEbook: patch.monitorEbook } : {}),
-        ...(patch.monitorAudiobook !== undefined ? { monitorAudiobook: patch.monitorAudiobook } : {}),
-        ...overlayState.values,
-      }));
-      const set: Record<string, SQL> = { ...overlayState.conflictSet };
-      if (patch.monitorEbook !== undefined) set.monitorEbook = sql`excluded.monitor_ebook`;
-      if (patch.monitorAudiobook !== undefined) set.monitorAudiobook = sql`excluded.monitor_audiobook`;
-      await tx.insert(schema.monitoredAuthorWorks).values(values).onConflictDoUpdate({ target: schema.monitoredAuthorWorks.workId, set });
-      return rows;
-    });
-    const composed = await this.composeWorks(works, actor);
-    const byId = new Map(composed.map((item) => [item.work.id, item.work]));
-    return workIds.flatMap((workId) => {
-      const work = byId.get(workId);
-      return work ? [work] : [];
+    return this.invalidatingSummary(actor.id, async () => {
+      if (!workIds.length) return [];
+      const works = await this.db.transaction(async (tx) => {
+        const rows = await tx.select().from(schema.authorCatalogWorks).where(inArray(schema.authorCatalogWorks.id, workIds));
+        if (!rows.length) return [];
+        const overlayState = overlayStateWrite(patch);
+        const values = rows.map((work) => ({
+          workId: work.id,
+          monitorAuthorId: work.monitorAuthorId,
+          ...(patch.monitorEbook !== undefined ? { monitorEbook: patch.monitorEbook } : {}),
+          ...(patch.monitorAudiobook !== undefined ? { monitorAudiobook: patch.monitorAudiobook } : {}),
+          ...overlayState.values,
+        }));
+        const set: Record<string, SQL> = { ...overlayState.conflictSet };
+        if (patch.monitorEbook !== undefined) set.monitorEbook = sql`excluded.monitor_ebook`;
+        if (patch.monitorAudiobook !== undefined) set.monitorAudiobook = sql`excluded.monitor_audiobook`;
+        await tx.insert(schema.monitoredAuthorWorks).values(values).onConflictDoUpdate({ target: schema.monitoredAuthorWorks.workId, set });
+        return rows;
+      });
+      const composed = await this.composeWorks(works, actor);
+      const byId = new Map(composed.map((item) => [item.work.id, item.work]));
+      return workIds.flatMap((workId) => {
+        const work = byId.get(workId);
+        return work ? [work] : [];
+      });
     });
   }
 
@@ -1442,8 +1464,10 @@ export class MonitoredStoreService {
    * has no business in it.
    */
   async updateWorkMatch(workId: string, match: WorkMatchUpdate, options: { withPossibleMatches?: boolean } = {}): Promise<void> {
-    const values = options.withPossibleMatches ? { ...this.matchValues(match), ...this.possibleMatchValues(match) } : this.matchValues(match);
-    await this.db.update(schema.authorCatalogWorks).set(values).where(eq(schema.authorCatalogWorks.id, workId));
+    return this.invalidatingSummary(await this.ownerOf('work', workId), async () => {
+      const values = options.withPossibleMatches ? { ...this.matchValues(match), ...this.possibleMatchValues(match) } : this.matchValues(match);
+      await this.db.update(schema.authorCatalogWorks).set(values).where(eq(schema.authorCatalogWorks.id, workId));
+    });
   }
 
   /** Whether a library book is present and sits in a library the viewer can open. */
@@ -1568,83 +1592,85 @@ export class MonitoredStoreService {
   }
 
   async saveCatalog(monitorId: string, catalog: MonitoredCatalog | null, options: { enrolReleaseProbes?: boolean } = {}): Promise<void> {
-    await this.db.transaction(async (tx) => {
-      await recordRequestLedger(tx, monitorId);
-      await recordChoiceLedger(tx, monitorId);
-      if (catalog === null) {
-        await tx.delete(schema.authorCatalogState).where(eq(schema.authorCatalogState.monitorAuthorId, monitorId));
-        await tx.delete(schema.authorCatalogWorks).where(eq(schema.authorCatalogWorks.monitorAuthorId, monitorId));
-        return;
-      }
-      await tx
-        .insert(schema.authorCatalogState)
-        .values({ monitorAuthorId: monitorId, fetchedAt: new Date(catalog.fetchedAt) })
-        .onConflictDoUpdate({ target: schema.authorCatalogState.monitorAuthorId, set: { fetchedAt: new Date(catalog.fetchedAt) } });
-      const ids = catalog.works.map((work) => work.id);
-      // Only works this save adds may take recorded choices; the ones already here keep their own.
-      const previousWorkIds = (
+    return this.invalidatingSummary(await this.ownerOf('author', monitorId), async () => {
+      await this.db.transaction(async (tx) => {
+        await recordRequestLedger(tx, monitorId);
+        await recordChoiceLedger(tx, monitorId);
+        if (catalog === null) {
+          await tx.delete(schema.authorCatalogState).where(eq(schema.authorCatalogState.monitorAuthorId, monitorId));
+          await tx.delete(schema.authorCatalogWorks).where(eq(schema.authorCatalogWorks.monitorAuthorId, monitorId));
+          return;
+        }
         await tx
-          .select({ id: schema.authorCatalogWorks.id })
-          .from(schema.authorCatalogWorks)
-          .where(eq(schema.authorCatalogWorks.monitorAuthorId, monitorId))
-      ).map((row) => row.id);
-      await tx
-        .delete(schema.authorCatalogWorks)
-        .where(
-          ids.length
-            ? and(eq(schema.authorCatalogWorks.monitorAuthorId, monitorId), notInArray(schema.authorCatalogWorks.id, ids))
-            : eq(schema.authorCatalogWorks.monitorAuthorId, monitorId),
-        );
-      if (!catalog.works.length) {
+          .insert(schema.authorCatalogState)
+          .values({ monitorAuthorId: monitorId, fetchedAt: new Date(catalog.fetchedAt) })
+          .onConflictDoUpdate({ target: schema.authorCatalogState.monitorAuthorId, set: { fetchedAt: new Date(catalog.fetchedAt) } });
+        const ids = catalog.works.map((work) => work.id);
+        // Only works this save adds may take recorded choices; the ones already here keep their own.
+        const previousWorkIds = (
+          await tx
+            .select({ id: schema.authorCatalogWorks.id })
+            .from(schema.authorCatalogWorks)
+            .where(eq(schema.authorCatalogWorks.monitorAuthorId, monitorId))
+        ).map((row) => row.id);
+        await tx
+          .delete(schema.authorCatalogWorks)
+          .where(
+            ids.length
+              ? and(eq(schema.authorCatalogWorks.monitorAuthorId, monitorId), notInArray(schema.authorCatalogWorks.id, ids))
+              : eq(schema.authorCatalogWorks.monitorAuthorId, monitorId),
+          );
+        if (!catalog.works.length) {
+          await reapplyReleaseOverlay(tx, monitorId);
+          if (options.enrolReleaseProbes) await enrolReleaseProbes(tx, monitorId, catalog.fetchedAt.slice(0, 10));
+          return;
+        }
+        for (const values of chunk(
+          catalog.works.map((work) => this.workValues(monitorId, work)),
+          WRITE_BATCH_SIZE,
+        )) {
+          await tx
+            .insert(schema.authorCatalogWorks)
+            .values(values)
+            .onConflictDoUpdate({
+              target: schema.authorCatalogWorks.id,
+              set: {
+                monitorAuthorId: sql`excluded.monitor_author_id`,
+                title: sql`excluded.title`,
+                subtitle: sql`excluded.subtitle`,
+                seriesName: sql`excluded.series_name`,
+                seriesIndex: sql`excluded.series_index`,
+                seriesMemberships: sql`excluded.series_memberships`,
+                releaseYear: sql`excluded.release_year`,
+                ebookReleaseDate: sql`excluded.ebook_release_date`,
+                ebookDatePrecision: sql`excluded.ebook_date_precision`,
+                audioReleaseDate: sql`excluded.audio_release_date`,
+                audioDatePrecision: sql`excluded.audio_date_precision`,
+                coverUrl: sql`excluded.cover_url`,
+                description: sql`excluded.description`,
+                verdict: sql`excluded.verdict`,
+                flags: sql`excluded.flags`,
+                kind: sql`excluded.kind`,
+                sources: sql`excluded.sources`,
+                matchedBookId: sql`excluded.matched_book_id`,
+                matchedEbookBookId: sql`excluded.matched_ebook_book_id`,
+                matchedAudioBookId: sql`excluded.matched_audio_book_id`,
+                ownedFormats: sql`excluded.owned_formats`,
+                linkedFormats: sql`excluded.linked_formats`,
+                answeredFormats: sql`excluded.answered_formats`,
+                possibleEbookBookId: sql`excluded.possible_ebook_book_id`,
+                possibleAudioBookId: sql`excluded.possible_audio_book_id`,
+              },
+            });
+        }
+        await tx.delete(schema.authorCatalogSourceWorks).where(inArray(schema.authorCatalogSourceWorks.workId, ids));
+        const sources = catalog.works.flatMap((work) => this.sourceValues(work));
+        for (const batch of chunk(sources, WRITE_BATCH_SIZE)) await tx.insert(schema.authorCatalogSourceWorks).values(batch);
+        await restoreRequestLedger(tx, monitorId);
+        await restoreChoiceLedger(tx, monitorId, previousWorkIds);
         await reapplyReleaseOverlay(tx, monitorId);
         if (options.enrolReleaseProbes) await enrolReleaseProbes(tx, monitorId, catalog.fetchedAt.slice(0, 10));
-        return;
-      }
-      for (const values of chunk(
-        catalog.works.map((work) => this.workValues(monitorId, work)),
-        WRITE_BATCH_SIZE,
-      )) {
-        await tx
-          .insert(schema.authorCatalogWorks)
-          .values(values)
-          .onConflictDoUpdate({
-            target: schema.authorCatalogWorks.id,
-            set: {
-              monitorAuthorId: sql`excluded.monitor_author_id`,
-              title: sql`excluded.title`,
-              subtitle: sql`excluded.subtitle`,
-              seriesName: sql`excluded.series_name`,
-              seriesIndex: sql`excluded.series_index`,
-              seriesMemberships: sql`excluded.series_memberships`,
-              releaseYear: sql`excluded.release_year`,
-              ebookReleaseDate: sql`excluded.ebook_release_date`,
-              ebookDatePrecision: sql`excluded.ebook_date_precision`,
-              audioReleaseDate: sql`excluded.audio_release_date`,
-              audioDatePrecision: sql`excluded.audio_date_precision`,
-              coverUrl: sql`excluded.cover_url`,
-              description: sql`excluded.description`,
-              verdict: sql`excluded.verdict`,
-              flags: sql`excluded.flags`,
-              kind: sql`excluded.kind`,
-              sources: sql`excluded.sources`,
-              matchedBookId: sql`excluded.matched_book_id`,
-              matchedEbookBookId: sql`excluded.matched_ebook_book_id`,
-              matchedAudioBookId: sql`excluded.matched_audio_book_id`,
-              ownedFormats: sql`excluded.owned_formats`,
-              linkedFormats: sql`excluded.linked_formats`,
-              answeredFormats: sql`excluded.answered_formats`,
-              possibleEbookBookId: sql`excluded.possible_ebook_book_id`,
-              possibleAudioBookId: sql`excluded.possible_audio_book_id`,
-            },
-          });
-      }
-      await tx.delete(schema.authorCatalogSourceWorks).where(inArray(schema.authorCatalogSourceWorks.workId, ids));
-      const sources = catalog.works.flatMap((work) => this.sourceValues(work));
-      for (const batch of chunk(sources, WRITE_BATCH_SIZE)) await tx.insert(schema.authorCatalogSourceWorks).values(batch);
-      await restoreRequestLedger(tx, monitorId);
-      await restoreChoiceLedger(tx, monitorId, previousWorkIds);
-      await reapplyReleaseOverlay(tx, monitorId);
-      if (options.enrolReleaseProbes) await enrolReleaseProbes(tx, monitorId, catalog.fetchedAt.slice(0, 10));
+      });
     });
   }
 
@@ -2021,7 +2047,41 @@ export class MonitoredStoreService {
     return sql`true`;
   }
 
+  private async ownerOf(kind: 'author' | 'work' | 'book', id: string): Promise<number | null> {
+    if (kind === 'work') {
+      const [row] = await this.db
+        .select({ ownerUserId: schema.monitoredAuthors.ownerUserId })
+        .from(schema.authorCatalogWorks)
+        .innerJoin(schema.monitoredAuthors, eq(schema.authorCatalogWorks.monitorAuthorId, schema.monitoredAuthors.id))
+        .where(eq(schema.authorCatalogWorks.id, id))
+        .limit(1);
+      return row?.ownerUserId ?? null;
+    }
+    const table = kind === 'author' ? schema.monitoredAuthors : schema.monitoredBooks;
+    const [row] = await this.db.select({ ownerUserId: table.ownerUserId }).from(table).where(eq(table.id, id)).limit(1);
+    return row?.ownerUserId ?? null;
+  }
+
+  invalidateSummary(ownerUserId?: number): void {
+    if (ownerUserId === undefined) this.summaryCache.clear();
+    else this.summaryCache.clearForScope(String(ownerUserId));
+  }
+
+  private async invalidatingSummary<T>(ownerUserId: number | null, run: () => Promise<T>): Promise<T> {
+    try {
+      return await run();
+    } finally {
+      this.invalidateSummary(ownerUserId ?? undefined);
+    }
+  }
+
   async countSummary(viewer: RequestUser, earliest: string, latest: string, today: string): Promise<MonitoredCounts> {
+    return this.summaryCache.get(String(viewer.id), JSON.stringify([viewer.isSuperuser, earliest, latest, today]), () =>
+      this.loadSummary(viewer, earliest, latest, today),
+    );
+  }
+
+  private async loadSummary(viewer: RequestUser, earliest: string, latest: string, today: string): Promise<MonitoredCounts> {
     const authorScope = this.readScope(viewer, schema.monitoredAuthors.ownerUserId);
     const visible = visibleWorkCondition();
     const active = activeWorkCondition(visible);

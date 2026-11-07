@@ -1,3 +1,5 @@
+import { PortraitReadQueryDto } from '../../common/dto/portrait-read-query.dto';
+import { sendImageConditional } from '../../common/utils/image-conditional.utils';
 import {
   BadRequestException,
   Body,
@@ -5,6 +7,7 @@ import {
   DefaultValuePipe,
   Delete,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   MessageEvent,
@@ -225,7 +228,13 @@ export class AuthorsController {
   }
 
   @Get(':id/thumbnail')
-  async getThumbnail(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Res() reply: FastifyReply) {
+  async getThumbnail(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Res() reply: FastifyReply,
+    @Query() query: PortraitReadQueryDto = {},
+    @Headers('if-none-match') ifNoneMatch?: string,
+  ) {
     const thumbnailPath = await this.authorsService.getThumbnailPath(user, id);
     if (!thumbnailPath) {
       reply.status(404).send({ message: `No thumbnail for author ${id}` });
@@ -233,14 +242,19 @@ export class AuthorsController {
     }
 
     const { mtimeMs } = await stat(thumbnailPath);
-    reply.header('Cache-Control', 'no-cache');
-    reply.header('ETag', `"${Math.floor(mtimeMs)}"`);
+    if (sendImageConditional(reply, { mtimeMs, versioned: query.t !== undefined, ifNoneMatch })) return;
     reply.type('image/jpeg');
     reply.send(createReadStream(thumbnailPath));
   }
 
   @Get(':id/image')
-  async getImage(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Res() reply: FastifyReply) {
+  async getImage(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Res() reply: FastifyReply,
+    @Query() query: PortraitReadQueryDto = {},
+    @Headers('if-none-match') ifNoneMatch?: string,
+  ) {
     const imagePath = await this.authorsService.getImagePath(user, id);
     if (!imagePath) {
       reply.status(404).send({ message: `No image for author ${id}` });
@@ -248,8 +262,7 @@ export class AuthorsController {
     }
 
     const { mtimeMs } = await stat(imagePath);
-    reply.header('Cache-Control', 'no-cache');
-    reply.header('ETag', `"${Math.floor(mtimeMs)}"`);
+    if (sendImageConditional(reply, { mtimeMs, versioned: query.t !== undefined, ifNoneMatch })) return;
 
     reply.type(imageContentTypeFromPath(imagePath));
     reply.send(createReadStream(imagePath));

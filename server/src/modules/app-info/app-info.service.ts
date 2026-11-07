@@ -40,7 +40,7 @@ export class AppInfoService implements OnApplicationBootstrap {
       const now = Date.now();
       if (now - this.lastCheckTime > 600_000) {
         this.lastCheckTime = now;
-        await this.checkForUpdate(version);
+        void this.checkForUpdate(version);
       }
     }
 

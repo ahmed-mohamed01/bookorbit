@@ -295,6 +295,16 @@ describe('MonitoredController', () => {
     expect(createReadStream).not.toHaveBeenCalled();
   });
 
+  it.each([true, false])('returns 304 for a matching portrait versioned=%s', async (versioned) => {
+    vi.mocked(stat).mockResolvedValue({ mtimeMs: 1234.9 } as never);
+    const controller = await makeController({ getAuthorPortraitPath: vi.fn().mockResolvedValue('/data/photo.png') });
+    const { reply, headers, asFastifyReply } = makeReply();
+    await controller.getAuthorPortrait('monitor-1', { id: 1 } as RequestUser, asFastifyReply, versioned ? { t: '1234' } : {}, '"1234"');
+    expect(reply.status).toHaveBeenCalledWith(304);
+    expect(headers['Cache-Control']).toBe(versioned ? 'public, max-age=31536000, immutable' : 'no-cache');
+    expect(createReadStream).not.toHaveBeenCalled();
+  });
+
   it('streams the monitored portrait with cache and content headers', async () => {
     vi.mocked(stat).mockResolvedValue({ mtimeMs: 1234 } as never);
     vi.mocked(createReadStream).mockReturnValue({ stream: true } as never);

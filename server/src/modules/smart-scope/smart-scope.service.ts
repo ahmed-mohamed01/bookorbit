@@ -1,3 +1,6 @@
+import { filterDependsOnUserState } from './filter-depends-on-user-state';
+import { createHash } from 'node:crypto';
+import { StatsCache } from '../../common/cache/stats-cache';
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { and, type SQL } from 'drizzle-orm';
 
@@ -45,6 +48,7 @@ const SCOPE_COUNT_CONCURRENCY = 4;
  */
 @Injectable()
 export class SmartScopeService {
+  private readonly countCache = new StatsCache({ ttlMs: 60_000, maxEntries: 2000 });
   private readonly logger = new Logger(SmartScopeService.name);
 
   constructor(
@@ -113,7 +117,12 @@ export class SmartScopeService {
         timeZone,
         contentFilters: user.isSuperuser ? undefined : user.contentFilters,
       });
-      const bookCount = await this.bookReadService.countWhere(where);
+      const key = createHash('sha256')
+        .update(JSON.stringify({ filter, libraryIds, timeZone, contentFilters: user.isSuperuser ? null : user.contentFilters }))
+        .digest('hex');
+      const bookCount = filterDependsOnUserState(filter)
+        ? await this.bookReadService.countWhere(where)
+        : await this.countCache.get(String(user.id), `${smartScope.id}:${key}`, () => this.bookReadService.countWhere(where));
       return { ...response, bookCount };
     } catch (err) {
       if (!(err instanceof BadRequestException)) throw err;
@@ -176,6 +185,7 @@ export class SmartScopeService {
       isPublic: dto.isPublic ?? false,
       syncToKobo: dto.syncToKobo ?? false,
     });
+    this.countCache.clearForScope(String(user.id));
     return this.toCountedResponse(smartScope, user, smartScope.syncToKobo);
   }
 
@@ -197,6 +207,8 @@ export class SmartScopeService {
       isPublic: dto.isPublic,
       syncToKobo: dto.syncToKobo,
     });
+    this.countCache.clearForScope(String(user.id));
+    this.countCache.clearForScope(String(smartScope.userId));
     return this.toCountedResponse(updated, user, await this.resolveKoboSyncEnabled(updated, user));
   }
 
@@ -204,6 +216,8 @@ export class SmartScopeService {
     const smartScope = await this.getSmartScopeOrThrow(id);
     this.assertWriteAccess(smartScope, user, 'delete');
     await this.smartScopeRepo.delete(id, smartScope.userId);
+    this.countCache.clearForScope(String(user.id));
+    this.countCache.clearForScope(String(smartScope.userId));
   }
 
   async reorder(dto: ReorderSmartScopesDto, user: RequestUser) {

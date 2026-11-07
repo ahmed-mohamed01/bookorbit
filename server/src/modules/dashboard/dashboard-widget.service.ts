@@ -1,3 +1,4 @@
+import { BookCoverStore } from '../book-cover-store/book-cover-store.service';
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { DEFAULT_LOCALE, type Locale } from '@bookorbit/types';
 
@@ -81,6 +82,7 @@ export class DashboardWidgetService implements OnModuleInit, OnModuleDestroy {
     private readonly widgetRepo: DashboardWidgetRepository,
     private readonly libraryService: LibraryService,
     private readonly readingAttemptEvents: ReadingAttemptEventsService,
+    private readonly coverStore: BookCoverStore,
     @Optional() private readonly achievementEvents?: AchievementEventsService,
   ) {}
 
@@ -106,6 +108,12 @@ export class DashboardWidgetService implements OnModuleInit, OnModuleDestroy {
   onModuleDestroy(): void {
     this.readingAttemptEvents.removeListener(READING_ATTEMPT_CHANGED, this.onReadingAttemptChanged);
     this.achievementEvents?.removeListener(ACHIEVEMENT_EVENT_BOOK_STATUS_CHANGED, this.onBookStatusChanged);
+  }
+
+  private async withCoverVersions<T extends { bookId: number }>(books: T[]): Promise<Array<T & { coverVersion: string }>> {
+    if (books.length === 0) return [];
+    const faces = await this.coverStore.facesFor(books.map((book) => book.bookId));
+    return books.map((book) => ({ ...book, coverVersion: faces.get(book.bookId)?.coverVersion ?? '' }));
   }
 
   private getContentFilters(user: RequestUser) {
@@ -181,10 +189,11 @@ export class DashboardWidgetService implements OnModuleInit, OnModuleDestroy {
   async getCurrentlyReading(user: RequestUser): Promise<CurrentlyReadingWidgetData> {
     const accessibleLibraryIds = await this.getLibraryIds(user);
     this.readingAttemptEvents.flushPendingChanges(user.id);
-    return this.liveCache.get(this.cacheOwnerKey(user, accessibleLibraryIds), 'currently-reading', async () => {
+    const data = await this.liveCache.get(this.cacheOwnerKey(user, accessibleLibraryIds), 'currently-reading', async () => {
       const contentFilters = this.getContentFilters(user);
       return this.widgetRepo.getCurrentlyReadingBooks(user.id, accessibleLibraryIds, contentFilters);
     });
+    return { ...data, books: await this.withCoverVersions(data.books) };
   }
 
   async getReadingStreak(user: RequestUser): Promise<ReadingStreakWidgetData> {
@@ -241,20 +250,25 @@ export class DashboardWidgetService implements OnModuleInit, OnModuleDestroy {
     const accessibleLibraryIds = await this.getLibraryIds(user);
     const clock = this.readerClock(user);
     this.readingAttemptEvents.flushPendingChanges(user.id);
-    return this.liveCache.get(this.cacheOwnerKey(user, accessibleLibraryIds), this.calendarCacheKey('highlight-of-the-day', clock), async () => {
-      const contentFilters = this.getContentFilters(user);
-      const total = await this.widgetRepo.getAnnotationCount(user.id, accessibleLibraryIds, contentFilters);
-      if (total === 0) return null;
-      const offset = pickAnnotationIndex(user.id, clock.today, total);
-      return this.widgetRepo.getAnnotationByOffset(user.id, accessibleLibraryIds, offset, contentFilters);
-    });
+    const data = await this.liveCache.get(
+      this.cacheOwnerKey(user, accessibleLibraryIds),
+      this.calendarCacheKey('highlight-of-the-day', clock),
+      async () => {
+        const contentFilters = this.getContentFilters(user);
+        const total = await this.widgetRepo.getAnnotationCount(user.id, accessibleLibraryIds, contentFilters);
+        if (total === 0) return null;
+        const offset = pickAnnotationIndex(user.id, clock.today, total);
+        return this.widgetRepo.getAnnotationByOffset(user.id, accessibleLibraryIds, offset, contentFilters);
+      },
+    );
+    return data ? (await this.withCoverVersions([data]))[0] : null;
   }
 
   async getHighlights(user: RequestUser): Promise<HighlightsWidgetData> {
     const accessibleLibraryIds = await this.getLibraryIds(user);
     const clock = this.readerClock(user);
     this.readingAttemptEvents.flushPendingChanges(user.id);
-    return this.liveCache.get(this.cacheOwnerKey(user, accessibleLibraryIds), this.calendarCacheKey('highlights', clock), async () => {
+    const data = await this.liveCache.get(this.cacheOwnerKey(user, accessibleLibraryIds), this.calendarCacheKey('highlights', clock), async () => {
       const contentFilters = this.getContentFilters(user);
       const total = await this.widgetRepo.getAnnotationCount(user.id, accessibleLibraryIds, contentFilters);
       if (total === 0) return [];
@@ -276,6 +290,7 @@ export class DashboardWidgetService implements OnModuleInit, OnModuleDestroy {
       }
       return highlights;
     });
+    return this.withCoverVersions(data);
   }
 
   async getMonthlyChallenge(user: RequestUser, locale: Locale = DEFAULT_LOCALE): Promise<MonthlyChallengeWidgetData> {
@@ -367,10 +382,11 @@ export class DashboardWidgetService implements OnModuleInit, OnModuleDestroy {
   async getNeglectedGems(user: RequestUser): Promise<NeglectedGemsWidgetData> {
     const accessibleLibraryIds = await this.getLibraryIds(user);
     this.readingAttemptEvents.flushPendingChanges(user.id);
-    return this.staleCache.get(this.cacheOwnerKey(user, accessibleLibraryIds), 'neglected-gems', async () => {
+    const data = await this.staleCache.get(this.cacheOwnerKey(user, accessibleLibraryIds), 'neglected-gems', async () => {
       const contentFilters = this.getContentFilters(user);
       return this.widgetRepo.getNeglectedGems(user.id, accessibleLibraryIds, new Date(), contentFilters);
     });
+    return { ...data, gems: await this.withCoverVersions(data.gems) };
   }
 
   async getReadingDna(user: RequestUser): Promise<ReadingDnaWidgetData> {
@@ -389,10 +405,11 @@ export class DashboardWidgetService implements OnModuleInit, OnModuleDestroy {
   async getLongWait(user: RequestUser): Promise<LongWaitWidgetData | null> {
     const accessibleLibraryIds = await this.getLibraryIds(user);
     this.readingAttemptEvents.flushPendingChanges(user.id);
-    return this.staleCache.get(this.cacheOwnerKey(user, accessibleLibraryIds), 'long-wait', async () => {
+    const data = await this.staleCache.get(this.cacheOwnerKey(user, accessibleLibraryIds), 'long-wait', async () => {
       const contentFilters = this.getContentFilters(user);
       return this.widgetRepo.getLongWait(user.id, accessibleLibraryIds, new Date(), contentFilters);
     });
+    return data ? (await this.withCoverVersions([data]))[0] : null;
   }
 
   async getDiversityScore(user: RequestUser): Promise<DiversityScoreWidgetData> {

@@ -7,6 +7,8 @@ import type { ConfigType } from '@nestjs/config';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
 import { join } from 'path';
+import { cacheControlFor } from './common/utils/static-cache.utils';
+import type { FastifyReply } from 'fastify';
 import fastifyCookie from '@fastify/cookie';
 import fastifyMultipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
@@ -116,6 +118,7 @@ async function bootstrap() {
         // Nest's SWC type checker does not retain @fastify/static's reply augmentation
         // through the adapter callback, even though the plugin decorates this reply at runtime.
         const staticReply = reply as typeof reply & { sendFile(filename: string): typeof reply };
+        staticReply.header('Cache-Control', cacheControlFor('/index.html'));
         return staticReply.sendFile('index.html');
       });
     };
@@ -123,6 +126,9 @@ async function bootstrap() {
     await app.register(fastifyStatic as never, {
       root: join(__dirname, '..', 'public'),
       prefix: '/',
+      setHeaders: (reply: FastifyReply, path: string) => {
+        reply.header('Cache-Control', cacheControlFor(path));
+      },
     });
   }
 

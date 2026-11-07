@@ -317,6 +317,24 @@ describe('AuthorsController', () => {
     expect(createReadStream).toHaveBeenCalledWith('/tmp/author-2-image.png');
   });
 
+  it.each([
+    ['getThumbnail', true],
+    ['getImage', true],
+    ['getThumbnail', false],
+    ['getImage', false],
+  ] as const)('returns 304 for matching %s versioned=%s', async (method, versioned) => {
+    const { controller, authorsService } = makeController();
+    const { reply, headers } = makeReply();
+    vi.mocked(stat).mockResolvedValue({ mtimeMs: 1234.9 } as never);
+    authorsService.getThumbnailPath.mockResolvedValue('/tmp/portrait.jpg');
+    authorsService.getImagePath.mockResolvedValue('/tmp/portrait.jpg');
+    await controller[method](makeUser(), 2, reply, versioned ? { t: '1234' } : {}, '"1234"');
+    expect(reply.status).toHaveBeenCalledWith(304);
+    expect(headers['Cache-Control']).toBe(versioned ? 'public, max-age=31536000, immutable' : 'no-cache');
+    expect(headers['ETag']).toBe('"1234"');
+    expect(createReadStream).not.toHaveBeenCalled();
+  });
+
   it('returns 404 payloads when thumbnail/image files are missing', async () => {
     const { controller, authorsService } = makeController();
     const { reply: thumbnailReply } = makeReply();

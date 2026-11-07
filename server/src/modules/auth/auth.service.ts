@@ -419,14 +419,27 @@ export class AuthService {
 
   async validateSessionUser(userId: number, tokenVersion: number, authenticationMethod: AuthenticationMethodValue, sessionId?: number) {
     if (!Number.isSafeInteger(sessionId) || !sessionId || sessionId < 1) throw new UnauthorizedException();
-    if (!(await this.sessionRepo.isActive(sessionId, userId, tokenVersion, authenticationMethod))) throw new UnauthorizedException();
-    const user = await this.validateUser(userId, tokenVersion, authenticationMethod);
-    return { ...user, sessionId };
+    const [active, user] = await Promise.all([
+      this.sessionRepo.isActive(sessionId, userId, tokenVersion, authenticationMethod),
+      this.userService.findByIdWithPermissions(userId),
+    ]);
+    if (!active) throw new UnauthorizedException();
+    if (!this.isAuthenticationMethodAllowed(authenticationMethod)) throw new UnauthorizedException();
+    const validated = await this.validateFetchedUser(user, tokenVersion, authenticationMethod);
+    return { ...validated, sessionId };
   }
 
   async validateUser(userId: number, tokenVersion: number, authenticationMethod: AuthenticationMethodValue) {
     if (!this.isAuthenticationMethodAllowed(authenticationMethod)) throw new UnauthorizedException();
     const user = await this.userService.findByIdWithPermissions(userId);
+    return this.validateFetchedUser(user, tokenVersion, authenticationMethod);
+  }
+
+  private async validateFetchedUser(
+    user: Awaited<ReturnType<UserService['findByIdWithPermissions']>>,
+    tokenVersion: number,
+    authenticationMethod: AuthenticationMethodValue,
+  ) {
     if (!user || !user.active) throw new UnauthorizedException();
     // Before the shared-link lookup, so a stale token is refused without a second query.
     if (user.tokenVersion !== tokenVersion) throw new UnauthorizedException();

@@ -1,3 +1,4 @@
+import { MonitoredStoreService } from './monitored-store.service';
 import { Permission } from '@bookorbit/types';
 import {
   BadRequestException,
@@ -95,7 +96,7 @@ type ServiceDeps = {
 function service(store: Record<string, unknown>, bookRequests: Record<string, unknown> = {}, deps: ServiceDeps = {}): MonitoredService {
   const autoRequests = deps.autoRequests ?? new MonitoredAutoRequestService(bookRequests as never, store as never);
   return new MonitoredService(
-    store as never,
+    { invalidateSummary: vi.fn(), ...store } as never,
     // Every read path asks the catalog to heal stale availability first, so the collaborator has to
     // be there even for tests that are not about healing.
     { recomputeWorkAvailability: vi.fn().mockResolvedValue(new Set<string>()), ...deps.catalog } as never,
@@ -695,6 +696,64 @@ describe('MonitoredService', () => {
     const store = { getWorkWithMonitor: vi.fn().mockResolvedValue(null) };
 
     await expect(call(service(store))).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it.each(['set', 'clear', 'refresh'] as const)('invalidates after %s when the reread throws', async (operation) => {
+    const getWorkWithMonitor = vi.fn().mockResolvedValueOnce({ monitor: author(), work: work() }).mockRejectedValueOnce(new Error('reread failed'));
+    const invalidateSummary = vi.fn();
+    const instance = service(
+      { getWorkWithMonitor, invalidateSummary },
+      {},
+      {
+        releaseProbe: {
+          setUserReleaseDate: vi.fn().mockResolvedValue(0),
+          clearUserReleaseDate: vi.fn().mockResolvedValue(true),
+          refreshWork: vi.fn().mockResolvedValue(undefined),
+        },
+      },
+    );
+    const pending =
+      operation === 'refresh'
+        ? instance.refreshWorkReleaseDates(viewer, work().id)
+        : instance.setWorkReleaseDate(viewer, work().id, 'ebook', operation === 'clear' ? null : '2027-01-02');
+    await expect(pending).rejects.toThrow('reread failed');
+    expect(invalidateSummary).toHaveBeenCalledExactlyOnceWith(author().ownerUserId);
+  });
+
+  it.each(['set', 'clear', 'refresh'] as const)('refreshes a cached summary after a release date %s', async (operation) => {
+    const store = new MonitoredStoreService({} as never, {} as never);
+    let released = 0;
+    const load = vi.spyOn(store as never, 'loadSummary').mockImplementation(() => Promise.resolve({ releases: released }) as never);
+    const read = () => store.countSummary(viewer, '2026-01-01', '2027-12-31', '2026-11-06');
+    const instance = service(
+      {
+        getWorkWithMonitor: vi.fn().mockResolvedValue({ monitor: author(), work: work() }),
+        invalidateSummary: store.invalidateSummary.bind(store),
+      },
+      {},
+      {
+        releaseProbe: {
+          setUserReleaseDate: vi.fn().mockImplementation(() => {
+            released = 1;
+            return Promise.resolve(0);
+          }),
+          clearUserReleaseDate: vi.fn().mockImplementation(() => {
+            released = 1;
+            return Promise.resolve(true);
+          }),
+          refreshWork: vi.fn().mockImplementation(() => {
+            released = 1;
+            return Promise.resolve();
+          }),
+        },
+      },
+    );
+    expect(await read()).toEqual({ releases: 0 });
+    expect(await read()).toEqual({ releases: 0 });
+    if (operation === 'refresh') await instance.refreshWorkReleaseDates(viewer, work().id);
+    else await instance.setWorkReleaseDate(viewer, work().id, 'ebook', operation === 'clear' ? null : '2027-01-02');
+    expect(await read()).toEqual({ releases: 1 });
+    expect(load).toHaveBeenCalledTimes(2);
   });
 
   it('stores a chosen date against the work and its monitor, then returns the fresh work', async () => {

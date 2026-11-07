@@ -587,6 +587,7 @@ describe('MonitoredStoreService catalog overlay', () => {
   it('reapplies the release overlay after the source-work rewrite', async () => {
     const tracked = catalogDb();
     const store = new MonitoredStoreService(tracked.db as never, {} as never);
+    vi.spyOn(store as never, 'ownerOf').mockResolvedValue(1 as never);
     const row = workRow({ matchedBookId: null, matchedEbookBookId: null, matchedAudioBookId: null, ownedFormats: [] });
 
     await store.saveCatalog('monitor-1', {
@@ -612,6 +613,7 @@ describe('MonitoredStoreService catalog overlay', () => {
   it('records request ids before pruning works and restores them after the source-work rewrite', async () => {
     const tracked = catalogDb();
     const store = new MonitoredStoreService(tracked.db as never, {} as never);
+    vi.spyOn(store as never, 'ownerOf').mockResolvedValue(1 as never);
     const row = workRow({ matchedBookId: null, matchedEbookBookId: null, matchedAudioBookId: null, ownedFormats: [] });
 
     await store.saveCatalog('monitor-1', {
@@ -643,6 +645,7 @@ describe('MonitoredStoreService catalog overlay', () => {
   it('enrols release probes after reapplying the overlay in the catalog transaction', async () => {
     const tracked = catalogDb();
     const store = new MonitoredStoreService(tracked.db as never, {} as never);
+    vi.spyOn(store as never, 'ownerOf').mockResolvedValue(1 as never);
     const row = workRow({ matchedBookId: null, matchedEbookBookId: null, matchedAudioBookId: null, ownedFormats: [] });
 
     await store.saveCatalog(
@@ -677,6 +680,7 @@ describe('MonitoredStoreService catalog overlay', () => {
   it('only records request ids and choices when clearing a null catalog', async () => {
     const tracked = catalogDb();
     const store = new MonitoredStoreService(tracked.db as never, {} as never);
+    vi.spyOn(store as never, 'ownerOf').mockResolvedValue(1 as never);
 
     await store.saveCatalog('monitor-1', null);
 
@@ -2275,5 +2279,117 @@ describe('watchlist pagination limits', () => {
     const service = new MonitoredStoreService(db as never);
     await expect(service.findOwnedAuthorIdsPage({} as never, 501, 100)).rejects.toThrow('pagination window is too deep');
     expect(db.select).not.toHaveBeenCalled();
+  });
+});
+
+describe('MonitoredStoreService summary cache', () => {
+  it('uses one narrow owner lookup before the match update', async () => {
+    const query = {
+      from: vi.fn().mockReturnThis(),
+      innerJoin: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue([{ ownerUserId: 1 }]),
+    };
+    const db = {
+      select: vi.fn().mockReturnValue(query),
+      update: vi.fn().mockReturnThis(),
+      set: vi.fn().mockReturnThis(),
+      where: vi.fn().mockResolvedValue(undefined),
+    };
+    const store = new MonitoredStoreService(db as never, {} as never);
+    const composed = vi.spyOn(store, 'getWorkWithMonitor');
+    await store.updateWorkMatch('work-1', {} as never);
+    expect(composed).not.toHaveBeenCalled();
+    expect(db.select).toHaveBeenCalledTimes(1);
+    expect(Object.keys(db.select.mock.calls[0]![0])).toEqual(['ownerUserId']);
+    expect(query.limit).toHaveBeenCalledWith(1);
+    expect(db.update).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['author', 'book'] as const)('invalidates both owners on an actor-less %s transfer', async (kind) => {
+    const query = { from: vi.fn().mockReturnThis(), where: vi.fn().mockReturnThis(), limit: vi.fn().mockResolvedValue([{ ownerUserId: 1 }]) };
+    const db = {
+      select: vi.fn().mockReturnValue(query),
+      transaction: vi.fn().mockResolvedValue(undefined),
+      insert: vi.fn().mockReturnThis(),
+      values: vi.fn().mockReturnThis(),
+      onConflictDoUpdate: vi.fn().mockResolvedValue(undefined),
+    };
+    const store = new MonitoredStoreService(db as never, {} as never);
+    const load = vi.spyOn(store as never, 'loadSummary').mockResolvedValue({ authors: 1 } as never);
+    const read = (id: number) => store.countSummary({ id, isSuperuser: false } as RequestUser, '2026-01-01', '2027-01-01', '2026-11-06');
+    await read(1);
+    await read(2);
+    await read(3);
+    if (kind === 'author') await store.upsertAuthor({ id: 'moving', ownerUserId: 2 } as never);
+    else await store.upsertBook({ id: 'moving', ownerUserId: 2 } as never);
+    await read(3);
+    expect(load).toHaveBeenCalledTimes(3);
+    await read(1);
+    await read(2);
+    expect(load).toHaveBeenCalledTimes(5);
+  });
+
+  it('keeps another owner cached and reads in flight until the write finishes', async () => {
+    let finish!: () => void;
+    const write = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const db = { insert: vi.fn().mockReturnThis(), values: vi.fn().mockReturnThis(), onConflictDoUpdate: vi.fn().mockReturnValue(write) };
+    const store = new MonitoredStoreService(db as never, {} as never);
+    const load = vi.spyOn(store as never, 'loadSummary').mockResolvedValue({ authors: 1 } as never);
+    const read = (id: number) => store.countSummary({ id, isSuperuser: false } as RequestUser, '2026-01-01', '2027-01-01', '2026-11-06');
+    await read(1);
+    await read(2);
+    const pending = store.upsertBook({ ownerUserId: 1 } as never);
+    await read(1);
+    await read(2);
+    expect(load).toHaveBeenCalledTimes(2);
+    finish();
+    await pending;
+    await read(2);
+    expect(load).toHaveBeenCalledTimes(2);
+    await read(1);
+    expect(load).toHaveBeenCalledTimes(3);
+  });
+
+  it('invalidates only the catalog owner after a background catalog save', async () => {
+    const db = { transaction: vi.fn().mockResolvedValue(undefined) };
+    const store = new MonitoredStoreService(db as never, {} as never);
+    vi.spyOn(store as never, 'ownerOf').mockResolvedValue(1 as never);
+    const load = vi.spyOn(store as never, 'loadSummary').mockResolvedValue({ authors: 1 } as never);
+    const read = (id: number) => store.countSummary({ id, isSuperuser: false } as RequestUser, '2026-01-01', '2027-01-01', '2026-11-06');
+    await read(1);
+    await read(2);
+    await store.saveCatalog('monitor-1', null);
+    await read(2);
+    expect(load).toHaveBeenCalledTimes(2);
+    await read(1);
+    expect(load).toHaveBeenCalledTimes(3);
+  });
+
+  it('isolates users and dates, expires counts, and clears counts after match writes', async () => {
+    const db = { update: vi.fn().mockReturnThis(), set: vi.fn().mockReturnThis(), where: vi.fn().mockResolvedValue(undefined) };
+    const store = new MonitoredStoreService(db as never, {} as never);
+    vi.spyOn(store as never, 'ownerOf').mockResolvedValue(null as never);
+    const load = vi.spyOn(store as never, 'loadSummary').mockResolvedValue({ authors: 1 } as never);
+    const viewer = { id: 1, isSuperuser: false } as RequestUser;
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(100_000);
+    const read = (user = viewer, today = '2026-11-06') => store.countSummary(user, '2026-01-01', '2027-01-01', today);
+    try {
+      await Promise.all([read(), read()]);
+      expect(load).toHaveBeenCalledTimes(1);
+      await read({ ...viewer, id: 2 });
+      await read(viewer, '2026-11-07');
+      expect(load).toHaveBeenCalledTimes(3);
+      clock.mockReturnValue(160_001);
+      await read();
+      expect(load).toHaveBeenCalledTimes(4);
+      await store.updateWorkMatch('work-1', {} as never);
+      await read();
+      expect(load).toHaveBeenCalledTimes(5);
+    } finally {
+      clock.mockRestore();
+    }
   });
 });

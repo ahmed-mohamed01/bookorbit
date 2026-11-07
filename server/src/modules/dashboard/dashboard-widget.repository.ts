@@ -6,7 +6,6 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type {
   ContentFilterRules,
   CurrentlyReadingBook,
-  CurrentlyReadingWidgetData,
   HighlightOfTheDayWidgetData,
   LibraryOverviewWidgetData,
   LongWaitWidgetData,
@@ -160,7 +159,7 @@ export class DashboardWidgetRepository {
     userId: number,
     accessibleLibraryIds: number[],
     contentFilters?: ContentFilterRules,
-  ): Promise<CurrentlyReadingWidgetData> {
+  ): Promise<{ books: Omit<CurrentlyReadingBook, 'coverVersion'>[] }> {
     if (accessibleLibraryIds.length === 0) return { books: [] };
 
     const cfClauses = this.getContentFilterClauses(contentFilters);
@@ -252,7 +251,7 @@ export class DashboardWidgetRepository {
       filesByBookId.set(row.bookId, list);
     }
 
-    const result: CurrentlyReadingBook[] = rows.map((row) => ({
+    const result: Omit<CurrentlyReadingBook, 'coverVersion'>[] = rows.map((row) => ({
       bookId: row.bookId,
       title: row.title,
       authors: authorsByBookId.get(row.bookId) ?? [],
@@ -409,7 +408,7 @@ export class DashboardWidgetRepository {
     accessibleLibraryIds: number[],
     offset: number,
     contentFilters?: ContentFilterRules,
-  ): Promise<HighlightOfTheDayWidgetData | null> {
+  ): Promise<Omit<HighlightOfTheDayWidgetData, 'coverVersion'> | null> {
     if (accessibleLibraryIds.length === 0) return null;
 
     const cfClauses = this.getContentFilterClauses(contentFilters);
@@ -451,7 +450,7 @@ export class DashboardWidgetRepository {
     excludedBookId: number,
     limit: number,
     contentFilters?: ContentFilterRules,
-  ): Promise<HighlightOfTheDayWidgetData[]> {
+  ): Promise<Omit<HighlightOfTheDayWidgetData, 'coverVersion'>[]> {
     if (accessibleLibraryIds.length === 0 || limit <= 0) return [];
 
     const cfClauses = this.getContentFilterClauses(contentFilters);
@@ -842,7 +841,7 @@ export class DashboardWidgetRepository {
     accessibleLibraryIds: number[],
     today: Date,
     contentFilters?: ContentFilterRules,
-  ): Promise<NeglectedGemsWidgetData> {
+  ): Promise<{ gems: Omit<NeglectedGemsWidgetData['gems'][number], 'coverVersion'>[] }> {
     if (accessibleLibraryIds.length === 0) return { gems: [] };
 
     const cfClauses = this.getContentFilterClauses(contentFilters);
@@ -1032,7 +1031,7 @@ export class DashboardWidgetRepository {
     accessibleLibraryIds: number[],
     today: Date,
     contentFilters?: ContentFilterRules,
-  ): Promise<LongWaitWidgetData | null> {
+  ): Promise<Omit<LongWaitWidgetData, 'coverVersion'> | null> {
     if (accessibleLibraryIds.length === 0) return null;
 
     const cfClauses = this.getContentFilterClauses(contentFilters);

@@ -651,6 +651,57 @@ describe('AuthService', () => {
     });
   });
 
+  describe('validateSessionUser', () => {
+    it.each(['password', 'legacy'] as const)('rejects disallowed %s authentication for an active session', async (method) => {
+      const { service, userService, sessionRepo, authenticationPolicy } = makeService();
+      sessionRepo.isActive.mockResolvedValue(true);
+      userService.findByIdWithPermissions.mockResolvedValue(makeFullUser());
+      authenticationPolicy.isPasswordLoginEnabled.mockReturnValue(false);
+      await expect(service.validateSessionUser(1, 1, method, 5)).rejects.toBeInstanceOf(UnauthorizedException);
+    });
+
+    it('starts the session and user reads together', async () => {
+      const { service, userService, sessionRepo } = makeService();
+      let resolveActive!: (active: boolean) => void;
+      sessionRepo.isActive.mockImplementation(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolveActive = resolve;
+          }),
+      );
+      userService.findByIdWithPermissions.mockResolvedValue(makeFullUser());
+      const pending = service.validateSessionUser(1, 1, 'password', 5);
+      expect(userService.findByIdWithPermissions).toHaveBeenCalledWith(1);
+      resolveActive(true);
+      await expect(pending).resolves.toMatchObject({ id: 1, sessionId: 5, authenticationMethod: 'password' });
+    });
+
+    it.each([
+      { active: false },
+      { active: true, user: null },
+      { active: true, user: { active: false } },
+      { active: true, user: { tokenVersion: 2 } },
+    ])('rejects invalid session or user state: %j', async ({ active, user }) => {
+      const { service, userService, sessionRepo } = makeService();
+      sessionRepo.isActive.mockResolvedValue(active);
+      userService.findByIdWithPermissions.mockResolvedValue(user === null ? null : makeFullUser(user));
+      await expect(service.validateSessionUser(1, 1, 'password', 5)).rejects.toBeInstanceOf(UnauthorizedException);
+    });
+  });
+
+  it.each(['token', 'session'] as const)('checks token version before shared-link access for %s authentication', async (path) => {
+    const { service, userService, sessionRepo, magicLinkRepo } = makeService();
+    sessionRepo.isActive.mockResolvedValue(true);
+    userService.findByIdWithPermissions.mockResolvedValue(makeFullUser({ tokenVersion: 2, provisioningMethod: 'shared' }));
+    const call = () => (path === 'session' ? service.validateSessionUser(1, 1, 'password', 5) : service.validateUser(1, 1, 'password'));
+    await expect(call()).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(magicLinkRepo.hasActiveByUserId).not.toHaveBeenCalled();
+    userService.findByIdWithPermissions.mockResolvedValue(makeFullUser({ tokenVersion: 1, provisioningMethod: 'shared' }));
+    magicLinkRepo.hasActiveByUserId.mockResolvedValue(false);
+    await expect(call()).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(magicLinkRepo.hasActiveByUserId).toHaveBeenCalledWith(1);
+  });
+
   describe('validateUser', () => {
     it('rejects password and legacy access tokens in SSO-only mode before loading the user', async () => {
       const { service, userService, authenticationPolicy } = makeService();

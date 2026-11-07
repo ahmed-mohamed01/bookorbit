@@ -1,3 +1,4 @@
+import type { Mocked } from 'vitest';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SERVER_FEATURES } from '@bookorbit/types';
@@ -11,20 +12,20 @@ const identity = {
   getIdentity: vi.fn().mockResolvedValue({ product: 'bookorbit', protocolVersion: 1, instanceId: '538a27ca-87ef-47bc-a195-13c8597c3529' }),
 } as unknown as ServerIdentityService;
 
-function makeConfig(version = 'v1.2.3'): jest.Mocked<ConfigService> {
+function makeConfig(version = 'v1.2.3'): Mocked<ConfigService> {
   return {
     get: vi.fn().mockImplementation((key: string) => {
       if (key === 'app.version') return version;
       return undefined;
     }),
-  } as unknown as jest.Mocked<ConfigService>;
+  } as unknown as Mocked<ConfigService>;
 }
 
-function makeAppSettings(enabled = true): jest.Mocked<AppSettingsService> {
+function makeAppSettings(enabled = true): Mocked<AppSettingsService> {
   return {
     isUpdateCheckEnabled: vi.fn().mockResolvedValue(enabled),
     getMaxUploadSizeMb: vi.fn().mockResolvedValue(500),
-  } as unknown as jest.Mocked<AppSettingsService>;
+  } as unknown as Mocked<AppSettingsService>;
 }
 
 function makeGithubResponse(tagName: string, status = 200): Response {
@@ -46,6 +47,22 @@ describe('AppInfoService', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('returns cached info while one background update check is pending', async () => {
+    let resolveFetch!: (response: Response) => void;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+    const service = new AppInfoService(makeConfig(), makeAppSettings(), identity);
+    expect((await service.getAppInfo()).updateAvailable).toBeNull();
+    expect((await service.getAppInfo()).updateAvailable).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    resolveFetch(makeGithubResponse('v2.0.0'));
+    await vi.waitFor(async () => expect((await service.getAppInfo()).latestVersion).toBe('v2.0.0'));
   });
 
   describe('getAppInfo', () => {

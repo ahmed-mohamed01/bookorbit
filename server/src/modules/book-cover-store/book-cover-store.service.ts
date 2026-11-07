@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, Logger, NotFoundExc
 import { ConfigService } from '@nestjs/config';
 import {
   COVER_MEDIA,
+  isContentBookFile,
   isAudioFormat,
   type BookCard,
   type BookCoverSlot,
@@ -25,6 +26,7 @@ import {
   isCustomBookCoverFileName,
   isExtractedBookCoverFileName,
 } from '../../common/book-cover-storage';
+import { rankFilesByFormatPriority } from '../../common/utils/primary-file-selection.utils';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { generateThumbnail, imageExt, normalizeProgressiveJpeg } from '../metadata/lib/cover';
 import { BookCoverEventsService } from './book-cover-events.service';
@@ -492,7 +494,7 @@ export class BookCoverStore {
     for (const card of cards) {
       const face = this.faceOf({
         libraryCoverAspectRatio: card.coverAspectRatio,
-        primaryFormat: card.files.find((file) => file.role === 'primary')?.format,
+        primaryFormat: (card.files.find((file) => file.role === 'primary') ?? card.files.find(isContentBookFile))?.format,
         media: getCoverMediaFromDatabaseFiles(
           card.files.map((file) => ({ format: file.format, role: file.role, mediaOverlayAvailable: file.mediaOverlay?.available === true })),
         ),
@@ -707,8 +709,14 @@ export class BookCoverStore {
     return primary?.format ? this.formatMedium(primary.format) : 'ebook';
   }
 
-  private primaryFile(context: Pick<BookCoverContext, 'files' | 'primaryFileId'>): BookCoverContext['files'][number] | undefined {
-    return context.files.find((file) => file.id === context.primaryFileId) ?? context.files.find((file) => this.isContent(file.role));
+  private primaryFile(context: Pick<BookCoverContext, 'files' | 'primaryFileId' | 'formatPriority'>): BookCoverContext['files'][number] | undefined {
+    return (
+      context.files.find((file) => file.id === context.primaryFileId) ??
+      rankFilesByFormatPriority(
+        context.files.map((file) => ({ ...file, sizeBytes: null })),
+        context.formatPriority,
+      ).find(isContentBookFile)
+    );
   }
 
   private isContent(role: string): boolean {
