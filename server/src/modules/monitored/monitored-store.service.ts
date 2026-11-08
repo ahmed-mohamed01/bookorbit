@@ -1359,27 +1359,6 @@ export class MonitoredStoreService {
     return result;
   }
 
-  /**
-   * The viewer's own work whose stored match is the given library book. The three match columns each
-   * carry an index, so this is a bitmap-or over them filtered by the owner, never a catalog scan.
-   */
-  async findWorkIdByMatchedBook(bookId: number, viewer: RequestUser): Promise<string | null> {
-    const works = schema.authorCatalogWorks;
-    const [row] = await this.db
-      .select({ id: works.id })
-      .from(works)
-      .innerJoin(schema.monitoredAuthors, eq(schema.monitoredAuthors.id, works.monitorAuthorId))
-      .where(
-        and(
-          this.readScope(viewer, schema.monitoredAuthors.ownerUserId),
-          or(eq(works.matchedBookId, bookId), eq(works.matchedEbookBookId, bookId), eq(works.matchedAudioBookId, bookId)),
-        ),
-      )
-      .orderBy(asc(works.id))
-      .limit(1);
-    return row?.id ?? null;
-  }
-
   async updateWorkUserState(workId: string, patch: WorkStatePatch, actor: RequestUser): Promise<MonitoredWork> {
     return this.invalidatingSummary(actor.id, async () => {
       await this.assertWorkWritable(workId, actor);

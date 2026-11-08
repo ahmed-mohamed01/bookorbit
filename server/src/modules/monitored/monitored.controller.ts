@@ -37,12 +37,7 @@ import {
   HardcoverSearchQueryDto,
   MonitoredMatchHoldersQueryDto,
 } from './dto/monitored.dto';
-import {
-  MonitoredBookParamsDto,
-  MonitoredWorkFormatParamsDto,
-  MonitoredWorkParamsDto,
-  SetMonitoredReleaseDateDto,
-} from './dto/monitored-release-date.dto';
+import { MonitoredWorkFormatParamsDto, MonitoredWorkParamsDto, SetMonitoredReleaseDateDto } from './dto/monitored-release-date.dto';
 import { SetMonitoredWorkMatchDto } from './dto/monitored-work-match.dto';
 import { MonitoredCoverService } from './monitored-cover.service';
 import { MonitoredExceptionFilter } from './monitored-exception.filter';
@@ -221,11 +216,6 @@ export class MonitoredController {
   @Get('works/class-counts')
   getClassCounts(@CurrentUser() user: RequestUser) {
     return this.service.countWorkClasses(user);
-  }
-
-  @Get('works/by-book/:bookId')
-  getWorkByBook(@Param() params: MonitoredBookParamsDto, @CurrentUser() user: RequestUser) {
-    return this.service.getWorkByBook(user, params.bookId);
   }
 
   @Post('works/bulk-request')

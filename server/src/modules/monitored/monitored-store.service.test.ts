@@ -1604,37 +1604,6 @@ describe('MonitoredStoreService release detection', () => {
   });
 });
 
-describe('MonitoredStoreService work by library book', () => {
-  function lookupDb(rows: unknown[]) {
-    const builder = {} as Record<string, ReturnType<typeof vi.fn>>;
-    for (const method of ['from', 'innerJoin', 'where', 'orderBy']) builder[method] = vi.fn(() => builder);
-    builder.limit = vi.fn(() => Promise.resolve(rows));
-    return { db: { select: vi.fn(() => builder) }, builder };
-  }
-
-  it('looks the book up through the three indexed match columns, scoped to the viewer and bounded to one row', async () => {
-    const { db, builder } = lookupDb([{ id: 'monitor-1:hardcover:1' }]);
-    const store = new MonitoredStoreService(db as never, {} as never);
-
-    await expect(store.findWorkIdByMatchedBook(42, { id: 5, isSuperuser: true } as RequestUser)).resolves.toBe('monitor-1:hardcover:1');
-
-    const query = new PgDialect().sqlToQuery(builder.where.mock.calls[0]?.[0] as SQL);
-    expect(query.sql).toContain('"monitored_authors"."owner_user_id" = $1');
-    expect(query.sql).toContain('"author_catalog_works"."matched_book_id" = $2');
-    expect(query.sql).toContain('"author_catalog_works"."matched_ebook_book_id" = $3');
-    expect(query.sql).toContain('"author_catalog_works"."matched_audio_book_id" = $4');
-    expect(query.params).toEqual([5, 42, 42, 42]);
-    expect(builder.limit).toHaveBeenCalledWith(1);
-  });
-
-  it('returns null when nothing of the viewer matches the book', async () => {
-    const { db } = lookupDb([]);
-    const store = new MonitoredStoreService(db as never, {} as never);
-
-    await expect(store.findWorkIdByMatchedBook(42, { id: 5, isSuperuser: false } as RequestUser)).resolves.toBeNull();
-  });
-});
-
 describe('MonitoredStoreService catalog search', () => {
   function searchSelectDb(results: unknown[][]) {
     const builders: Array<Record<string, ReturnType<typeof vi.fn>>> = [];

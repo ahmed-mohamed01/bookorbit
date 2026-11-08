@@ -37,7 +37,6 @@ import type {
   MonitoredAuthorItem,
   MonitoredAuthorSearchResult,
   MonitoredBookItem,
-  MonitoredBookWork,
   MonitoredBulkRequestPayload,
   MonitoredBulkRequestResponse,
   MonitoredBulkRequestResult,
@@ -809,17 +808,6 @@ export class MonitoredService {
     this.store.invalidateSummary(entry.monitor.ownerUserId);
     const work = await this.readWork(workId, user);
     return work;
-  }
-
-  async getWorkByBook(user: RequestUser, bookId: number): Promise<MonitoredBookWork> {
-    const workId = await this.store.findWorkIdByMatchedBook(bookId, user);
-    const entry = workId ? await this.store.getWorkWithMonitor(workId, user) : null;
-    if (!entry) throw new NotFoundException('No monitored work for this book');
-    return {
-      work: entry.work,
-      monitorAuthorId: entry.monitor.id,
-      authorModes: authorFormatModes(entry.monitor),
-    };
   }
 
   private async readWork(workId: string, user: RequestUser): Promise<MonitoredWork> {

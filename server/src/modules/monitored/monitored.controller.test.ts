@@ -96,17 +96,6 @@ describe('MonitoredController', () => {
     expect(setMonitoredSettings).toHaveBeenCalledWith(update);
   });
 
-  it('reads the work behind a library book for the caller without a permission gate', async () => {
-    const entry = { work: { id: 'w1' }, monitorAuthorId: 'm1', authorModes: { ebook: 'notify', audiobook: 'off' } };
-    const getWorkByBook = vi.fn().mockResolvedValue(entry);
-    const controller = await makeController({ getWorkByBook });
-    const user = { id: 3 } as RequestUser;
-
-    await expect(controller.getWorkByBook({ bookId: 11 }, user)).resolves.toBe(entry);
-    expect(getWorkByBook).toHaveBeenCalledWith(user, 11);
-    expect(Reflect.getMetadata(PERMISSION_KEY, MonitoredController.prototype.getWorkByBook)).toBeUndefined();
-  });
-
   it('delegates bulk work requests and updates with the current user and dto', async () => {
     const bulkRequestWorks = vi.fn().mockResolvedValue({ results: [], works: [] });
     const bulkUpdateWorks = vi.fn().mockResolvedValue({ works: [], failed: [] });

@@ -13,7 +13,6 @@ import type {
   MonitoredAuthorDetail,
   MonitoredAuthorItem,
   MonitoredAuthorSearchResult,
-  MonitoredBookWork,
   MonitoredBulkRequestPayload,
   MonitoredBulkRequestResponse,
   MonitoredBulkUpdatePayload,
@@ -59,13 +58,6 @@ async function assertOk(response: Response): Promise<void> {
 
 export async function fetchMonitoredSummary(): Promise<MonitoredSummary> {
   return readJson(await api(BASE_PATH))
-}
-
-/** The viewer's watchlist entry for a library book, or null when the book is not on it. */
-export async function fetchMonitoredBookWork(bookId: number): Promise<MonitoredBookWork | null> {
-  const response = await api(`${BASE_PATH}/works/by-book/${bookId}`)
-  if (response.status === 404) return null
-  return readJson(response)
 }
 
 function pageQuery(params: Record<string, string | number | undefined>): string {

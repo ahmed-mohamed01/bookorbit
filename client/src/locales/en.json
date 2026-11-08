@@ -10548,13 +10548,7 @@
       "open": "Open",
       "viewRequest": "View request",
       "submittedAudiobook": "Requested. The audiobook will join this book when it arrives",
-      "submittedEbook": "Requested. The e-book will join this book when it arrives",
-      "upcoming": "{format} out {date}",
-      "upcomingYear": "{format} out in {year}",
-      "notAnnounced": "{format} not announced yet",
-      "onWatchlist": "On your watchlist",
-      "onWatchlistAuto": "On your watchlist · requested automatically on release",
-      "onWatchlistNotify": "On your watchlist · you get a notification on release"
+      "submittedEbook": "Requested. The e-book will join this book when it arrives"
     }
   },
   "collection": {

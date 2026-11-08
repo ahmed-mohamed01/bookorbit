@@ -1893,46 +1893,6 @@ describe('MonitoredService availability healing', () => {
   });
 });
 
-describe('MonitoredService work by library book', () => {
-  it('returns the matched work with its monitor id and the author modes', async () => {
-    const matched = work({ matchedBookIds: { ebook: 11 } });
-    const monitor = author({
-      formats: {
-        ebook: { mode: 'auto-all', libraryId: null, folderId: null },
-        audiobook: { mode: 'notify', libraryId: null, folderId: null },
-      },
-    });
-    const store = {
-      findWorkIdByMatchedBook: vi.fn().mockResolvedValue(matched.id),
-      getWorkWithMonitor: vi.fn().mockResolvedValue({ monitor, work: matched }),
-    };
-
-    await expect(service(store).getWorkByBook(viewer, 11)).resolves.toEqual({
-      work: matched,
-      monitorAuthorId: 'monitor-1',
-      authorModes: { ebook: 'auto-all', audiobook: 'notify' },
-    });
-    expect(store.findWorkIdByMatchedBook).toHaveBeenCalledWith(11, viewer);
-    expect(store.getWorkWithMonitor).toHaveBeenCalledWith(matched.id, viewer);
-  });
-
-  it('answers 404 when no work matches the book', async () => {
-    const store = { findWorkIdByMatchedBook: vi.fn().mockResolvedValue(null), getWorkWithMonitor: vi.fn() };
-
-    await expect(service(store).getWorkByBook(viewer, 11)).rejects.toBeInstanceOf(NotFoundException);
-    expect(store.getWorkWithMonitor).not.toHaveBeenCalled();
-  });
-
-  it('answers 404 when the viewer cannot read the matched work, so another user monitor data never leaks', async () => {
-    const store = {
-      findWorkIdByMatchedBook: vi.fn().mockResolvedValue('monitor-9:hardcover:1'),
-      getWorkWithMonitor: vi.fn().mockResolvedValue(null),
-    };
-
-    await expect(service(store).getWorkByBook(viewer, 11)).rejects.toBeInstanceOf(NotFoundException);
-  });
-});
-
 describe('MonitoredService.setWorkMatch', () => {
   const target = () => work({ providerWorkIds: { hardcover: '77' } });
 

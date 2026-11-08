@@ -658,13 +658,6 @@ export interface MonitoredReleaseItem {
   authorLastRefreshedAt?: string | null;
 }
 
-/** The watchlist entry behind a library book: the work, its monitor and how the author handles each format. */
-export interface MonitoredBookWork {
-  work: MonitoredWork;
-  monitorAuthorId: string;
-  authorModes: Record<MonitoredFormat, MonitorMode>;
-}
-
 /**
  * How many cards the release cards view draws. It merges a work's ebook and audiobook into one card,
  * once per Released/Upcoming section when grouped by status and once overall when ungrouped.
