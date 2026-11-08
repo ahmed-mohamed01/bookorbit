@@ -9,6 +9,7 @@ import { useBookRequestSummary } from '@/features/book-requests/composables/useB
 import { useBookRequestVisibility } from '@/features/book-requests/composables/useBookRequestVisibility'
 import { useCollections } from '@/features/collection/composables/useCollections'
 import { useLibraries } from '@/features/library/composables/useLibraries'
+import { useLibraryMergeRefresh } from '@/features/library/composables/useLibraryMergeRefresh'
 import { useLibraryScanRefresh } from '@/features/library/composables/useLibraryScanRefresh'
 import { useLibraryUploadEvents } from '@/features/library/composables/useLibraryUploadEvents'
 import { useMonitoredSummary } from '@/features/monitored/composables/useMonitoredSummary'
@@ -36,6 +37,7 @@ export function useSidebarDataSync() {
   const { onLibraryUploadCompleted } = useLibraryUploadEvents()
   const requestProgress = hasPermission(Permission.BookRequestAccess) ? useBookRequestProgress() : null
   useLibraryScanRefresh()
+  useLibraryMergeRefresh()
 
   const outstandingRequestTotal = computed(() =>
     hasPermission(Permission.ManageBookRequests) ? (bookRequestSummary.value?.active ?? 0) : (bookRequestSummary.value?.mine ?? 0),

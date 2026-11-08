@@ -104,6 +104,7 @@ function setup(
     railEnabled?: boolean
     enabled?: boolean
     defaultSort?: SortSpec[]
+    collapseLinked?: boolean
   } = {},
 ) {
   const scopeId = ref<number | null>(options.scope === undefined ? 1 : options.scope)
@@ -127,6 +128,7 @@ function setup(
       q,
       enabled,
       defaultSort: options.defaultSort,
+      collapseLinked: options.collapseLinked,
     }),
   )!
   return { win, scopeId, viewMode, railEnabled, enabled, collapsePreference, selectionMode, collapseEnabled, q }
@@ -300,6 +302,22 @@ describe('useBookViewWindow', () => {
       q: 'dune',
       filter,
     })
+  })
+
+  it('asks the server to collapse linked books only when the view opts in', async () => {
+    mockApi(120)
+    const collapsed = setup({ collapseLinked: true })
+    await flush()
+
+    expect(collapsed.win.query.value).toMatchObject({ collapseLinked: true })
+    expect(listRequestBodies()[0]).toMatchObject({ collapseLinked: true, pagination: { page: 0 } })
+
+    fetchMock.mockClear()
+    const plain = setup()
+    await flush()
+
+    expect(plain.win.query.value).not.toHaveProperty('collapseLinked')
+    expect(listRequestBodies()[0]).not.toHaveProperty('collapseLinked')
   })
 
   it('reloads uncollapsed books for selection mode and restores collapse afterward', async () => {

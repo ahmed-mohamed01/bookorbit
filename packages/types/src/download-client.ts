@@ -6,7 +6,7 @@ import type { IndexerColor, ReleaseUnitChoice } from "./indexer";
  * deliberately absent: it has no address, no credentials and nothing to choose, so making it a
  * configurable client type would only ask an operator to create a record of nothing.
  */
-export const DOWNLOAD_CLIENT_TYPES = ["qbittorrent", "transmission", "deluge", "nzbget", "sabnzbd", "shelfmark"] as const;
+export const DOWNLOAD_CLIENT_TYPES = ["qbittorrent", "transmission", "deluge", "rtorrent", "nzbget", "sabnzbd", "shelfmark"] as const;
 export type DownloadClientType = (typeof DOWNLOAD_CLIENT_TYPES)[number];
 
 /**
@@ -25,19 +25,22 @@ export const DOWNLOAD_CLIENT_DELIVERY: Record<DownloadClientType, DownloadDelive
   qbittorrent: "torrent",
   transmission: "torrent",
   deluge: "torrent",
+  rtorrent: "torrent",
   nzbget: "usenet",
   sabnzbd: "usenet",
   shelfmark: "shelfmark",
 };
 
 /**
- * Which adapters let a grab be narrowed to chosen files. Torrent clients take per-file priorities;
- * every other delivery is all-or-nothing, so a selection over one of them has nothing to send.
+ * Which adapters let a grab be narrowed to chosen files. qBittorrent, Transmission and Deluge take
+ * per-file priorities; every other adapter is all-or-nothing, so a selection over one of them has
+ * nothing to send.
  */
 export const DOWNLOAD_CLIENT_FILE_SELECTION: Record<DownloadClientType, boolean> = {
   qbittorrent: true,
   transmission: true,
   deluge: true,
+  rtorrent: false,
   nzbget: false,
   sabnzbd: false,
   shelfmark: false,
@@ -50,6 +53,7 @@ export const DOWNLOAD_CLIENT_CREDENTIAL_KIND: Record<DownloadClientType, Downloa
   qbittorrent: "usernamePassword",
   transmission: "usernamePassword",
   deluge: "usernamePassword",
+  rtorrent: "usernamePassword",
   nzbget: "usernamePassword",
   sabnzbd: "apiKey",
   shelfmark: "apiKey",

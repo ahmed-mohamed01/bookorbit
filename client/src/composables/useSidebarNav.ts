@@ -1,20 +1,7 @@
 import { computed, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, type RouteLocationNormalizedLoaded, type RouteLocationRaw } from 'vue-router'
-import {
-  BarChart3,
-  Bell,
-  BookPlus,
-  Globe,
-  Highlighter,
-  History,
-  LayoutDashboard,
-  Library,
-  PackageOpen,
-  Trophy,
-  Users,
-  Wrench,
-} from '@lucide/vue'
+import { BarChart3, Bell, BookPlus, Globe, Highlighter, History, LayoutDashboard, Library, PackageOpen, Trophy, Users, Wrench } from '@lucide/vue'
 import { Permission, type BrowseCounts, type SidebarSectionId } from '@bookorbit/types'
 import { useAuth } from '@/features/auth/composables/useAuth'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
@@ -193,12 +180,12 @@ export const SIDEBAR_NAV_REGISTRY: readonly SidebarNavEntry[] = [
     to: (context) => ({
       name: context.hasPermission('manage_libraries')
         ? 'tools-entity-manager'
-        : context.hasPermission('library_delete_books')
+        : context.hasPermission('library_delete_books') || context.hasPermission('library_merge_books')
           ? 'tools-duplicate-books'
           : 'tools-chapter-health',
     }),
     isActive: (route) => routeNameStartsWith(route, 'tools-'),
-    permission: ['manage_libraries', 'library_delete_books', 'library_edit_metadata'],
+    permission: ['manage_libraries', 'library_delete_books', 'library_merge_books', 'library_edit_metadata'],
   },
   {
     id: 'authors',

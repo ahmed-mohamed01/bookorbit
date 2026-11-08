@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 
+import { BookConsolidationModule } from '../book-consolidation/book-consolidation.module';
 import { BookRequestModule } from '../book-request/book-request.module';
 import { SeriesModule } from '../series/series.module';
 import { UserModule } from '../user/user.module';
@@ -17,6 +18,7 @@ import { SuwayomiExtensionsClient } from './engines/suwayomi-extensions.client';
 import { MangaBakaClient } from './lookup/mangabaka.client';
 import { MangaDexClient } from './lookup/mangadex.client';
 import { WebSerialsLookupService } from './lookup/web-serials-lookup.service';
+import { WebSerialsBookConsolidationParticipant } from './web-serials-book-consolidation.participant';
 import { WebSerialsAdminController } from './web-serials-admin.controller';
 import { WebSerialsCatalogService } from './web-serials-catalog.service';
 import { WebSerialsDiscoverService } from './web-serials-discover.service';
@@ -46,6 +48,7 @@ import { WebSerialsRepository } from './web-serials.repository';
 
 @Module({
   imports: [
+    BookConsolidationModule,
     BookRequestModule,
     SeriesModule,
     UserModule,
@@ -58,6 +61,7 @@ import { WebSerialsRepository } from './web-serials.repository';
   ],
   controllers: [WebSerialsAdminController, WebSerialsController],
   providers: [
+    WebSerialsBookConsolidationParticipant,
     WebSerialsPrintService,
     WebSerialsRepository,
     WebSerialsNovelIndexRepository,

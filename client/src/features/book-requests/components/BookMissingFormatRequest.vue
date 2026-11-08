@@ -30,13 +30,14 @@ const { missing, state, requestId, ownedBookId, submitting, request } = useMissi
 
 const visible = computed(() => enabled.value && missing.value !== null)
 const bookId = computed(() => props.book.id)
+const watchLookupEnabled = computed(() => visible.value && state.value !== 'owned')
 const {
   entry: watchEntry,
   mode: watchMode,
   release: watchRelease,
   hasRequest: watchHasRequest,
   refresh: refreshWatch,
-} = useBookMonitoredWork(bookId, missing, visible)
+} = useBookMonitoredWork(bookId, missing, watchLookupEnabled)
 const dateLabel = useMonitoredDateLabel('short')
 
 const watchActive = computed(() => watchEntry.value !== null && watchMode.value !== 'off' && state.value !== 'owned' && state.value !== 'checking')

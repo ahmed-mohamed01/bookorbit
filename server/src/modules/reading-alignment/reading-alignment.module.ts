@@ -2,9 +2,11 @@ import { AudiobookChaptersModule } from '../audiobook-chapters/audiobook-chapter
 import { Module } from '@nestjs/common';
 
 import { AchievementModule } from '../achievement/achievement.module';
+import { BookConsolidationModule } from '../book-consolidation/book-consolidation.module';
 import { BookModule } from '../book/book.module';
 import { LibraryModule } from '../library/library.module';
 import { EpubModule } from '../reader/epub/epub.module';
+import { ReadingAlignmentBookConsolidationParticipant } from './reading-alignment-book-consolidation.participant';
 import { ReadingAlignmentBuildService } from './reading-alignment-build.service';
 import { ReadingAlignmentPairService } from './reading-alignment-pair.service';
 import { ReadingAlignmentResolveService } from './reading-alignment-resolve.service';
@@ -17,9 +19,10 @@ import { WhisperModelService } from './whisper-model.service';
 import { WhisperService } from './whisper.service';
 
 @Module({
-  imports: [AudiobookChaptersModule, EpubModule, BookModule, LibraryModule, AchievementModule],
+  imports: [AudiobookChaptersModule, BookConsolidationModule, EpubModule, BookModule, LibraryModule, AchievementModule],
   controllers: [ReadingAlignmentController],
   providers: [
+    ReadingAlignmentBookConsolidationParticipant,
     ReadingAlignmentRepository,
     ReadingAlignmentSchemaBootstrapService,
     WhisperModelService,

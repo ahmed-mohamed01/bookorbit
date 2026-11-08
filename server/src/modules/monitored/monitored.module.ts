@@ -6,6 +6,7 @@ import type { StringValue } from 'ms';
 import { AuthModule } from '../auth/auth.module';
 import { AuthorsModule } from '../authors/authors.module';
 import { AppSettingsModule } from '../app-settings/app-settings.module';
+import { BookConsolidationModule } from '../book-consolidation/book-consolidation.module';
 import { BookRequestModule } from '../book-request/book-request.module';
 import { CoverModule } from '../cover/cover.module';
 import { HardcoverModule } from '../hardcover/hardcover.module';
@@ -14,6 +15,7 @@ import { MetadataFetchModule } from '../metadata-fetch/metadata-fetch.module';
 import { MetadataPreferencesModule } from '../metadata-preferences/metadata-preferences.module';
 import { NotificationModule } from '../notification/notification.module';
 import { UserModule } from '../user/user.module';
+import { MonitoredBookConsolidationParticipant } from './monitored-book-consolidation.participant';
 import { MonitoredFetchCoordinator } from './fetch/monitored-fetch-coordinator.service';
 import { MonitoredFetchJobService } from './fetch/monitored-fetch-job.service';
 import { MONITORED_FETCH_REQUESTS } from './fetch/monitored-fetch-requests';
@@ -54,6 +56,7 @@ import { AmazonProductPageClient } from './release-probe/amazon-product-page.cli
     }),
     AppSettingsModule,
     AuthorsModule,
+    BookConsolidationModule,
     BookRequestModule,
     CoverModule,
     HardcoverModule,
@@ -65,6 +68,7 @@ import { AmazonProductPageClient } from './release-probe/amazon-product-page.cli
   ],
   controllers: [MonitoredController],
   providers: [
+    MonitoredBookConsolidationParticipant,
     MonitoredGateway,
     MonitoredFetchJobService,
     MonitoredFetchCoordinator,

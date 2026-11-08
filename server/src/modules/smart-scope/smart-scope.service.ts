@@ -5,6 +5,7 @@ import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundEx
 import { and, type SQL } from 'drizzle-orm';
 
 import type { BookQuery, BooksPage, GroupRule, JumpBucketsQuery, JumpBucketsResponse, SortSpec } from '@bookorbit/types';
+import { normalizeCoverAspectRatio } from '@bookorbit/types';
 import type { RequestUser } from '../../common/types/request-user';
 import { excludeAudioOnlyBooks } from '../../common/utils/audio-only-book-sql.utils';
 import { mapWithConcurrency } from '../../common/utils/batch.utils';
@@ -81,7 +82,12 @@ export class SmartScopeService {
   }
 
   private toResponse(smartScope: SmartScope, user: RequestUser, koboSyncEnabled: boolean) {
-    return { ...smartScope, isOwner: smartScope.userId === user.id, koboSyncEnabled };
+    return {
+      ...smartScope,
+      coverAspectRatio: normalizeCoverAspectRatio(smartScope.coverAspectRatio),
+      isOwner: smartScope.userId === user.id,
+      koboSyncEnabled,
+    };
   }
 
   private async resolveKoboSyncEnabled(smartScope: SmartScope, user: RequestUser): Promise<boolean> {
@@ -184,6 +190,7 @@ export class SmartScopeService {
       defaultSort: dto.defaultSort ?? [],
       isPublic: dto.isPublic ?? false,
       syncToKobo: dto.syncToKobo ?? false,
+      coverAspectRatio: dto.coverAspectRatio,
     });
     this.countCache.clearForScope(String(user.id));
     return this.toCountedResponse(smartScope, user, smartScope.syncToKobo);
@@ -206,6 +213,7 @@ export class SmartScopeService {
       defaultSort: dto.defaultSort,
       isPublic: dto.isPublic,
       syncToKobo: dto.syncToKobo,
+      coverAspectRatio: dto.coverAspectRatio,
     });
     this.countCache.clearForScope(String(user.id));
     this.countCache.clearForScope(String(smartScope.userId));
@@ -281,6 +289,7 @@ export class SmartScopeService {
     try {
       const result = await this.bookService.executeBooksQuery(user.id, where, effectiveQuery, {
         seriesSelectionFilter: query.filter,
+        viewer: user,
       });
       const durationMs = Date.now() - start;
       if (durationMs >= 500) {

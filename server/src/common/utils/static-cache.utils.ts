@@ -1,11 +1,29 @@
-export const IMMUTABLE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
-export const REVALIDATE_CACHE_CONTROL = 'no-cache';
+import type { FastifyReply } from 'fastify';
+import { dirname, join, relative } from 'path';
 
-export function cacheControlFor(pathname: string): string {
-  const path = pathname.replace(/\\/g, '/').split('?')[0];
-  if (/(?:^|\/)(?:index\.html|sw\.js|registerSW\.js|manifest\.webmanifest|theme-init\.js)$/.test(path)) return REVALIDATE_CACHE_CONTROL;
-  if (/\/assets\/foliate\/[a-f0-9]{12}\//.test(path)) return IMMUTABLE_CACHE_CONTROL;
-  if (/\/assets\/(?:foliate|provider-icons)\//.test(path)) return 'public, max-age=3600';
-  if (/\/assets\/.*-[A-Za-z0-9_-]{8}\.(?:js|css|wasm|woff2?|png|svg|jpe?g|webp|json)$/.test(path)) return IMMUTABLE_CACHE_CONTROL;
-  return 'public, max-age=3600';
+export const IMMUTABLE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
+
+const PACKAGE_VERSION_SEGMENT = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+const FOLIATE_CONTENT_HASH_FOLDER = /^[a-f0-9]{12}(?:[\\/]|$)/;
+
+/**
+ * Only files whose URL changes with their content may be cached forever: the bundler's hashed
+ * output sits directly in `assets/`, and Lucide icon files sit in a folder named after the package
+ * version. Folders copied from `client/public/assets/` keep fixed file names (the Foliate reader
+ * engine is loaded from `/assets/foliate/view.js`), so they must keep revalidating.
+ */
+export function isImmutableStaticAsset(publicRoot: string, filePath: string): boolean {
+  const assetsDir = join(publicRoot, 'assets');
+  const fileDir = dirname(filePath);
+  if (fileDir === assetsDir) return true;
+  // The build also copies Foliate under a folder named by its content hash.
+  if (FOLIATE_CONTENT_HASH_FOLDER.test(relative(join(assetsDir, 'foliate'), fileDir))) return true;
+  return PACKAGE_VERSION_SEGMENT.test(relative(join(assetsDir, 'lucide'), fileDir));
+}
+
+/** `@fastify/static` 10 hands `setHeaders` the Fastify reply, so the header goes through `reply.header`. */
+export function applyStaticCacheHeaders(reply: FastifyReply, publicRoot: string, filePath: string): void {
+  if (isImmutableStaticAsset(publicRoot, filePath)) {
+    reply.header('cache-control', IMMUTABLE_CACHE_CONTROL);
+  }
 }

@@ -2,6 +2,7 @@ import { ReadingAttemptEventsModule } from '../user-book-status/reading-attempt-
 import { Module } from '@nestjs/common';
 
 import { AchievementModule } from '../achievement/achievement.module';
+import { AppAttestModule } from '../app-attest/app-attest.module';
 import { BookModule } from '../book/book.module';
 import { BookCoverStoreModule } from '../book-cover-store/book-cover-store.module';
 import { SmartScopeModule } from '../smart-scope/smart-scope.module';
@@ -13,7 +14,7 @@ import { DashboardWidgetRepository } from './dashboard-widget.repository';
 import { DashboardWidgetService } from './dashboard-widget.service';
 
 @Module({
-  imports: [AchievementModule, BookModule, BookCoverStoreModule, LibraryModule, SmartScopeModule, ReadingAttemptEventsModule],
+  imports: [AchievementModule, AppAttestModule, BookModule, BookCoverStoreModule, LibraryModule, SmartScopeModule, ReadingAttemptEventsModule],
   controllers: [DashboardController],
   providers: [DashboardService, DashboardRepository, DashboardWidgetService, DashboardWidgetRepository],
   exports: [DashboardService, DashboardWidgetService],

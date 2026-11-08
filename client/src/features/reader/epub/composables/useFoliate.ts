@@ -5,6 +5,7 @@ import { useFoliateAnnotations } from './useFoliateAnnotations'
 import { useFoliateSelection } from './useFoliateSelection'
 import { useFoliateInput } from './useFoliateInput'
 import { scalePublisherFontSizes } from '../lib/publisher-font-sizes'
+import { markBookAlignment } from '../lib/book-alignment'
 import { loadFoliate, openStreamingEpub } from '../foliate-loader'
 import type { EpubReaderSettings } from '@bookorbit/types'
 import type { CrossFormatEbookResume } from '../../shared/composables/useCrossFormatResume'
@@ -229,6 +230,7 @@ export function useFoliate(
         }, 0)
         annotations.reAddAll(view)
         if (detail?.doc) {
+          if (!isFixedLayout.value) markBookAlignment(detail.doc as Document)
           input.attachIframeClicks(detail.doc)
           onChapterLoad?.(detail.doc as Document, view as HTMLElement)
         }

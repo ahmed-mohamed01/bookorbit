@@ -178,6 +178,31 @@ breaks it). Each is a one-line catch-up; make it rather than carry a red test.
 
 ### Merge log
 
+- **2026-11-08, upstream v3.7.0 (`6f8f5f481`), 33 commits.** Upstream added book merge
+  (`BookConsolidationService`, the `book_merges` redirect), the rTorrent client, Book Dock joins, its
+  own `AppChart` and static cache headers. The fork's perf work moved onto upstream's where they did
+  the same job: all charts use upstream's `AppChart` (`lib/echarts-register.ts` deleted),
+  `applyStaticCacheHeaders` replaced `cacheControlFor` in `main.ts`, and the fork keeps only the
+  hashed foliate folder check in `static-cache.utils.ts` and the `vendor` chunk group beside upstream's
+  `lucide-icons` in `vite.config.ts`. Upstream's merge deletes the source book and its FK guard only
+  walks `db/schema`, so fork rows would have cascaded or gone null (a null match makes the Watchlist
+  re-grab an owned work). Added the `BookConsolidationParticipants` seam (see Landed seams) with a
+  participant per owning module and `book-merge-fork-rules.test.ts`, which fails when a fork table
+  gains a FK to `books` without a rule. Watchlist rejections follow the merge: a rejection of the kept
+  book is dropped from a work the source book owned, and a source rejection stays behind when its work
+  now matches the kept book, both matched by provider identity key or `work_id`, so neither unmatches an
+  owned work at the next refresh. A title-keyed rejection matches only through `work_id`. `main.ts` is
+  byte-identical to upstream again, so the fork's 1h cache on `provider-icons` is gone.
+  `BookMissingFormatRequest.vue` skips the Watchlist lookup in the owned state, because upstream's new
+  linked-edition spec requires no network calls there. Known leftovers:
+  S's edition index file stays on disk and on K's file list until removal learns merged-book
+  provenance; `book_request_batch_units.book_id` has no FK and can dangle;
+  fork routes do not follow merged-book aliases; a merge during a Whisper build is not blocked; an
+  automatic Watchlist match does not survive a refresh when the kept book's title does not match the
+  work (a link does, and the merge review lets the owner keep the matching title). The stored shelfmark
+  client row is parked
+  and restored across upstream's `download_clients_adapter_type_chk` rewrite.
+
 - **2026-10-28, upstream v3.6.0 (`f2a7a111`), 27 commits.** 33 conflicted files. Upstream added in-app
   read-aloud generation (`workers/read-aloud`, its own `ReadAloudModule`, `read_aloud_*` notifications),
   so the Storyteller overlay was deleted (see its section) instead of carried. Upstream moved audiobook
@@ -487,6 +512,17 @@ The token files themselves are fork-authored new files (zero conflict). The resi
 seams could not remove lives in `scanner.service.ts` and `metadata.service.ts` and is tallied
 below. The `EXTRA_PROGRESS_SOURCE` and `CURRENTLY_READING_GROUP_SOURCE` seams were deleted with
 edition links on 2026-10-29/30.
+
+**Book merge participants.** `BookConsolidationService` calls
+`BookConsolidationParticipants.moveAll(tx, kept, source)` on its own transaction right before it deletes
+a book, in `consolidate` and on the no-user-data path of `absorbDuplicate`. The registry is a fork-only
+file. In upstream files, the service gains an `@Optional()` constructor argument and those two calls,
+and `book-consolidation.module.ts` provides and exports the registry. Each fork module registers a
+`*-book-consolidation.participant.ts` in `onModuleInit` and owns its SQL. The collision rule is that the
+kept book wins. A new fork FK to `books` needs an entry in `book-merge-fork-rules.test.ts`, which fails
+until it has one. Cover placeholders need no participant: the fork's hunk in `adoptSlots`
+(`book-cover-store.service.ts`) carries the placeholder flag with the slot after commit, and on the
+book-move and scanner paths the slot and flag cascade together.
 
 ## Current conflict surface (semantic, `-w`)
 

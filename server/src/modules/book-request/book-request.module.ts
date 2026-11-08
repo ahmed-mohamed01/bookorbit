@@ -42,6 +42,8 @@ import { PathMappingService } from './download-clients/path-mapping.service';
 import { QbittorrentAdapter } from './download-clients/adapters/qbittorrent.adapter';
 import { TransmissionAdapter } from './download-clients/adapters/transmission.adapter';
 import { DelugeAdapter } from './download-clients/adapters/deluge.adapter';
+import { RtorrentAdapter } from './download-clients/adapters/rtorrent.adapter';
+import { DownloadContentRemovalService } from './download-clients/download-content-removal.service';
 import { NzbgetAdapter } from './download-clients/adapters/nzbget.adapter';
 import { SabnzbdAdapter } from './download-clients/adapters/sabnzbd.adapter';
 import { ShelfmarkDownloadClientAdapter } from './download-clients/adapters/shelfmark.adapter';
@@ -136,9 +138,11 @@ import { ShelfmarkSchemaBootstrapService } from './shelfmark/shelfmark-schema-bo
     DownloadClientReconciliationService,
     DownloadClientRegistry,
     PathMappingService,
+    DownloadContentRemovalService,
     QbittorrentAdapter,
     TransmissionAdapter,
     DelugeAdapter,
+    RtorrentAdapter,
     NzbgetAdapter,
     SabnzbdAdapter,
     ShelfmarkDownloadClientAdapter,
@@ -148,11 +152,20 @@ import { ShelfmarkSchemaBootstrapService } from './shelfmark/shelfmark-schema-bo
         qbittorrent: QbittorrentAdapter,
         transmission: TransmissionAdapter,
         deluge: DelugeAdapter,
+        rtorrent: RtorrentAdapter,
         nzbget: NzbgetAdapter,
         sabnzbd: SabnzbdAdapter,
         shelfmark: ShelfmarkDownloadClientAdapter,
-      ) => [qbittorrent, transmission, deluge, nzbget, sabnzbd, shelfmark],
-      inject: [QbittorrentAdapter, TransmissionAdapter, DelugeAdapter, NzbgetAdapter, SabnzbdAdapter, ShelfmarkDownloadClientAdapter],
+      ) => [qbittorrent, transmission, deluge, rtorrent, nzbget, sabnzbd, shelfmark],
+      inject: [
+        QbittorrentAdapter,
+        TransmissionAdapter,
+        DelugeAdapter,
+        RtorrentAdapter,
+        NzbgetAdapter,
+        SabnzbdAdapter,
+        ShelfmarkDownloadClientAdapter,
+      ],
     },
 
     IndexerRepository,

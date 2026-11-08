@@ -3,6 +3,7 @@ import { Global, Module } from '@nestjs/common';
 import { CommonModule } from '../../common/common.module';
 import { AchievementModule } from '../achievement/achievement.module';
 import { AudiobookChaptersModule } from '../audiobook-chapters/audiobook-chapters.module';
+import { BookConsolidationModule } from '../book-consolidation/book-consolidation.module';
 import { BookCoverStoreModule } from '../book-cover-store/book-cover-store.module';
 import { BookModule } from '../book/book.module';
 import { OVERLAY_SOURCE_RESOLVER } from '../book/overlay-source-provider';
@@ -13,6 +14,7 @@ import { ReadAloudModule } from '../read-aloud/read-aloud.module';
 import { ReadingAlignmentModule } from '../reading-alignment/reading-alignment.module';
 import { ScannerModule } from '../scanner/scanner.module';
 import { UserModule } from '../user/user.module';
+import { EditionSyncBookConsolidationParticipant } from './edition-sync-book-consolidation.participant';
 import { EditionSyncBookListService } from './edition-sync-book-list.service';
 import { EditionSyncBookStateService } from './edition-sync-book-state.service';
 import { EditionSyncFallbackService } from './edition-sync-fallback.service';
@@ -34,6 +36,7 @@ import { EditionSyncRepository } from './edition-sync.repository';
   imports: [
     AchievementModule,
     AudiobookChaptersModule,
+    BookConsolidationModule,
     BookCoverStoreModule,
     BookModule,
     CommonModule,
@@ -45,6 +48,7 @@ import { EditionSyncRepository } from './edition-sync.repository';
   ],
   controllers: [EditionSyncController],
   providers: [
+    EditionSyncBookConsolidationParticipant,
     EditionSyncRepository,
     EditionSyncSchemaBootstrapService,
     EditionSyncSettingsService,

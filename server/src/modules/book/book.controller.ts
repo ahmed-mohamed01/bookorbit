@@ -30,8 +30,10 @@ import { fileValidators, planFileResponse, type FileConditionalHeaders } from '.
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { Auditable } from '../../common/decorators/auditable.decorator';
 import { ForbidPermission } from '../../common/decorators/forbid-permission.decorator';
+import { ResolvesMergedBook } from '../../common/decorators/resolves-merged-book.decorator';
 import { imageContentTypeFromPath } from '../../common/image-content-type';
 import type { RequestUser } from '../../common/types/request-user';
+import { RequireAppAttest } from '../app-attest/app-attest.guard';
 import { FileWriteService } from '../file-write/file-write.service';
 import { BookService } from './book.service';
 import { openDeliveryStream } from './delivery-stream';
@@ -344,6 +346,7 @@ export class BookController {
     }
   }
 
+  @ResolvesMergedBook({ params: ['id'] })
   @Get(':id/cover')
   @RouteConfig({ compress: false })
   async getCover(
@@ -372,6 +375,7 @@ export class BookController {
     reply.send(createReadStream(coverPath));
   }
 
+  @ResolvesMergedBook({ params: ['id'] })
   @Get(':id/thumbnail')
   @RouteConfig({ compress: false })
   async getThumbnail(
@@ -522,6 +526,7 @@ export class BookController {
   }
 
   @Get('files/:fileId/progress')
+  @RequireAppAttest()
   async getFileProgress(@Param('fileId', ParseIntPipe) fileId: number, @CurrentUser() user: RequestUser) {
     return (
       (await this.bookService.getProgress(user.id, fileId, user)) ?? {
@@ -544,11 +549,13 @@ export class BookController {
   }
 
   @Post('files/:fileId/progress')
+  @RequireAppAttest()
   async saveFileProgress(@Param('fileId', ParseIntPipe) fileId: number, @Body() dto: SaveProgressDto, @CurrentUser() user: RequestUser) {
     await this.bookService.saveProgress(user.id, fileId, dto, user);
   }
 
   @Delete('files/:fileId/progress')
+  @RequireAppAttest()
   @HttpCode(HttpStatus.NO_CONTENT)
   async clearFileProgress(@Param('fileId', ParseIntPipe) fileId: number, @CurrentUser() user: RequestUser) {
     await this.bookService.clearFileProgress(user.id, fileId, user);
@@ -576,6 +583,7 @@ export class BookController {
     await this.bookService.deleteFile(fileId, user);
   }
 
+  @ResolvesMergedBook({ params: ['id'] })
   @Get(':id/audio-progress')
   async getAudioProgress(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: RequestUser) {
     return (await this.bookService.getAudioProgress(user.id, id, user)) ?? null;
@@ -587,6 +595,7 @@ export class BookController {
     await this.bookService.saveAudioProgress(user.id, id, dto, user);
   }
 
+  @ResolvesMergedBook({ params: ['id'] })
   @Patch(':id/personal-note')
   updatePersonalNote(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdatePersonalNoteDto, @CurrentUser() user: RequestUser) {
     return this.bookService.updatePersonalNote(id, dto, user);
@@ -710,6 +719,7 @@ export class BookController {
     return this.bookService.updateReadAloudSyncMode(id, dto.mode, user);
   }
 
+  @ResolvesMergedBook({ params: ['id'] })
   @Patch(':id/status')
   setReadStatus(@Param('id', ParseIntPipe) id: number, @Body() dto: SetStatusDto, @CurrentUser() user: RequestUser) {
     return this.bookService.setReadStatus(id, dto, user);
@@ -729,7 +739,7 @@ export class BookController {
   })
   async bulkSetStatus(@Body() dto: BulkSetStatusDto, @CurrentUser() user: RequestUser) {
     const ids = await this.bookService.resolveSelectionToIds(dto, user);
-    return this.bookService.bulkSetStatus(ids, dto.status, user);
+    return this.bookService.bulkSetStatus(ids, dto, user);
   }
 
   @Post('bulk-set-rating')

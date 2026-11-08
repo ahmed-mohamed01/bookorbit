@@ -77,14 +77,19 @@ export function bookFormatEntries<T extends FormatFile>(files: readonly T[], for
     .map((group) => group.entry)
 }
 
-/** Every content file in edition order: what a Read, Download or Send menu lists. */
 /** A plain EPUB edition: no audio and no media overlay. */
 export function isPlainEpubEntry(entry: Pick<BookFormatEntry, 'key' | 'audio' | 'readAlong'>): boolean {
   return !entry.audio && !entry.readAlong && entry.key === 'epub'
 }
 
+/** Every content file in edition order: what a Read, Download or Send menu lists. */
 export function rankedContentFiles<T extends FormatFile>(files: readonly T[], formatPriority?: readonly string[] | null): T[] {
   return bookFormatEntries(files, formatPriority).flatMap((entry) => entry.files)
+}
+
+/** The short code of each edition once, such as `EPUB` and `M4B`: what a picker row lists beside a title. */
+export function bookFormatCodes(files: readonly FormatFile[]): string[] {
+  return [...new Set(bookFormatEntries(files).map((entry) => formatKeyCode(entry.key)))]
 }
 
 /** The short code a chip shows. A read-along EPUB is `EPUB`; its headphones tell it apart. */

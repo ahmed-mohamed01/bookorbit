@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import { ReadingAttemptService } from '../src/modules/user-book-status/reading-attempt.service';
 import { ReadingAttemptRepository } from '../src/modules/user-book-status/reading-attempt.repository';
 import { READING_ATTEMPT_CHANGED, ReadingAttemptEventsService } from '../src/modules/user-book-status/reading-attempt-events.service';
+import { BookCoverStore } from '../src/modules/book-cover-store/book-cover-store.service';
 import { DashboardWidgetService } from '../src/modules/dashboard/dashboard-widget.service';
 import { DashboardWidgetRepository } from '../src/modules/dashboard/dashboard-widget.repository';
 import { LibraryService } from '../src/modules/library/library.service';
@@ -61,6 +62,7 @@ describe('Reading attempt cache integration', () => {
         { provide: AchievementEventsService, useValue: { emit: vi.fn(), on: vi.fn(), removeListener: vi.fn() } },
         { provide: KoboStatusProjectionRepository, useValue: { isEnabled: vi.fn().mockResolvedValue(false) } },
         ReadingAttemptEventsService,
+        { provide: BookCoverStore, useValue: { facesFor: vi.fn().mockResolvedValue(new Map()) } },
         DashboardWidgetService,
         UserStatisticsService,
         {

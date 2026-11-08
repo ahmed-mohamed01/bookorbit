@@ -1,17 +1,34 @@
+import { join } from 'path';
 import { describe, expect, it } from 'vitest';
-import { cacheControlFor } from './static-cache.utils';
+import { isImmutableStaticAsset } from './static-cache.utils';
 
-describe('cacheControlFor', () => {
-  it.each(['/assets/AccentPicker-B7p9f2ef.js', '/assets/AcquisitionLagScatterChart-BBsIaulw.js', '/assets/foliate/012345abcdef/reader.js'])(
-    'keeps content-versioned asset %s immutable',
-    (path) => {
-      expect(cacheControlFor(path)).toBe('public, max-age=31536000, immutable');
-    },
-  );
-  it.each(['/index.html', '/sw.js', '/registerSW.js', '/manifest.webmanifest', '/theme-init.js'])('revalidates %s', (path) => {
-    expect(cacheControlFor(path)).toBe('no-cache');
+const publicRoot = join('/srv', 'bookorbit', 'public');
+
+describe('isImmutableStaticAsset', () => {
+  it.each([
+    join(publicRoot, 'assets', 'index-AbCd1234.js'),
+    join(publicRoot, 'assets', 'index-AbCd1234.css'),
+    join(publicRoot, 'assets', 'lucide', '1.62.0', 'folder-open.svg'),
+    join(publicRoot, 'assets', 'lucide', '2.0.0-rc.1', 'catalog.svg'),
+    join(publicRoot, 'assets', 'foliate', 'a1b2c3d4e5f6', 'view.js'),
+    join(publicRoot, 'assets', 'foliate', 'a1b2c3d4e5f6', 'vendor', 'zip.js'),
+  ])('caches %s forever', (filePath) => {
+    expect(isImmutableStaticAsset(publicRoot, filePath)).toBe(true);
   });
-  it.each(['/assets/foliate/reader.js', '/assets/provider-icons/icon.png', '/assets/unhashed.js'])('briefly caches %s', (path) => {
-    expect(cacheControlFor(path)).toBe('public, max-age=3600');
+
+  it.each([
+    join(publicRoot, 'index.html'),
+    join(publicRoot, 'sw.js'),
+    join(publicRoot, 'registerSW.js'),
+    join(publicRoot, 'manifest.webmanifest'),
+    join(publicRoot, 'assets', 'foliate', 'view.js'),
+    join(publicRoot, 'assets', 'foliate', 'vendor', 'zip.js'),
+    join(publicRoot, 'assets', 'provider-icons', 'audible.svg'),
+    join(publicRoot, 'assets', 'lucide', 'folder-open.svg'),
+    join(publicRoot, 'assets', 'lucide', 'latest', 'folder-open.svg'),
+    join(publicRoot, 'assets', 'lucide', '1.62.0', 'nested', 'folder-open.svg'),
+    join('/srv', 'other', 'assets', 'index-AbCd1234.js'),
+  ])('keeps revalidating %s', (filePath) => {
+    expect(isImmutableStaticAsset(publicRoot, filePath)).toBe(false);
   });
 });
