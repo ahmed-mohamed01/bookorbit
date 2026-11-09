@@ -99,6 +99,7 @@ it('shares in-flight and completed follow state across author rows', async () =>
     counts: { total: 0, ebookOwned: 0, audioOwned: 0, hidden: 0 },
     nextReleaseAt: null,
     portraitAuthorId: null,
+    coverBookId: null,
     description: null,
     website: null,
     genres: [],

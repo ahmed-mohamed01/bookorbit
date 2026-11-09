@@ -93,6 +93,13 @@ type ServiceDeps = {
   releaseDateLookup?: Record<string, unknown>;
 };
 
+function listArtworkDeps(): ServiceDeps {
+  return {
+    authorsRepository: { findPortraitCandidates: vi.fn().mockResolvedValue([]), findCoverBookIds: vi.fn().mockResolvedValue(new Map()) },
+    libraryService: { findAccessibleLibraryIds: vi.fn().mockResolvedValue([]) },
+  };
+}
+
 function service(store: Record<string, unknown>, bookRequests: Record<string, unknown> = {}, deps: ServiceDeps = {}): MonitoredService {
   const autoRequests = deps.autoRequests ?? new MonitoredAutoRequestService(bookRequests as never, store as never);
   return new MonitoredService(
@@ -900,12 +907,56 @@ describe('MonitoredService', () => {
     const store = {
       findAuthorPage: vi.fn().mockResolvedValue({ items: [{ author: monitor, aggregate: reference }], total: 1, page: 0, size: 50 }),
     };
-    const instance = service(store, {}, { authorsRepository: { findPortraitCandidates: vi.fn().mockResolvedValue([]) } });
+    const instance = service(store, {}, listArtworkDeps());
 
     const result = await instance.listAuthors(viewer, { page: 0, size: 50, sort: 'name', order: 'asc' });
 
     expect(result.items[0]).toMatchObject({ counts: { total: 2, ebookOwned: 1, audioOwned: 1, hidden: 1 } });
     expect(store.findAuthorPage).toHaveBeenCalledWith(expect.objectContaining({ viewer, page: 0, size: 50, sort: 'name' }));
+  });
+
+  it('gives list cards a cover book from the libraries the viewer can see, matching by link or by name', async () => {
+    const aggregate = { counts: { total: 0, ebookOwned: 0, audioOwned: 0, hidden: 0 }, nextReleaseAt: null };
+    const linked = author({ id: 'linked', localAuthorId: 7, authorName: 'Linked' });
+    const named = author({ id: 'named', localAuthorId: null, authorName: 'Named' });
+    const unknown = author({ id: 'unknown', localAuthorId: null, authorName: 'Unknown' });
+    const store = {
+      findAuthorPage: vi.fn().mockResolvedValue({
+        items: [linked, named, unknown].map((item) => ({ author: item, aggregate })),
+        total: 3,
+        page: 0,
+        size: 50,
+      }),
+    };
+    const findCoverBookIds = vi.fn().mockResolvedValue(
+      new Map([
+        [7, 70],
+        [8, 80],
+      ]),
+    );
+    const instance = service(
+      store,
+      {},
+      {
+        authorsRepository: {
+          findPortraitCandidates: vi.fn().mockResolvedValue([
+            { id: 7, name: 'Linked', hasPhoto: false },
+            { id: 8, name: 'Named', hasPhoto: true },
+          ]),
+          findCoverBookIds,
+        },
+        libraryService: { findAccessibleLibraryIds: vi.fn().mockResolvedValue([4]) },
+      },
+    );
+
+    const { items } = await instance.listAuthors(viewer, { page: 0, size: 50, sort: 'name', order: 'asc' });
+
+    expect(findCoverBookIds).toHaveBeenCalledWith([7, 8], [4]);
+    expect(items.map(({ portraitAuthorId, coverBookId }) => ({ portraitAuthorId, coverBookId }))).toEqual([
+      { portraitAuthorId: null, coverBookId: 70 },
+      { portraitAuthorId: 8, coverBookId: 80 },
+      { portraitAuthorId: null, coverBookId: null },
+    ]);
   });
 
   it('returns author profile metadata after updating monitor settings', async () => {
@@ -927,13 +978,21 @@ describe('MonitoredService', () => {
             genres: ['Fantasy'],
             hasPhoto: true,
           }),
+          findCoverBookIds: vi.fn().mockResolvedValue(new Map([[7, 70]])),
         },
+        libraryService: { findAccessibleLibraryIds: vi.fn().mockResolvedValue([4]) },
       },
     );
 
     const result = await instance.updateAuthor('monitor-1', { paused: true }, viewer);
 
-    expect(result).toMatchObject({ description: 'Author biography', portraitAuthorId: 7, website: 'https://author.example', genres: ['Fantasy'] });
+    expect(result).toMatchObject({
+      description: 'Author biography',
+      portraitAuthorId: 7,
+      coverBookId: 70,
+      website: 'https://author.example',
+      genres: ['Fantasy'],
+    });
     expect(store.updateAuthorFields).toHaveBeenCalledWith('monitor-1', { paused: true }, viewer);
   });
 
@@ -1020,12 +1079,13 @@ describe('MonitoredService', () => {
 
   // Hardcover carries "Alexander   Olson" (7 books) and "Alexander Olson" (an empty stub) as two
   // records. Both normalize to one key, and taking the later hit bound the monitor to the stub.
-  function searchService(hits: unknown[], local: unknown[] = []) {
+  function searchService(hits: unknown[], local: unknown[] = [], localPhotoUrl: string | null = null) {
     return service(
       { findMonitoredIdsByNames: vi.fn().mockResolvedValue(new Map()) },
       {},
       {
         authorsRepository: { findPage: vi.fn().mockResolvedValue({ items: local, total: local.length, page: 0, size: 5 }) },
+        authorImageStorage: { getThumbnailUrlIfExists: vi.fn().mockResolvedValue(localPhotoUrl) },
         libraryService: { findAccessibleLibraryIds: vi.fn().mockResolvedValue([]) },
         providerConfigs: { forUser: vi.fn().mockResolvedValue({ hardcover: { enabled: true, apiKey: 'key' } }) },
         hardcover: { searchAuthors: vi.fn().mockResolvedValue(hits) },
@@ -1069,6 +1129,32 @@ describe('MonitoredService', () => {
     expect(results[0]).toMatchObject({ name: 'Alexander Olson', localAuthorId: 62, providerIds: { hardcover: '685771' } });
   });
 
+  it('gives a library author with no Hardcover match their own photo', async () => {
+    const results = await searchService([], [{ id: 62, name: 'Alexander Olson', bookCount: 3 }], '/api/v1/authors/62/thumbnail?t=1').searchAuthors(
+      'Alexander Olson',
+      viewer,
+    );
+
+    expect(results[0].imageUrl).toBe('/api/v1/authors/62/thumbnail?t=1');
+  });
+
+  it('prefers the library photo over the Hardcover image', async () => {
+    const hit = { ...stubOlson, image: { url: 'https://hardcover.example/olson.jpg' } };
+    const results = await searchService([hit], [{ id: 62, name: 'Alexander Olson', bookCount: 3 }], '/api/v1/authors/62/thumbnail?t=1').searchAuthors(
+      'Alexander Olson',
+      viewer,
+    );
+
+    expect(results[0].imageUrl).toBe('/api/v1/authors/62/thumbnail?t=1');
+  });
+
+  it('falls back to the Hardcover image when the library author has no photo', async () => {
+    const hit = { ...stubOlson, image: { url: 'https://hardcover.example/olson.jpg' } };
+    const results = await searchService([hit], [{ id: 62, name: 'Alexander Olson', bookCount: 3 }]).searchAuthors('Alexander Olson', viewer);
+
+    expect(results[0].imageUrl).toBe('https://hardcover.example/olson.jpg');
+  });
+
   it('still returns the library author when Hardcover throttles the search', async () => {
     const instance = service(
       { findMonitoredIdsByNames: vi.fn().mockResolvedValue(new Map()) },
@@ -1077,6 +1163,7 @@ describe('MonitoredService', () => {
         authorsRepository: {
           findPage: vi.fn().mockResolvedValue({ items: [{ id: 1920, name: 'Álex Gilbert', bookCount: 14 }], total: 1, page: 0, size: 5 }),
         },
+        authorImageStorage: { getThumbnailUrlIfExists: vi.fn().mockResolvedValue(null) },
         libraryService: { findAccessibleLibraryIds: vi.fn().mockResolvedValue([1]) },
         providerConfigs: { forUser: vi.fn().mockResolvedValue({ hardcover: { enabled: true, apiKey: 'key' } }) },
         hardcover: { searchAuthors: vi.fn().mockRejectedValue(new ProviderThrottleError(30)) },
@@ -1578,7 +1665,7 @@ describe('MonitoredService', () => {
     const store = {
       findAuthorPage: vi.fn().mockResolvedValue({ items: [{ author: foreign, aggregate }], total: 1, page: 0, size: 50 }),
     };
-    const instance = service(store, {}, { authorsRepository: { findPortraitCandidates: vi.fn().mockResolvedValue([]) } });
+    const instance = service(store, {}, listArtworkDeps());
 
     const query = { page: 0, size: 50, sort: 'name', order: 'asc' } as const;
     const [item] = (await instance.listAuthors(superuser, query)).items;

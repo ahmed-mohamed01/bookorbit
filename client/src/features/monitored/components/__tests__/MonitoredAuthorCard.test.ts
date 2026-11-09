@@ -35,7 +35,7 @@ function setup(state: MonitoredFetchState, lastRefreshedAt: string | null = null
 }
 it.each(['queued', 'fetching'] as const)('dims the portrait, shows a spinner and hides counts for %s', (state) => {
   const wrapper = setup(state)
-  expect(wrapper.get('img').classes()).toContain('opacity-50')
+  expect(wrapper.get('[data-testid="author-artwork"]').classes()).toContain('opacity-50')
   expect(wrapper.find('[data-testid="fetch-spinner"]').exists()).toBe(true)
   expect(wrapper.find('[data-testid="book-count"]').exists()).toBe(false)
   expect(wrapper.text()).toContain(en.monitored.fetch[state])

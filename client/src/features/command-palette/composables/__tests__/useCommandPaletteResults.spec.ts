@@ -368,6 +368,7 @@ describe('useCommandPaletteResults', () => {
           localAuthorId: null,
           bookCount: 3,
           imageUrl: null,
+          coverBookId: null,
           genres: [],
           alreadyMonitoredId: null,
         },

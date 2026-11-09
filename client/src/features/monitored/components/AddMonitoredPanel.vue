@@ -7,12 +7,12 @@ import type { MonitoredAuthorItem, MonitoredAuthorSearchResult, MonitoredFetchSt
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import AuthorPlaceholder from '@/features/author/components/AuthorPlaceholder.vue'
 import { toMonitoredCoverUrl } from '@/features/monitored/lib/cover-url'
 import { deleteMonitoredAuthor, fetchMonitoredAuthorDetail, searchMonitoredAuthors } from '../api/monitored'
 import { useMonitoredFetchEvents } from '../composables/useMonitoredFetchEvents'
 import { monitoredErrorText } from '../lib/api-error'
 import MonitorAuthorModal from './MonitorAuthorModal.vue'
+import MonitoredAuthorPortrait from './MonitoredAuthorPortrait.vue'
 
 // The modal holds the per-format toggles, so every add starts with both formats on.
 const INITIAL_FORMATS: MonitoredFormat[] = ['ebook', 'audiobook']
@@ -27,7 +27,6 @@ const error = ref<string | null>(null)
 const selected = ref<MonitoredAuthorSearchResult | null>(null)
 const stopTarget = ref<MonitoredAuthorSearchResult | null>(null)
 const stopping = ref(false)
-const failedImages = ref(new Set<string>())
 /** Fetch state of the authors added from this panel, keyed by monitor id. */
 const fetchStates = ref<Record<string, MonitoredFetchState>>({})
 
@@ -64,14 +63,6 @@ useMonitoredFetchEvents({
     void reconcileFetchStates()
   },
 })
-
-function resultImageUrl(result: MonitoredAuthorSearchResult): string {
-  return failedImages.value.has(result.name) ? '' : toMonitoredCoverUrl(result.imageUrl)
-}
-
-function handleResultImageError(result: MonitoredAuthorSearchResult) {
-  failedImages.value = new Set([...failedImages.value, result.name])
-}
 
 function resultMeta(result: MonitoredAuthorSearchResult): string {
   const bookCount = result.bookCount === null ? t('monitored.common.unknownBooks') : t('monitored.common.bookCount', { count: result.bookCount })
@@ -169,14 +160,7 @@ function handleCreated(detail: MonitoredAuthorItem) {
       <div v-if="results.length > 0" class="mt-2 divide-y divide-border">
         <article v-for="result in results" :key="`${result.name}-${result.localAuthorId ?? 'remote'}`" class="flex items-center gap-3 py-3">
           <div class="relative size-11 shrink-0 overflow-hidden rounded-full">
-            <img
-              v-if="resultImageUrl(result)"
-              :src="resultImageUrl(result)"
-              :alt="result.name"
-              class="size-full object-cover"
-              @error="handleResultImageError(result)"
-            />
-            <AuthorPlaceholder v-else :name="result.name" />
+            <MonitoredAuthorPortrait :name="result.name" :image-url="toMonitoredCoverUrl(result.imageUrl)" :cover-book-id="result.coverBookId" />
             <Tooltip v-if="isFetching(result)">
               <TooltipTrigger as-child>
                 <span

@@ -92,6 +92,7 @@ export function useMonitorAuthorAction() {
         localAuthorId: author.id,
         bookCount: author.bookCount,
         imageUrl: null,
+        coverBookId: null,
         genres: [],
         alreadyMonitoredId: null,
       }

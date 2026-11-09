@@ -7,12 +7,12 @@ import type { MonitorAuthorRequest, MonitoredAuthorItem, MonitoredAuthorSearchRe
 import { Button } from '@/components/ui/button'
 import { useLibraries } from '@/features/library/composables/useLibraries'
 import { useRequestDestinationDefault } from '@/features/book-requests/composables/useRequestDestinationDefault'
-import AuthorPlaceholder from '@/features/author/components/AuthorPlaceholder.vue'
 import { toMonitoredCoverUrl } from '@/features/monitored/lib/cover-url'
 import { monitorAuthor, refreshMonitoredAuthor, updateMonitoredAuthor } from '../api/monitored'
 import { monitoredErrorText } from '../lib/api-error'
 import { monitorDestinationDefault } from '../lib/monitor-destination'
 import { monitoredPortraitUrl } from '../lib/portrait-url'
+import MonitoredAuthorPortrait from './MonitoredAuthorPortrait.vue'
 
 type FormatState = { mode: MonitorMode; libraryId: number | null; folderId: number | null }
 
@@ -34,7 +34,6 @@ let openGeneration = 0
 const saving = ref(false)
 const loading = ref(false)
 const error = ref<string | null>(null)
-const imageFailed = ref(false)
 
 const editing = computed(() => Boolean(props.author))
 const displayName = computed(() => props.author?.authorName ?? props.result?.name ?? '')
@@ -42,6 +41,7 @@ const imageUrl = computed(() => {
   if (props.author) return props.author.portraitAuthorId === null ? null : monitoredPortraitUrl(props.author.id)
   return toMonitoredCoverUrl(props.result?.imageUrl)
 })
+const coverBookId = computed(() => props.author?.coverBookId ?? props.result?.coverBookId ?? null)
 const meta = computed(() => {
   if (props.author) return t('monitored.common.bookCount', { count: props.author.counts.total })
   if (!props.result) return ''
@@ -101,7 +101,6 @@ function resetState() {
     ebook.value = { ...props.author.formats.ebook }
     audiobook.value = { ...props.author.formats.audiobook }
     error.value = null
-    imageFailed.value = false
     return
   }
   ebook.value = {
@@ -113,7 +112,6 @@ function resetState() {
     ...monitorDestinationDefault(libraries.value, defaultFor('audiobook')),
   }
   error.value = null
-  imageFailed.value = false
 }
 
 watch(
@@ -150,10 +148,6 @@ function handleOpenChange(open: boolean) {
 
 function handleClose() {
   if (!saving.value) emit('close')
-}
-
-function handleImageError() {
-  imageFailed.value = true
 }
 
 function selectedLibraryId(event: Event): number | null {
@@ -242,8 +236,7 @@ async function handleSubmit() {
       >
         <div v-if="displayName" class="flex items-start gap-4">
           <div class="relative h-28 w-[84px] shrink-0 overflow-hidden rounded-lg shadow-sm">
-            <img v-if="imageUrl && !imageFailed" :src="imageUrl" :alt="displayName" class="size-full object-cover" @error="handleImageError" />
-            <AuthorPlaceholder v-else :name="displayName" />
+            <MonitoredAuthorPortrait :name="displayName" :image-url="imageUrl" :cover-book-id="coverBookId" />
           </div>
           <div class="min-w-0 flex-1">
             <DialogTitle class="pr-8 text-lg font-semibold text-foreground">{{

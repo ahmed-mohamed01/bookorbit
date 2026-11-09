@@ -8,7 +8,7 @@ import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
 import type { MonitoredAuthorItem } from '@bookorbit/types'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import AuthorPlaceholder from '@/features/author/components/AuthorPlaceholder.vue'
+import MonitoredAuthorPortrait from './MonitoredAuthorPortrait.vue'
 import { refreshMonitoredAuthor } from '../api/monitored'
 import { monitoredErrorText } from '../lib/api-error'
 import { monitoredPortraitUrl } from '../lib/portrait-url'
@@ -24,7 +24,6 @@ const emit = defineEmits<{
 }>()
 const { t } = useI18n()
 const { state: refreshState, run: runRefresh } = useRefreshFeedback()
-const imageFailed = ref(false)
 const now = ref(new Date())
 let timer: ReturnType<typeof setInterval> | null = null
 watch(
@@ -78,10 +77,6 @@ async function handleRefresh() {
   }
 }
 
-function handleImageError() {
-  imageFailed.value = true
-}
-
 function stopCardClick(event: MouseEvent) {
   event.stopPropagation()
 }
@@ -92,17 +87,9 @@ function stopCardClick(event: MouseEvent) {
     <div
       class="relative aspect-2/3 overflow-hidden rounded-sm shadow-md transition-[box-shadow,transform] duration-150 group-hover:scale-[1.02] group-hover:shadow-xl"
     >
-      <img
-        v-if="portraitUrl && !imageFailed"
-        :src="portraitUrl"
-        :class="{ 'opacity-50': busy }"
-        :alt="t('monitored.authorCard.portraitAlt', { name: author.authorName })"
-        class="absolute inset-0 size-full object-cover"
-        loading="lazy"
-        decoding="async"
-        @error="handleImageError"
-      />
-      <AuthorPlaceholder v-else :name="author.authorName" :class="{ 'opacity-50': busy }" />
+      <div data-testid="author-artwork" class="absolute inset-0" :class="{ 'opacity-50': busy }">
+        <MonitoredAuthorPortrait :name="author.authorName" :image-url="portraitUrl" :cover-book-id="author.coverBookId" />
+      </div>
 
       <Tooltip v-if="copy">
         <TooltipTrigger as-child>

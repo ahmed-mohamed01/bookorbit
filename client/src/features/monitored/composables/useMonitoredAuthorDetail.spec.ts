@@ -92,6 +92,7 @@ function detail(): MonitoredAuthorDetail {
       counts: { total: 1, ebookOwned: 0, audioOwned: 0, hidden: 0 },
       nextReleaseAt: null,
       portraitAuthorId: null,
+      coverBookId: null,
       description: null,
       website: null,
       genres: [],

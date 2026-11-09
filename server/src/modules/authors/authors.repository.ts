@@ -313,6 +313,18 @@ export class AuthorsRepository {
       .where(or(...clauses));
   }
 
+  async findCoverBookIds(authorIds: number[], libraryIds: number[]): Promise<Map<number, number>> {
+    const uniqueIds = [...new Set(authorIds)];
+    if (uniqueIds.length === 0 || libraryIds.length === 0) return new Map();
+    const rows = await this.db
+      .select({ id: authors.id, coverBookId: this.coverBookIdExpr(libraryIds) })
+      .from(authors)
+      .where(inArray(authors.id, uniqueIds));
+    const covers = new Map<number, number>();
+    for (const row of rows) if (row.coverBookId != null) covers.set(row.id, row.coverBookId);
+    return covers;
+  }
+
   async findBookIdsPage(params: {
     authorId: number;
     page: number;
@@ -513,12 +525,14 @@ export class AuthorsRepository {
    * one index lookup per author on the page instead of widening the grouped join.
    */
   private coverBookIdExpr(libraryIds: number[]): SQL<number | null> {
+    // Not ${authors.id}: Drizzle renders that as a bare "id" in a single-table select, which binds
+    // to the subquery's own tables instead of the outer author.
     return sql<number | null>`(
       SELECT cb.id
       FROM ${bookAuthors} cba
       JOIN ${books} cb ON cb.id = cba.book_id
       JOIN ${bookMetadata} cm ON cm.book_id = cb.id
-      WHERE cba.author_id = ${authors.id}
+      WHERE cba.author_id = ${authors}."id"
         AND cb.library_id IN (${sql.join(
           libraryIds.map((id) => sql`${id}`),
           sql`, `,

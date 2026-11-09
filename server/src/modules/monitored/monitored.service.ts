@@ -114,7 +114,14 @@ const CREATE_FETCH_COOLDOWN_MS = 10 * 1000;
 const HARDCOVER_REQUIRED_MESSAGE =
   'Monitoring needs a Hardcover token. Connect your Hardcover account under Settings > Integrations > Hardcover, or ask an administrator to enable the Hardcover metadata source.';
 
-type AuthorProfileMetadata = { description: string | null; website: string | null; genres: string[]; portraitAuthorId: number | null };
+type AuthorProfileMetadata = {
+  description: string | null;
+  website: string | null;
+  genres: string[];
+  portraitAuthorId: number | null;
+  coverBookId: number | null;
+};
+type AuthorArtwork = Pick<AuthorProfileMetadata, 'portraitAuthorId' | 'coverBookId'>;
 type BulkRequestCandidate = {
   resultIndex: number;
   workId: string;
@@ -243,7 +250,10 @@ export class MonitoredService {
       order: query.order ?? 'asc',
       today,
     });
-    const portraits = await this.resolvePortraits(page.items.map((item) => item.author));
+    const artwork = await this.resolveArtwork(
+      page.items.map((item) => item.author),
+      user,
+    );
     return {
       ...page,
       items: page.items.map(({ author, aggregate }) =>
@@ -251,7 +261,8 @@ export class MonitoredService {
           description: null,
           website: null,
           genres: [],
-          portraitAuthorId: portraits.get(author.id) ?? null,
+          portraitAuthorId: artwork.get(author.id)?.portraitAuthorId ?? null,
+          coverBookId: artwork.get(author.id)?.coverBookId ?? null,
         }),
       ),
     };
@@ -268,14 +279,17 @@ export class MonitoredService {
   }
 
   // Resolve each monitored author to a local authors row (by link or name) in a single query so the
-  // list cards can show the author portrait without an N+1 lookup per card.
-  private async resolvePortraits(monitors: MonitoredAuthorConfig[]): Promise<Map<string, number | null>> {
-    const result = new Map<string, number | null>();
+  // list cards can show the author's artwork without an N+1 lookup per card.
+  private async resolveArtwork(monitors: MonitoredAuthorConfig[], user: RequestUser): Promise<Map<string, AuthorArtwork>> {
+    const result = new Map<string, AuthorArtwork>();
     if (monitors.length === 0) return result;
-    const rows = await this.authorsRepository.findPortraitCandidates(
-      monitors.map((monitor) => monitor.localAuthorId).filter((id): id is number => id != null),
-      monitors.map((monitor) => monitor.authorName),
-    );
+    const [rows, libraryIds] = await Promise.all([
+      this.authorsRepository.findPortraitCandidates(
+        monitors.map((monitor) => monitor.localAuthorId).filter((id): id is number => id != null),
+        monitors.map((monitor) => monitor.authorName),
+      ),
+      this.libraryService.findAccessibleLibraryIds(user),
+    ]);
     const byId = new Map<number, boolean>();
     const byName = new Map<string, { id: number; hasPhoto: boolean }>();
     for (const row of rows) {
@@ -283,12 +297,22 @@ export class MonitoredService {
       const key = row.name.trim().toLowerCase();
       if (!byName.has(key)) byName.set(key, { id: row.id, hasPhoto: row.hasPhoto });
     }
-    for (const monitor of monitors) {
-      const candidate =
+    const candidates = monitors.map((monitor) => ({
+      monitorId: monitor.id,
+      candidate:
         monitor.localAuthorId != null
           ? { id: monitor.localAuthorId, hasPhoto: byId.get(monitor.localAuthorId) ?? false }
-          : (byName.get(monitor.authorName.trim().toLowerCase()) ?? null);
-      result.set(monitor.id, candidate?.hasPhoto ? candidate.id : null);
+          : (byName.get(monitor.authorName.trim().toLowerCase()) ?? null),
+    }));
+    const covers = await this.authorsRepository.findCoverBookIds(
+      candidates.flatMap(({ candidate }) => (candidate ? [candidate.id] : [])),
+      libraryIds,
+    );
+    for (const { monitorId, candidate } of candidates) {
+      result.set(monitorId, {
+        portraitAuthorId: candidate?.hasPhoto ? candidate.id : null,
+        coverBookId: candidate ? (covers.get(candidate.id) ?? null) : null,
+      });
     }
     return result;
   }
@@ -365,7 +389,7 @@ export class MonitoredService {
       user,
     );
     if (input.paused === true) this.coordinator.clearRetry(id);
-    const [catalog, metadata] = await Promise.all([this.store.getCatalog(id, user), this.loadAuthorProfile(updated)]);
+    const [catalog, metadata] = await Promise.all([this.store.getCatalog(id, user), this.loadAuthorProfile(updated, user)]);
     return this.toAuthorItem(updated, this.summarizeWorks(updated, catalog?.works ?? []), user, metadata);
   }
 
@@ -402,7 +426,7 @@ export class MonitoredService {
     const current = await this.getWritableAuthor(id, user);
     const [aggregates, metadata] = await Promise.all([
       this.store.getAuthorAggregates([id], user, new Date().toISOString().slice(0, 10)),
-      this.loadAuthorProfile(current),
+      this.loadAuthorProfile(current, user),
     ]);
     return this.toAuthorItem(current, aggregates.get(id) ?? this.summarizeWorks(current, []), user, metadata);
   }
@@ -414,7 +438,7 @@ export class MonitoredService {
     if (!owner || !isEligibleMonitoredUser(owner)) return null;
     const [aggregates, metadata] = await Promise.all([
       this.store.getAuthorAggregates([monitorId], owner, new Date().toISOString().slice(0, 10)),
-      this.loadAuthorProfile(monitor),
+      this.loadAuthorProfile(monitor, owner),
     ]);
     return this.toAuthorItem(monitor, aggregates.get(monitorId) ?? this.summarizeWorks(monitor, []), owner, metadata);
   }
@@ -621,14 +645,16 @@ export class MonitoredService {
       contentFilters: user.isSuperuser ? undefined : user.contentFilters,
     });
     const hardcoverResults = isHardcoverConfigured(providerConfig) ? await this.searchHardcoverAuthors(q, providerConfig.hardcover.apiKey, user) : [];
+    const localPhotoUrls = await Promise.all(local.items.map((author) => this.authorImageStorage.getThumbnailUrlIfExists(author.id)));
     const byName = new Map<string, MonitoredAuthorSearchResult>();
-    for (const author of local.items) {
+    for (const [index, author] of local.items.entries()) {
       byName.set(normalizeMonitoredName(author.name), {
         name: author.name,
         providerIds: {},
         localAuthorId: author.id,
         bookCount: author.bookCount,
-        imageUrl: null,
+        imageUrl: localPhotoUrls[index],
+        coverBookId: author.coverBookId,
         genres: [],
         alreadyMonitoredId: null,
       });
@@ -641,7 +667,8 @@ export class MonitoredService {
         providerIds: { ...current?.providerIds, hardcover: String(hit.id) },
         localAuthorId: current?.localAuthorId ?? null,
         bookCount: hit.books_count ?? current?.bookCount ?? null,
-        imageUrl: hit.image?.url ?? current?.imageUrl ?? null,
+        imageUrl: current?.imageUrl ?? hit.image?.url ?? null,
+        coverBookId: current?.coverBookId ?? null,
         genres: hit.genres ?? current?.genres ?? [],
         alreadyMonitoredId: null,
       });
@@ -1190,6 +1217,7 @@ export class MonitoredService {
       counts: aggregate.counts,
       nextReleaseAt: aggregate.nextReleaseAt,
       portraitAuthorId: metadata?.portraitAuthorId ?? null,
+      coverBookId: metadata?.coverBookId ?? null,
       description: metadata?.description ?? null,
       website: metadata?.website ?? null,
       genres: metadata?.genres ?? [],
@@ -1244,7 +1272,7 @@ export class MonitoredService {
 
   // Monitored authors are often added from a provider search with no local link, so resolve the local
   // authors row by id or by name to surface a curated portrait, bio, website, and genres on the detail page.
-  private async loadAuthorProfile(monitor: MonitoredAuthorConfig): Promise<AuthorProfileMetadata | null> {
+  private async loadAuthorProfile(monitor: MonitoredAuthorConfig, viewer?: RequestUser): Promise<AuthorProfileMetadata | null> {
     const localAuthorId = monitor.localAuthorId ?? (await this.authorsRepository.findIdByNormalizedName(monitor.authorName));
     if (localAuthorId == null) return null;
     const row = await this.authorsRepository.findByIdForEnrichment(localAuthorId);
@@ -1254,7 +1282,14 @@ export class MonitoredService {
       website: row.website ?? null,
       genres: row.genres ?? [],
       portraitAuthorId: row.hasPhoto ? localAuthorId : null,
+      coverBookId: viewer ? await this.findCoverBookId(localAuthorId, viewer) : null,
     };
+  }
+
+  private async findCoverBookId(authorId: number, viewer: RequestUser): Promise<number | null> {
+    const libraryIds = await this.libraryService.findAccessibleLibraryIds(viewer);
+    const covers = await this.authorsRepository.findCoverBookIds([authorId], libraryIds);
+    return covers.get(authorId) ?? null;
   }
 
   /**
@@ -1292,7 +1327,7 @@ export class MonitoredService {
     user: RequestUser,
     query: MonitoredAuthorDetailQueryDto,
   ): Promise<MonitoredAuthorDetail> {
-    const metadata = await this.loadAuthorProfile(monitor);
+    const metadata = await this.loadAuthorProfile(monitor, user);
     const direction = query.order === 'asc' ? 1 : -1;
     // Showing hidden works is the owner reviewing their own curation, not a viewer opting out of it.
     const isOwner = isOwnerView(monitor.ownerUserId, user);

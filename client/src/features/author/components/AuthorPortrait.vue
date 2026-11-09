@@ -20,7 +20,7 @@ import { authorInitials } from '../lib/author-identity'
  */
 const props = withDefaults(
   defineProps<{
-    author: AuthorSummary
+    author: Pick<AuthorSummary, 'name' | 'imageUrl' | 'coverBookId'> & { id: number | string }
     shape?: 'square' | 'circle'
     /** Marks cover-derived artwork so it never reads as a photograph of the person. */
     showSourceBadge?: boolean

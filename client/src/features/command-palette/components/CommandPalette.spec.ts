@@ -138,6 +138,7 @@ it('proxies catalog work, book and author images', async () => {
       author: {
         name: 'A',
         imageUrl: 'https://covers.example/author.jpg',
+        coverBookId: null,
         providerIds: {},
         localAuthorId: null,
         bookCount: null,

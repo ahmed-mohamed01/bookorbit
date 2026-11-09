@@ -203,6 +203,7 @@ export class MonitoredUniversalSearchService {
         localAuthorId: null,
         bookCount: hit.booksCount,
         imageUrl: hit.imageUrl,
+        coverBookId: null,
         genres: hit.genres,
         alreadyMonitoredId: null,
       });

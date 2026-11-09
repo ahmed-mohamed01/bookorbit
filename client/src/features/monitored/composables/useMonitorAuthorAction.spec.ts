@@ -34,6 +34,7 @@ function searchResult(extra: Partial<MonitoredAuthorSearchResult> = {}): Monitor
     localAuthorId: null,
     bookCount: 12,
     imageUrl: null,
+    coverBookId: null,
     genres: [],
     alreadyMonitoredId: null,
     ...extra,
@@ -47,6 +48,7 @@ function syntheticFallback(): MonitoredAuthorSearchResult {
     localAuthorId: 7,
     bookCount: 1,
     imageUrl: null,
+    coverBookId: null,
     genres: [],
     alreadyMonitoredId: null,
   }

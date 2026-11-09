@@ -623,6 +623,8 @@ export interface MonitoredAuthorItem extends MonitoredAuthorConfig {
   counts: MonitoredAuthorCounts;
   nextReleaseAt: string | null;
   portraitAuthorId: number | null;
+  /** A book of theirs in a library the viewer can access, for the "use a book cover" author artwork setting. Content filters are not applied, so a filtered viewer can be refused it. */
+  coverBookId: number | null;
   description: string | null;
   website: string | null;
   genres: string[];
@@ -695,6 +697,7 @@ export interface MonitoredAuthorSearchResult {
   localAuthorId: number | null;
   bookCount: number | null;
   imageUrl: string | null;
+  coverBookId: number | null;
   genres: string[];
   alreadyMonitoredId: string | null;
 }

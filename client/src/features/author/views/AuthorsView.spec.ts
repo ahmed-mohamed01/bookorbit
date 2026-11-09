@@ -27,6 +27,7 @@ function searchResult(extra: Partial<MonitoredAuthorSearchResult> = {}): Monitor
     localAuthorId: null,
     bookCount: 12,
     imageUrl: null,
+    coverBookId: null,
     genres: [],
     alreadyMonitoredId: null,
     ...extra,
@@ -312,6 +313,7 @@ describe('AuthorsView', () => {
         localAuthorId: 7,
         bookCount: 1,
         imageUrl: null,
+        coverBookId: null,
         genres: [],
         alreadyMonitoredId: null,
       })
@@ -329,6 +331,7 @@ describe('AuthorsView', () => {
         localAuthorId: 7,
         bookCount: 1,
         imageUrl: null,
+        coverBookId: null,
         genres: [],
         alreadyMonitoredId: null,
       })

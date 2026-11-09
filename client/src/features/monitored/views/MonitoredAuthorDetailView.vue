@@ -39,7 +39,7 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import ViewHeaderDisplayControls from '@/components/view-header/ViewHeaderDisplayControls.vue'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import AuthorPlaceholder from '@/features/author/components/AuthorPlaceholder.vue'
+import MonitoredAuthorPortrait from '../components/MonitoredAuthorPortrait.vue'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { useScrollRestoreOnActivate } from '@/features/book/composables/useScrollRestoreOnActivate'
 import { useBookRequestProgress } from '@/features/book-requests/composables/useBookRequestProgress'
@@ -133,7 +133,6 @@ function clearSearch() {
 }
 const confirmStopOpen = ref(false)
 const editOpen = ref(false)
-const imageFailed = ref(false)
 // The header's prose and links cost a full viewport on a phone, so they stay behind a toggle there.
 const detailsExpanded = ref(false)
 const panelWork = ref<MonitoredWork | null>(null)
@@ -221,10 +220,6 @@ function goBack() {
     return
   }
   void router.push({ name: 'monitored' })
-}
-
-function handleImageError() {
-  imageFailed.value = true
 }
 
 async function handleToggleMonitoring() {
@@ -591,14 +586,7 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
           <div class="bg-linear-to-b from-primary/8 via-background/0 to-transparent p-3 sm:p-5">
             <div class="flex gap-3 sm:gap-4">
               <div class="relative h-24 w-16 shrink-0 overflow-hidden rounded-lg border border-border bg-muted shadow-sm sm:h-44 sm:w-32">
-                <img
-                  v-if="portraitUrl && !imageFailed"
-                  :src="portraitUrl"
-                  :alt="author.authorName"
-                  class="size-full object-cover"
-                  @error="handleImageError"
-                />
-                <AuthorPlaceholder v-else :name="author.authorName" />
+                <MonitoredAuthorPortrait :name="author.authorName" :image-url="portraitUrl" :cover-book-id="author.coverBookId" show-source-badge />
               </div>
               <div class="min-w-0 flex-1">
                 <div class="flex flex-wrap items-start justify-between gap-3">
@@ -755,8 +743,7 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
             >
               <div class="flex shrink-0 items-center gap-2 ps-1">
                 <div v-if="pinned" class="hidden size-[26px] shrink-0 overflow-hidden rounded bg-muted sm:block">
-                  <img v-if="portraitUrl && !imageFailed" :src="portraitUrl" alt="" class="size-full object-cover" />
-                  <AuthorPlaceholder v-else :name="author.authorName" />
+                  <MonitoredAuthorPortrait :name="author.authorName" :image-url="portraitUrl" :cover-book-id="author.coverBookId" />
                 </div>
                 <span v-if="pinned" class="hidden max-w-[10rem] truncate text-[15px] font-bold lg:inline">{{ author.authorName }}</span>
                 <h2 v-else class="hidden text-[15px] font-bold sm:block">{{ t('monitored.detail.booksTitle') }}</h2>

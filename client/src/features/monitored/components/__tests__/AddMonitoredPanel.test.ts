@@ -31,7 +31,7 @@ const ModalStub = defineComponent({
 })
 
 function result(name: string, alreadyMonitoredId: string | null): MonitoredAuthorSearchResult {
-  return { name, providerIds: {}, localAuthorId: null, bookCount: 3, imageUrl: null, genres: [], alreadyMonitoredId }
+  return { name, providerIds: {}, localAuthorId: null, bookCount: 3, imageUrl: null, coverBookId: null, genres: [], alreadyMonitoredId }
 }
 
 function item(id: string, name: string, state: MonitoredAuthorItem['fetch']['state']): MonitoredAuthorItem {
