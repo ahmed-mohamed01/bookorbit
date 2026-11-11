@@ -1168,6 +1168,121 @@ describe('genuinely new primary file', () => {
     expect(mockMetadata.extractAndSave).toHaveBeenCalledWith(expect.any(Number), '/library/Book/metadata.opf', 'opf');
   });
 
+  describe('when only some metadata sources changed on disk', () => {
+    const epub = makeFileStat({ absolutePath: '/library/Book/book.epub', relPath: 'Book/book.epub', format: 'epub', role: 'content' });
+
+    function makeSidecarFile(name: string, format: string, ino: bigint) {
+      return makeFileStat({
+        absolutePath: `/library/Book/${name}`,
+        relPath: `Book/${name}`,
+        ino,
+        sizeBytes: 128,
+        mtime: new Date('2024-01-02'),
+        format,
+        role: 'metadata',
+      });
+    }
+
+    function makeExistingBookRepo(
+      metadataPrecedence: string[],
+      sidecar: FileStat,
+      stored: { epub?: Record<string, unknown>; sidecar?: Record<string, unknown> } = {},
+    ) {
+      return makeRepo({
+        findLibrarySettings: vi.fn().mockResolvedValue({
+          allowedFormats: [],
+          formatPriority: DEFAULT_FORMAT_PRIORITY,
+          metadataPrecedence,
+          excludePatterns: [],
+          organizationMode: 'book_per_folder',
+        }),
+        findBooksByLibraryFolder: vi
+          .fn()
+          .mockResolvedValue([{ id: 1, libraryId: 1, libraryFolderId: 1, folderPath: '/library/Book', primaryFileId: 10, status: 'present' }]),
+        findBookFilesByLibraryFolder: vi.fn().mockResolvedValue([
+          makeBookFile({ id: 10, bookId: 1, absolutePath: epub.absolutePath, relPath: epub.relPath, ino: epub.ino, sortOrder: 0, ...stored.epub }),
+          makeBookFile({
+            id: 11,
+            bookId: 1,
+            absolutePath: sidecar.absolutePath,
+            relPath: sidecar.relPath,
+            ino: sidecar.ino,
+            sizeBytes: 128,
+            mtime: new Date('2024-01-02'),
+            format: sidecar.format,
+            role: 'metadata',
+            sortOrder: 1,
+            ...stored.sidecar,
+          }),
+        ]),
+      });
+    }
+
+    async function scan(repo: ReturnType<typeof makeRepo>, sidecar: FileStat, extraMetadataSources: unknown[] = [], reextractMetadata = false) {
+      mockFindCandidates.mockResolvedValue({
+        candidates: [makeCandidate('/library/Book', [epub, sidecar])],
+        skippedDirs: new Set(),
+        unchangedDirs: new Set(),
+        dirMtimes: new Map(),
+      });
+      const done = awaitScan(repo);
+      const { service } = makeService(repo, undefined, undefined, undefined, extraMetadataSources);
+      await service.startScan(1, 'manual', reextractMetadata ? { reextractMetadata: true } : undefined);
+      await done;
+    }
+
+    it('does not re-read the unchanged leading EPUB when a lower-ranked OPF changes', async () => {
+      const extractAndSaveIfAvailable = vi.fn().mockResolvedValue(true);
+      (mockMetadata as Record<string, unknown>).extractAndSaveIfAvailable = extractAndSaveIfAvailable;
+      const opf = makeSidecarFile('metadata.opf', 'opf', 1002n);
+      const repo = makeExistingBookRepo(['embedded', 'opfFile'], opf, { sidecar: { mtime: new Date('2024-01-01') } });
+
+      await scan(repo, opf);
+
+      expect(extractAndSaveIfAvailable).not.toHaveBeenCalled();
+      expect(mockMetadata.extractAndSave).not.toHaveBeenCalled();
+    });
+
+    it('does not re-read the unchanged leading EPUB when a lower-ranked sidecar json changes', async () => {
+      const extractAndSaveIfAvailable = vi.fn().mockResolvedValue(true);
+      (mockMetadata as Record<string, unknown>).extractAndSaveIfAvailable = extractAndSaveIfAvailable;
+      const json = makeSidecarFile('metadata.json', 'json', 1003n);
+      const sidecarProvider = {
+        key: 'sidecar',
+        select: (files: { role: string; format: string | null; absolutePath: string }[]) => {
+          const file = files.find((f) => f.role === 'metadata' && f.format === 'json');
+          return file ? { file, format: 'json' } : null;
+        },
+      };
+      const repo = makeExistingBookRepo(['embedded', 'sidecar'], json, { sidecar: { mtime: new Date('2024-01-01') } });
+
+      await scan(repo, json, [sidecarProvider]);
+
+      expect(extractAndSaveIfAvailable).not.toHaveBeenCalled();
+      expect(mockMetadata.extractAndSave).not.toHaveBeenCalled();
+    });
+
+    it('extracts from the leading EPUB when the EPUB itself changes', async () => {
+      const opf = makeSidecarFile('metadata.opf', 'opf', 1002n);
+      const repo = makeExistingBookRepo(['embedded', 'opfFile'], opf, { epub: { sizeBytes: 512, mtime: new Date('2023-12-01') } });
+
+      await scan(repo, opf);
+
+      expect(mockMetadata.extractAndSave).toHaveBeenCalledTimes(1);
+      expect(mockMetadata.extractAndSave).toHaveBeenCalledWith(1, epub.absolutePath, 'epub');
+    });
+
+    it('still extracts the leading source on a reextractMetadata scan with nothing changed on disk', async () => {
+      const opf = makeSidecarFile('metadata.opf', 'opf', 1002n);
+      const repo = makeExistingBookRepo(['embedded', 'opfFile'], opf);
+
+      await scan(repo, opf, [], true);
+
+      expect(mockMetadata.extractAndSave).toHaveBeenCalledTimes(1);
+      expect(mockMetadata.extractAndSave).toHaveBeenCalledWith(1, epub.absolutePath, 'epub');
+    });
+  });
+
   it('continues scanning when metadata extraction fails', async () => {
     mockMetadata.extractAndSave.mockRejectedValueOnce(new Error('parse error'));
     const candidate = makeCandidate('/library/Book', [makeFileStat()]);

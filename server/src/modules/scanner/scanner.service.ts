@@ -2374,7 +2374,9 @@ export class ScannerService implements OnApplicationBootstrap {
     //   - A successful sidecar owns text metadata; an audio winner may supply only its embedded cover.
     //   - Audio-specific fields (chapters, narrators, duration) come from audio if present, but a
     //     configured source that names narrators itself outranks the audio tags.
-    //   - Extraction only fires when at least one configured metadata source is new, reassigned, or changed.
+    //   - Extraction only fires when the leading configured metadata source is new, reassigned, or changed.
+    //     A lower-ranked source cannot win, so re-reading on its change would only re-import the
+    //     unchanged leading source over the saved metadata.
 
     // A file this instance is writing right now holds whatever its tags said before the write
     // reached it. The database is the source those tags are being written from, so reading any of
@@ -2382,8 +2384,9 @@ export class ScannerService implements OnApplicationBootstrap {
     const selfWriteInProgress = registeredFiles.some((file) => this.selfWriteRegistry.isSuppressed(file.absolutePath));
 
     const metadataSources = this.buildMetadataExtractionSources(registeredFiles, winner, metadataPrecedence);
+    const leadingMetadataSource = metadataSources[0];
     const shouldExtractMetadata =
-      metadataSources.some((source) => hasMetadataSourceChanged(source.file)) ||
+      (leadingMetadataSource !== undefined && hasMetadataSourceChanged(leadingMetadataSource.file)) ||
       (regexContext?.config != null &&
         winner !== null &&
         (hasMetadataSourceChanged(winner) || winner.wasPathChanged || winner.fileId !== book.primaryFileId)) ||
