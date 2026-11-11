@@ -39,7 +39,9 @@ RUN cd /deploy && \
 
 FROM ${NODE_IMAGE} AS runtime
 WORKDIR /app
+# Pick up Debian security fixes the base tag has not been rebuilt with yet; the image scan fails on them otherwise.
 RUN apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
     apt-get install -y --no-install-recommends ca-certificates ffmpeg tini && \
     rm -rf /var/lib/apt/lists/* && \
     rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx && \
