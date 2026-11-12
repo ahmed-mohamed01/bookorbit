@@ -87,6 +87,8 @@ import BookCoverSurface from '@/features/book/components/BookCoverSurface.vue'
 import { useDisplaySettings } from '@/composables/useDisplaySettings'
 import HardcoverBookSyncGridItem from '@/features/hardcover/components/HardcoverBookSyncGridItem.vue'
 import StorygraphBookSyncGridItem from '@/features/storygraph/components/StorygraphBookSyncGridItem.vue'
+import AudioConvertMenuItem from '@/features/audio-convert/components/AudioConvertMenuItem.vue'
+import { useAudioConvertVisible } from '@/features/audio-convert/composables/useAudioConvertVisible'
 import EditionSyncCardHeader from '@/features/edition-sync/components/EditionSyncCardHeader.vue'
 import EditionSyncHeaderStatus from '@/features/edition-sync/components/EditionSyncHeaderStatus.vue'
 import { useEditionSyncBookState } from '@/features/edition-sync/composables/useEditionSyncBookState'
@@ -160,6 +162,8 @@ const linkExcludedIds = computed(() => linkedBooks.value.map((book) => book.book
 const scoreBreakdownOpen = ref(false)
 const mobileScoreBreakdownOpen = ref(false)
 const moreMenuOpen = ref(false)
+// Fork: Convert to M4B in the ⋮ menu.
+const { offered: canConvertAudio } = useAudioConvertVisible(() => props.book)
 const mobileMoreMenuOpen = ref(false)
 const readMenuOpen = ref(false)
 const mobileReadMenuOpen = ref(false)
@@ -1596,7 +1600,9 @@ watch(
               <Send class="size-3.5" />
             </button>
             <Popover
-              v-if="canManageReadingState || canEditMetadata || canMergeBook || canLinkBook || hasPermission('library_delete_books')"
+              v-if="
+                canManageReadingState || canEditMetadata || canMergeBook || canLinkBook || canConvertAudio || hasPermission('library_delete_books')
+              "
               :open="moreMenuOpen"
               @update:open="(v) => (moreMenuOpen = v)"
             >
@@ -1662,6 +1668,7 @@ watch(
                   <Unlink class="size-3.5 shrink-0" aria-hidden="true" />
                   {{ t('book.link.unlink') }}
                 </button>
+                <AudioConvertMenuItem v-if="canConvertAudio" @select="closeMoreMenus" />
                 <button
                   v-if="hasPermission('library_delete_books')"
                   class="flex w-full items-center gap-2 px-2 py-1.5 text-start rounded-xs text-sm text-destructive hover:bg-destructive/10 transition-colors"

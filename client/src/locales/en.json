@@ -17832,5 +17832,262 @@
         "description": "Read 500 pages this month"
       }
     }
+  },
+  "audioConvert": {
+    "tool": {
+      "tab": "Convert to M4B",
+      "title": "Convert to M4B"
+    },
+    "scope": {
+      "canConvert": "Ready",
+      "waiting": "Waiting",
+      "converted": "M4B",
+      "cannot": "Can't"
+    },
+    "tag": {
+      "cannot": "Can't",
+      "waiting": "Waiting",
+      "files": "{count, plural, one {# file} other {# files}}"
+    },
+    "codec": {
+      "auto": "Auto",
+      "copy": "Copy",
+      "aac": "AAC"
+    },
+    "codecHint": {
+      "auto": "Copies the audio when a book's files match, otherwise re-encodes to AAC.",
+      "copy": "No re-encoding. Books whose files don't match are skipped.",
+      "aac": "Re-encodes every book. Slower, and quality drops a little."
+    },
+    "codecReason": {
+      "all_match": "All files match, joined without re-encoding",
+      "mixed_codecs": "Files use different codecs, so it's re-encoded",
+      "mixed_sample_rates": "Files differ in sample rate, so it's re-encoded",
+      "mixed_channels": "Files differ in channels, so it's re-encoded",
+      "not_aac_compatible": "This audio can't go into an M4B as is, so it's re-encoded"
+    },
+    "channels": {
+      "keep": "Keep",
+      "mono": "Mono",
+      "stereo": "Stereo"
+    },
+    "stage": {
+      "metadata": "Filling metadata",
+      "chapters": "Fetching chapters",
+      "ready": "Queued",
+      "converting": "Joining audio",
+      "swapping": "Swapping files"
+    },
+    "pipeline": {
+      "title": "Automatic conversion",
+      "metadata": "Fill metadata",
+      "chapters": "Fetch chapters",
+      "convert": "Convert",
+      "next": "Next step {when}",
+      "help": "New MP3 books get their metadata and chapters first, then convert. Skip leaves this book as it is; Convert now skips the remaining steps.",
+      "skip": "Skip",
+      "convertNow": "Convert now"
+    },
+    "reason": {
+      "no_audio": "No audio files to convert.",
+      "mixed_formats_with_m4b": "Mixes an M4B with other audio files.",
+      "folder_not_writable": "The book's folder isn't writable by BookOrbit.",
+      "low_disk": "Not enough free disk space to convert it.",
+      "probe_failed": "The audio files couldn't be read.",
+      "unknown": "This book can't be converted."
+    },
+    "error": {
+      "book_missing": "The book is missing.",
+      "no_audio": "No audio files to convert.",
+      "already_converted": "Already a single M4B.",
+      "mixed_formats_with_m4b": "Mixes an M4B with other audio files.",
+      "folder_not_writable": "The book's folder isn't writable.",
+      "low_disk": "Not enough free disk space.",
+      "probe_failed": "The audio files couldn't be read.",
+      "ffmpeg_failed": "Joining the audio failed.",
+      "verify_failed": "The new file didn't pass verification, so the originals were kept.",
+      "backup_failed": "The originals couldn't be backed up.",
+      "swap_failed": "The new file couldn't replace the originals.",
+      "files_changed": "The files changed while converting.",
+      "interrupted": "The conversion was interrupted.",
+      "disabled": "Convert to M4B is turned off.",
+      "unknown": "The conversion failed."
+    },
+    "rail": {
+      "selectLibrary": "Select a library...",
+      "scope": "Show books",
+      "searchPlaceholder": "Search title or author",
+      "searchLabel": "Search books",
+      "clearSearch": "Clear search",
+      "toggleAll": "Select all books",
+      "selected": "{count} of {total} selected",
+      "list": "Books",
+      "unknownAuthor": "Unknown author",
+      "expand": "Expand {author}",
+      "collapse": "Collapse {author}",
+      "toggleAuthor": "Select books by {author}",
+      "toggleBook": "Select {title}",
+      "loadMore": "Load more",
+      "noMatch": "No books match.",
+      "empty": {
+        "can_convert": "No books to convert.",
+        "waiting": "No new books are waiting.",
+        "converted": "No converted books yet.",
+        "cannot": "Every book can be converted."
+      }
+    },
+    "detail": {
+      "noneTitle": "No book selected",
+      "noneDescription": "Pick a book on the left to see what converting it does.",
+      "back": "Back to the list",
+      "openBook": "Open book",
+      "leftOut": "Left out",
+      "files": "Files",
+      "moreFiles": "{count, plural, one {… # more file} other {… # more files}}",
+      "kbps": "{value} kbps",
+      "khz": "{value} kHz",
+      "about": "about {size}",
+      "whatHappens": "What happens",
+      "row": {
+        "audio": "Audio",
+        "length": "Length",
+        "chapters": "Chapters",
+        "metadata": "Metadata",
+        "positions": "Positions",
+        "readAlong": "Read along",
+        "original": "Original"
+      },
+      "lengthUnchanged": "{length}, unchanged",
+      "chapters": {
+        "none": "No chapters",
+        "embedded": "{count, plural, one {# chapter from the files} other {# chapters from the files}}",
+        "stored": "{count, plural, one {# chapter from BookOrbit} other {# chapters from BookOrbit}}",
+        "per_file": "{count, plural, one {# chapter, one per file} other {# chapters, one per file}}"
+      },
+      "metadata": "Title, author, narrator, series",
+      "metadataWithCover": "Title, author, narrator, series, cover",
+      "positions": {
+        "none": "Nobody has started it",
+        "kept": "{count, plural, one {# listener kept} other {# listeners kept}}",
+        "moved": "{count, plural, one {# listener kept, moved onto the joined file} other {# listeners kept, moved onto the joined file}}",
+        "bookmarks": "{count, plural, one {# bookmark} other {# bookmarks}}"
+      },
+      "readAlong": {
+        "none": "No index",
+        "kept": "Kept",
+        "rebuilt": "Rebuilt after the merge"
+      },
+      "original": {
+        "kept": "{days, plural, one {Backed up, deleted after # day} other {Backed up, deleted after # days}}",
+        "deleted": "Deleted once the M4B is verified",
+        "unknown": "Backed up, then deleted"
+      },
+      "downloads": "Copies downloaded on phones need downloading again.",
+      "lastFailed": "The last attempt failed.",
+      "planFailed": "Couldn't load what converting this book does.",
+      "alreadyM4b": "Already a single M4B.",
+      "convertedAt": "Converted {when}.",
+      "selectedCount": "{count} selected",
+      "position": "{index} of {total}",
+      "previous": "Previous book",
+      "next": "Next book",
+      "leaveOut": "Leave out",
+      "include": "Include",
+      "convert": "{count, plural, one {Convert # book} other {Convert # books}}"
+    },
+    "confirm": {
+      "title": "{count, plural, one {Convert # book to M4B?} other {Convert # books to M4B?}}",
+      "body": "{days, plural, one {Originals move to backups and are deleted after # day. Jobs keep running if you leave this page.} other {Originals move to backups and are deleted after # days. Jobs keep running if you leave this page.}}",
+      "bodyNoBackup": "Originals are deleted once each M4B is verified. Jobs keep running if you leave this page.",
+      "bodyUnknownBackup": "Originals move to backups and are deleted later. Jobs keep running if you leave this page.",
+      "audio": "Audio",
+      "bitrate": "Bitrate",
+      "channels": "Channels",
+      "readAlong": "This book's read-along index is rebuilt after the merge.",
+      "downloads": "Copies downloaded on phones need downloading again.",
+      "go": "{count, plural, one {Convert # book} other {Convert # books}}"
+    },
+    "run": {
+      "converting": "Converting {index} of {total}",
+      "done": "Converted {done} of {total}",
+      "starting": "Starting...",
+      "failed": "{count, plural, one {# failed} other {# failed}}",
+      "backups": "{days, plural, one {Originals are in backups for # day.} other {Originals are in backups for # days.}}",
+      "backupsUnknown": "Originals are in backups.",
+      "stop": "Stop after this book",
+      "dismiss": "Dismiss"
+    },
+    "toast": {
+      "queued": "{count, plural, one {# book queued} other {# books queued}}",
+      "queuedSkipped": "{count, plural, one {# book queued} other {# books queued}}, {skipped} skipped",
+      "runFailed": "Couldn't start the conversion.",
+      "stopped": "{count, plural, =0 {Nothing left in the queue} one {# queued book cancelled} other {# queued books cancelled}}",
+      "stopFailed": "Couldn't stop the conversion.",
+      "actionFailed": "That didn't work. Try again."
+    },
+    "book": {
+      "action": "Convert to M4B",
+      "stop": "Stop",
+      "waiting": "Waiting",
+      "queued": "Queued",
+      "started": "Conversion started.",
+      "done": "Converted to M4B.",
+      "alreadyConverted": "Already a single M4B.",
+      "planFailed": "Couldn't check this book.",
+      "failed": "Conversion to M4B failed."
+    },
+    "view": {
+      "emptyTitle": "Convert to M4B",
+      "emptyDescription": "Join a book's MP3 files into one M4B with chapters, tags and cover. Pick a library to start.",
+      "disabledTitle": "Convert to M4B is turned off",
+      "disabledDescription": "An admin can turn it on in Settings, Fork, Audio conversion.",
+      "previewFailed": "Couldn't load the books.",
+      "httpError": "The server answered {status}.",
+      "unknownError": "The server couldn't be reached."
+    },
+    "settings": {
+      "heading": "Audio conversion",
+      "navDescription": "Join MP3 books into M4B files with chapters, and handle new MP3 books automatically",
+      "loadFailed": "Couldn't load the audio conversion settings.",
+      "enabled": {
+        "title": "Convert to M4B",
+        "help": "Shows the tool in Tools and on book pages for library managers."
+      },
+      "auto": {
+        "title": "Convert new MP3 books",
+        "help": "{minutes, plural, one {Fills metadata, fetches chapters, then converts, # minute after the scanner adds a book.} other {Fills metadata, fetches chapters, then converts, # minutes after the scanner adds a book.}}"
+      },
+      "codec": {
+        "title": "Default audio",
+        "help": "Auto copies the audio when the files match, otherwise AAC."
+      },
+      "encoder": {
+        "title": "AAC bitrate and channels",
+        "help": "Used whenever audio is re-encoded."
+      },
+      "embedChapters": {
+        "title": "Embed chapters",
+        "help": "Writes the book's chapters into the M4B."
+      },
+      "embedMetadata": {
+        "title": "Embed metadata and cover",
+        "help": "Title, authors, narrators, series, description and cover."
+      },
+      "backupDays": {
+        "title": "Keep originals for",
+        "help": "In BookOrbit's data folder. 0 deletes them once the conversion is verified.",
+        "invalid": "Enter a whole number from 0 to {max}.",
+        "unit": "days"
+      },
+      "noBackupDialog": {
+        "title": "Delete originals right away?",
+        "description": "With 0 days, original files are deleted as soon as each conversion is verified, with no backup to restore from.",
+        "confirm": "Save and delete originals"
+      },
+      "toast": {
+        "saved": "Audio conversion settings saved.",
+        "failed": "Couldn't save the audio conversion settings."
+      }
+    }
   }
 }

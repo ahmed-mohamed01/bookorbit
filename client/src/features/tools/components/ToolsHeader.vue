@@ -4,11 +4,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { Wrench } from '@lucide/vue'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
+import { useAudioConvertEnabled } from '@/features/audio-convert/composables/useAudioConvertEnabled'
 
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
 const { hasPermission } = usePermissions()
+// Fork: Convert to M4B tab, shown only while the tool is switched on.
+const { enabled: audioConvertEnabled } = useAudioConvertEnabled({ autoload: hasPermission('manage_libraries') })
 
 interface ToolSection {
   label: string
@@ -21,6 +24,7 @@ const sections = computed<ToolSection[]>(() => {
   if (hasPermission('manage_libraries')) {
     result.push({ label: t('tools.header.entityManager'), routeName: 'tools-entity-manager' })
     result.push({ label: t('tools.header.bulkRename'), routeName: 'tools-bulk-rename' })
+    if (audioConvertEnabled.value) result.push({ label: t('audioConvert.tool.tab'), routeName: 'tools-convert-m4b' })
   }
 
   if (hasPermission('library_delete_books') || hasPermission('library_merge_books')) {

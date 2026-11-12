@@ -218,6 +218,9 @@ function handleRetryReadAloud() {
           {{ t('book.detail.files.readAloud.action') }}
         </button>
 
+        <!-- Fork: extra actions (Convert to M4B) sit beside Add file. -->
+        <slot name="actions" />
+
         <button
           v-if="canUpload"
           class="inline-flex h-[34px] items-center gap-1.5 rounded-lg bg-primary px-3 text-[13px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

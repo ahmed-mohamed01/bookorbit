@@ -405,6 +405,13 @@ export const routes: RouteRecordRaw[] = [
             props: { embedded: true },
             meta: { maxWidth: 'max-w-3xl', title: () => t('settings.integrations.tabs.hardcover') },
           },
+          // Fork: Convert to M4B.
+          {
+            path: 'audio-conversion',
+            name: 'settings-audio-convert',
+            component: () => import('@/features/audio-convert/components/AudioConvertSettingsSection.vue'),
+            meta: { maxWidth: 'max-w-3xl', title: () => t('audioConvert.settings.heading'), requiredPermission: Permission.ManageAppSettings },
+          },
           {
             path: 'fork',
             name: 'settings-fork',
@@ -729,6 +736,13 @@ export const routes: RouteRecordRaw[] = [
             name: 'tools-bulk-rename',
             component: () => import('@/features/tools/bulk-rename/views/BulkRenameView.vue'),
             meta: { title: () => t('titles.bulkRename') },
+          },
+          // Fork: Convert to M4B.
+          {
+            path: 'convert-m4b',
+            name: 'tools-convert-m4b',
+            component: () => import('@/features/audio-convert/views/AudioConvertView.vue'),
+            meta: { title: () => t('audioConvert.tool.title') },
           },
           {
             path: 'duplicate-books',

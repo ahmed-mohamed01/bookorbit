@@ -89,6 +89,7 @@ export * from "./hardcover";
 export * from "./readwise";
 export * from "./read-aloud";
 export * from "./edition-sync";
+export * from "./audio-convert";
 export * from "./storygraph";
 export * from "./audiobookshelf";
 export * from "./path";

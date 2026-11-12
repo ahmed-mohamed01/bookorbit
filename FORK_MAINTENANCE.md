@@ -982,6 +982,62 @@ server does not compile. Whisper removal later: delete `reading-alignment/` and 
 `whisperFallback` on the book state becomes `false`. The worker image seams stay with the fork image
 even if the server module is removed. The fork tables can stay in the database; nothing else reads them.
 
+## Convert to M4B overlay (audio conversion)
+
+Joins a book's audio files (usually MP3) into one M4B with exact seeking, embedded chapters, tags and
+cover, modelled on Audiobookshelf's "Encode M4B" (`AbMergeManager`): ffmpeg concat list with pinned
+`duration` lines, an `;FFMETADATA1` file for tags and chapters, cover as `attached_pic`. Codec Auto
+copies the audio when every file shares codec, sample rate and channels, otherwise encodes AAC.
+Three entry points: **Tools › Convert to M4B** (batch, `manage_libraries`), a button on the book's
+Files tab (also reached from the book ⋮ menu and each audio file's ⋮ menu, which open the Files tab
+with `?convert=1`), and **Settings › Library › Audio conversion** (`/settings/audio-conversion`,
+`manage_app_settings`), whose "Convert new MP3
+books" switch sends a book through fill metadata → fetch chapters → convert 10 minutes after its
+last MP3 is added.
+
+The book keeps its first `book_files` row (asset id, progress, bookmarks survive). In one
+transaction the row becomes the M4B, `audiobook_progress` and audio bookmarks and stored chapters move from the stored
+timeline (plain running sum of whole-second `duration_seconds`, as the manifest and players use) to
+the exact one (a single file moves nothing), `reading_progress` keeps each user's newest row, every
+other single-column FK to `book_files.id` is re-pointed to the kept row (found from `pg_constraint`,
+each in a savepoint that tolerates only unique violations), and
+the merged rows are deleted with `deleteBookFilesWithHashInvalidation`. Originals are copied to
+`<APP_DATA_PATH>/audio-convert/backups/<bookId>-<jobId>/` first and deleted after `backup_days`.
+Phones that downloaded the old files must download again (positions key changes).
+The job records its swap phase, final path, hash and backup before the rename, so `recover()` on boot
+either finishes a committed swap or rolls an uncommitted one back. The book lock
+(`FileLockService`, `bookOperationLockKey`) is held only for the backup and swap; the listening and
+library-scan checks run again under it, and a failed check requeues the job.
+
+**Owned (fork-only) files - never conflict:** `server/src/modules/audio-convert/` (module, bootstrap
+SQL, repository, converter, queue, pipeline, controller, DTOs, tests), `server/test/audio-convert.e2e-spec.ts`,
+`packages/types/src/audio-convert.ts`, `client/src/features/audio-convert/`. Schema:
+`audio_convert_settings`, `audio_convert_jobs`, `audio_convert_watch`, created by
+`AudioConvertSchemaBootstrapService` (idempotent SQL, `onModuleInit`), never Drizzle migrations.
+
+**Seams / hooks in upstream files:**
+
+| Upstream file                                                                                                                                                     | Hook                                                                                                                                                    | Conflict cost                                    |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `book_files` (database trigger)                                                                                                                                   | Bootstrap-owned `audio_convert_book_files_added` (AFTER INSERT) depends on `book_id`, `role = 'content'`, `format`                                      | No upstream source edit; verify columns on merge |
+| `book_metadata_fetch_queue`                                                                                                                                       | Inserted directly (`manual_trigger`, `ON CONFLICT DO NOTHING`) and read for status; same semantics as `BookMetadataFetchQueueRepository.upsertSchedule` | Verify statuses/reasons on merge                 |
+| `ChapterEditorService.bulkLookup`, `AudioPlayOrderService`, `FileWriteRepository.loadPayload`, `BookCoverStore.resolve`, `MetadataService.aggregateAudioDuration` | Called as-is (all already exported)                                                                                                                     | Signature changes break the build                |
+| `app.module.ts`                                                                                                                                                   | import + register `AudioConvertModule`                                                                                                                  | 2 lines, additive                                |
+| `packages/types/src/index.ts`                                                                                                                                     | `export * from "./audio-convert"`                                                                                                                       | 1 line, additive                                 |
+| `book-consolidation/book-merge-fork-rules.test.ts`                                                                                                                | rules for `audio_convert_jobs.book_id`, `audio_convert_watch.book_id` + participant wiring row                                                          | test only                                        |
+| `client/src/router/index.ts`, `features/tools/components/ToolsHeader.vue`                                                                                         | `tools-convert-m4b` route and tab                                                                                                                       | ~10 lines                                        |
+| `client/src/features/book/components/detail/files/FilesHeroBar.vue`, `tabs/FilesTab.vue`                                                                          | `actions` slot; FilesTab fills it with `AudioConvertBookButton`, and passes `can-convert` / `@convert` to `FileListCard`                                | ~15 lines                                        |
+| `client/src/features/book/components/detail/files/FileListCard.vue`                                                                                               | `canConvert` prop, `convert` emit, one ⋮ menu item before Delete                                                                                        | ~8 lines                                         |
+| `client/src/features/book/components/detail/tabs/DetailsTab.vue`                                                                                                  | `AudioConvertMenuItem` in the ⋮ menu, gated by `useAudioConvertVisible`                                                                                 | ~6 lines                                         |
+| `client/src/features/settings/lib/settings-nav.ts`, `client/src/router/index.ts`                                                                                  | `audio-conversion` nav item (Library group) and `settings-audio-convert` route                                                                          | ~15 lines                                        |
+| `client/src/router/guards/auth.guard.ts`                                                                                                                          | awaits `useAudioConvertEnabled().load()` (cached) for `manage_libraries` users so the tab and button never pop in                                       | 2 lines                                          |
+| `client/src/locales/en.json`                                                                                                                                      | `audioConvert.*` keys                                                                                                                                   | additive                                         |
+
+**Plugin removal:** drop `AudioConvertModule` from `app.module.ts`, delete the owned files, revert the
+seams above, and drop the two rows from `book-merge-fork-rules.test.ts`. Drop the trigger with
+`DROP TRIGGER IF EXISTS audio_convert_book_files_added ON book_files` (otherwise every new MP3 row
+writes to `audio_convert_watch`); the tables can then be dropped or left alone.
+
 ## Remote read-aloud worker: local work folders
 
 A native worker on another machine (an Apple Silicon Mac for MLX) shares the job folder with the server

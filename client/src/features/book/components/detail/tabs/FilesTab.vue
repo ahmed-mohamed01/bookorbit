@@ -20,6 +20,9 @@ import FileDetailCard from '../files/FileDetailCard.vue'
 import WriteBackCard from '../files/WriteBackCard.vue'
 import AddBookFileModal from './AddBookFileModal.vue'
 import ReadAloudDialog from '@/features/read-aloud/components/ReadAloudDialog.vue'
+import AudioConvertBookButton from '@/features/audio-convert/components/AudioConvertBookButton.vue'
+import { useAudioConvertVisible } from '@/features/audio-convert/composables/useAudioConvertVisible'
+import { AUDIO_CONVERT_OPEN_QUERY } from '@/features/audio-convert/lib/audio-convert'
 import ReadAloudJobCard from '@/features/read-aloud/components/ReadAloudJobCard.vue'
 import { useReadAloud } from '@/features/read-aloud/composables/useReadAloud'
 import { isCompletedJob, readAloudEntryNote, resolveReadAloudEntry } from '@/features/read-aloud/lib/read-aloud'
@@ -388,6 +391,15 @@ async function confirmDelete() {
     deleting.value = false
   }
 }
+
+// Fork: Convert to M4B from a file row's ⋮ menu; the hero bar button owns the dialog.
+const { visible: showAudioConvert, offered: canConvertAudio } = useAudioConvertVisible(() => props.book)
+function handleAudioConverted(): void {
+  emit('refetch')
+}
+function openAudioConvert(): void {
+  void router.replace({ query: { ...route.query, [AUDIO_CONVERT_OPEN_QUERY]: '1' } })
+}
 </script>
 
 <template>
@@ -412,7 +424,11 @@ async function confirmDelete() {
       @add-file="openAddFileModal"
       @generate-read-aloud="openReadAloudDialog"
       @retry-read-aloud="retryReadAloudCheck"
-    />
+    >
+      <template #actions>
+        <AudioConvertBookButton v-if="showAudioConvert" :book="book" @converted="handleAudioConverted" />
+      </template>
+    </FilesHeroBar>
 
     <ReadAloudJobCard
       v-if="readAloudCardJob"
@@ -467,6 +483,8 @@ async function confirmDelete() {
         @rename="openRenameModal"
         @remove="openDeleteModal"
         @copy-path="copyPath"
+        :can-convert="canConvertAudio"
+        @convert="openAudioConvert"
       />
 
       <Teleport to="body" :disabled="!isPhone">

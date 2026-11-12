@@ -4,6 +4,7 @@ import { useChangePasswordDialog } from '@/composables/useChangePasswordDialog'
 import { useSetupStatus } from '@/features/auth/composables/useSetupStatus'
 import { useLoginOptions } from '@/features/auth/composables/useLoginOptions'
 import { whenSessionResolved } from '@/features/auth/composables/useSessionBootstrap'
+import { useAudioConvertEnabled } from '@/features/audio-convert/composables/useAudioConvertEnabled'
 
 const PASSWORD_ONLY_PUBLIC_PATHS = new Set(['/forgot-password', '/reset-password'])
 
@@ -84,6 +85,9 @@ export function registerAuthGuard(router: Router): void {
     ) {
       return { name: 'settings-appearance-behavior' }
     }
+
+    // Fork: Convert to M4B. Known before the first page draws, so its Tools tab and book button never pop in.
+    if (user.value.isSuperuser || permissions.includes('manage_libraries')) await useAudioConvertEnabled({ autoload: false }).load()
 
     return true
   })

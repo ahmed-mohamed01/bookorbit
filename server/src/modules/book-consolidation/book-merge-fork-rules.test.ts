@@ -3,6 +3,8 @@ import { join } from 'node:path';
 
 import { MODULE_METADATA } from '@nestjs/common/constants';
 
+import { AudioConvertBookConsolidationParticipant } from '../audio-convert/audio-convert-book-consolidation.participant';
+import { AudioConvertModule } from '../audio-convert/audio-convert.module';
 import { AudiobookshelfBookConsolidationParticipant } from '../audiobookshelf/audiobookshelf-book-consolidation.participant';
 import { AudiobookshelfModule } from '../audiobookshelf/audiobookshelf.module';
 import { reviveCoverSlots } from '../book-merge/book-merge.executor';
@@ -24,6 +26,8 @@ type ForkMergeRule = 'repoint' | 'repoint-kept-wins' | 'repoint-pair' | 'repoint
  * `follows-cover-slot` has no participant: adoptSlots copies the flag after commit, with the slot.
  */
 const FORK_BOOK_MERGE_RULES: Record<string, ForkMergeRule> = {
+  'audio_convert_jobs.book_id': 'repoint',
+  'audio_convert_watch.book_id': 'repoint-kept-wins',
   'audiobook_alignment.audio_book_id': 'repoint-pair',
   'audiobook_alignment.text_book_id': 'repoint-pair',
   'audiobookshelf_book_state.book_id': 'repoint',
@@ -92,6 +96,7 @@ describe('fork book merge rules', () => {
     ['reading alignment', ReadingAlignmentModule, ReadingAlignmentBookConsolidationParticipant],
     ['edition sync', EditionSyncModule, EditionSyncBookConsolidationParticipant],
     ['web serials', WebSerialsModule, WebSerialsBookConsolidationParticipant],
+    ['audio convert', AudioConvertModule, AudioConvertBookConsolidationParticipant],
   ])('wires the %s participant to the shared registry', (_name, module, participant) => {
     expect(Reflect.getMetadata(MODULE_METADATA.PROVIDERS, module)).toContain(participant);
     expect(Reflect.getMetadata(MODULE_METADATA.IMPORTS, module)).toContain(BookConsolidationModule);

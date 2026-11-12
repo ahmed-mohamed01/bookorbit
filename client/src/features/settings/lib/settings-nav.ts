@@ -7,6 +7,7 @@ import {
   BookOpen,
   Database,
   DownloadCloud,
+  FileAudio,
   FileText,
   Filter,
   GitFork,
@@ -363,6 +364,16 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         descriptionKey: 'settings.nav.descriptions.fileNaming',
         icon: FileText,
         keywords: 'file naming pattern template rename folder structure',
+        isVisible: anyPermission(Permission.ManageAppSettings),
+      },
+      // Fork: Convert to M4B.
+      {
+        id: 'audio-conversion',
+        routeName: 'settings-audio-convert',
+        labelKey: 'audioConvert.settings.heading',
+        descriptionKey: 'audioConvert.settings.navDescription',
+        icon: FileAudio,
+        keywords: 'audio conversion convert m4b mp3 merge chapters encode aac backup',
         isVisible: anyPermission(Permission.ManageAppSettings),
       },
       {

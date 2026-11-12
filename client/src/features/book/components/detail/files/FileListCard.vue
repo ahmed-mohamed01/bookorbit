@@ -21,6 +21,8 @@ const props = defineProps<{
   canDownload: boolean
   canEdit: boolean
   canDelete: boolean
+  /** Fork: Convert to M4B. Shows the entry on audio rows of a book that is not already one M4B. */
+  canConvert?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -30,6 +32,8 @@ const emit = defineEmits<{
   rename: [file: TreeFile]
   remove: [file: TreeFile]
   copyPath: [file: TreeFile]
+  /** Fork: Convert to M4B. */
+  convert: []
 }>()
 
 const { t } = useI18n()
@@ -130,6 +134,11 @@ function handleRename(file: TreeFile) {
 function handleRemove(file: TreeFile) {
   emit('remove', file)
 }
+// Fork: Convert to M4B.
+function handleConvert() {
+  emit('convert')
+}
+
 function handleCopyPath(file: TreeFile) {
   emit('copyPath', file)
 }
@@ -270,6 +279,9 @@ function handleCopyPath(file: TreeFile) {
                   <DropdownMenuItem @click="handleCopyPath(file)">{{ t('book.detail.files.copyPath') }}</DropdownMenuItem>
                   <DropdownMenuItem v-if="canDownload" @click="handleDownload(file)">{{ t('book.detail.files.download') }}</DropdownMenuItem>
                   <DropdownMenuItem v-if="canEdit" @click="handleRename(file)">{{ t('book.detail.files.rename') }}</DropdownMenuItem>
+                  <DropdownMenuItem v-if="canConvert && file.isAudio" data-testid="file-convert-m4b" @click="handleConvert">{{
+                    t('audioConvert.book.action')
+                  }}</DropdownMenuItem>
                   <DropdownMenuItem v-if="canDelete" class="text-destructive focus:text-destructive" @click="handleRemove(file)">
                     {{ t('common.delete') }}
                   </DropdownMenuItem>
