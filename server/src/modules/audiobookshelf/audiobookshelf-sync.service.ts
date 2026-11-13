@@ -400,19 +400,25 @@ export class AudiobookshelfSyncService {
 
       // Attempts FIRST, then status. Reversing this creates a duplicate manual attempt dated today
       // and loses the ABS finish date.
-      await this.attempts.importUnlinkedRead(userId, bookId, {
+      const imported = await this.attempts.importUnlinkedRead(userId, bookId, {
         origin: 'audiobookshelf',
         startedOn,
         endedOn,
+        occurredOn: msToDateKey(mp.lastUpdate, timeZone) ?? undefined,
+        timeZone,
       });
 
-      const target = resolveAbsTargetStatus(current, mp.isFinished);
+      // A finish only heard again leaves the book read; making it a reread would open the empty read
+      // the import just declined.
+      const target = imported === 'repeat' || imported === 'reopened' ? null : resolveAbsTargetStatus(current, mp.isFinished);
       if (target) {
         await this.statusService.updateManual(userId, bookId, { status: target });
         statusApplied = true;
         appliedStatus = target;
       } else {
-        appliedStatus = current;
+        statusApplied = imported === 'reopened';
+        appliedStatus = imported === 'reopened' ? ((await this.statusService.findOne(userId, bookId))?.status ?? current) : current;
+        if (imported === 'reopened') await this.statusService.notifyAutoStatusChanged(userId, bookId, appliedStatus, current);
       }
     }
 

@@ -1,5 +1,5 @@
 import { Inject, Injectable, InternalServerErrorException } from '@nestjs/common';
-import { and, asc, count, desc, eq, isNotNull, isNull, notExists, notInArray, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, isNotNull, isNull, notExists, notInArray, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { ReadingAttemptOrigin, ReadingAttemptOutcome, ReadStatus, ReadStatusSource } from '@bookorbit/types';
 
@@ -8,7 +8,7 @@ import * as schema from '../../db/schema';
 import { readingAttempts, readingSessions, userBookStatus, users } from '../../db/schema';
 
 type Db = NodePgDatabase<typeof schema>;
-type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
+export type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
 export type AttemptMutation = {
   startedOn?: string | null;
@@ -114,6 +114,34 @@ export class ReadingAttemptRepository {
       .limit(1)
       .for('update');
     return row ?? null;
+  }
+
+  /** The completed read that ended last; an undated one ranks behind every dated one. */
+  async findLatestCompleted(tx: Tx, userId: number, bookId: number) {
+    const [row] = await tx
+      .select()
+      .from(readingAttempts)
+      .where(
+        and(
+          eq(readingAttempts.userId, userId),
+          eq(readingAttempts.bookId, bookId),
+          eq(readingAttempts.outcome, 'completed'),
+          isNull(readingAttempts.deletedAt),
+        ),
+      )
+      .orderBy(sql`${readingAttempts.endedOn} desc nulls last`, desc(readingAttempts.id))
+      .limit(1);
+    return row ?? null;
+  }
+
+  /** Whether any reading or listening session on the book began after [since]. */
+  async hasSessionsSince(tx: Tx, userId: number, bookId: number, since: Date): Promise<boolean> {
+    const [row] = await tx
+      .select({ value: sql<boolean>`true` })
+      .from(readingSessions)
+      .where(and(eq(readingSessions.userId, userId), eq(readingSessions.bookId, bookId), gt(readingSessions.startedAt, since)))
+      .limit(1);
+    return row?.value === true;
   }
 
   async hasCompleted(tx: Tx, userId: number, bookId: number): Promise<boolean> {

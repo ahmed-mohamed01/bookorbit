@@ -9,10 +9,13 @@ import type {
   UserBookStatus,
 } from '@bookorbit/types';
 
-import { ReadingAttemptRepository, type AttemptProjection } from './reading-attempt.repository';
+import { ReadingAttemptRepository, type AttemptProjection, type Tx } from './reading-attempt.repository';
 import { ReadingAttemptEventsService } from './reading-attempt-events.service';
 import { READING_DATE_ERROR_CODES } from './user-book-status.constants';
+import { toDateKeyInTimeZone } from '../../common/utils/timezone.utils';
 import { hasReachedProgressThreshold } from '../../common/utils/progress-threshold.utils';
+
+export const REOPEN_RECENT_FINISH_MS = 24 * 60 * 60 * 1000;
 
 function dateToUtcDate(value: string | null): Date | null {
   return value ? new Date(`${value}T00:00:00.000Z`) : null;
@@ -267,10 +270,40 @@ export class ReadingAttemptService {
     return result;
   }
 
+  /**
+   * A finish heard again rather than a new read: the latest completed read ended on [occurredOn] or
+   * later and nothing has been read or played since it was closed. A player left running past the end
+   * (its owner asleep, or the headset away) keeps pushing the same finish, and a position that bounces
+   * off the end looks like a reread; each used to open, then close, another empty read of the book.
+   */
+  private async repeatsLatestFinish(tx: Tx, userId: number, bookId: number, occurredOn: string, sameDayOnly = false): Promise<boolean> {
+    const finished = await this.repo.findLatestCompleted(tx, userId, bookId);
+    if (!finished?.endedOn || (sameDayOnly ? finished.endedOn !== occurredOn : finished.endedOn < occurredOn)) return false;
+    return !(await this.repo.hasSessionsSince(tx, userId, bookId, finished.updatedAt));
+  }
+
+  private isRecentFinish(
+    latest: Awaited<ReturnType<ReadingAttemptRepository['findLatest']>>,
+    now: Date,
+    timeZone = 'UTC',
+  ): latest is NonNullable<typeof latest> {
+    const cutoff = new Date(now.getTime() - REOPEN_RECENT_FINISH_MS);
+    return (
+      !!latest &&
+      latest.outcome === 'completed' &&
+      latest.endedOn !== null &&
+      latest.updatedAt >= cutoff &&
+      latest.updatedAt <= now &&
+      latest.endedOn >= toDateKeyInTimeZone(cutoff, timeZone)
+    );
+  }
+
   async recordActivity(input: {
     userId: number;
     bookId: number;
     occurredOn: string;
+    occurredAt?: Date;
+    activityStartedAt?: Date;
     origin: Exclude<ReadingAttemptOrigin, 'manual' | 'hardcover' | 'migration'>;
     progress: number;
     finishThreshold: number;
@@ -279,22 +312,31 @@ export class ReadingAttemptService {
     /** The reader's timezone, which files late sessions into the read they belong to. */
     timeZone?: string;
   }): Promise<UserBookStatus | null> {
+    const now = new Date();
+    // A time ahead of the server's clock comes from a device clock running fast; it says nothing about
+    // when the reading happened, so it is dropped and the activity counts as backlog.
+    const known = (at?: Date) => (at && at.getTime() <= now.getTime() ? at : undefined);
+    const occurredAt = known(input.occurredAt);
+    const activityStartedAt = known(input.activityStartedAt);
+    const startedAt = activityStartedAt ?? occurredAt;
     let changed = false;
     const result = await this.repo.transaction<UserBookStatus | null>(async (tx) => {
       let active: Awaited<ReturnType<ReadingAttemptRepository['findActive']>> | null = await this.repo.findActive(tx, input.userId, input.bookId);
       let latest = active ?? (await this.repo.findLatest(tx, input.userId, input.bookId));
-      const hasCompleted = await this.repo.hasCompleted(tx, input.userId, input.bookId);
+      let hasCompleted = await this.repo.hasCompleted(tx, input.userId, input.bookId);
       const isFinished = hasReachedProgressThreshold(input.progress, input.finishThreshold);
 
       // A device that went without syncing delivers the sessions of a read only after its finished state
       // has closed the attempt. Activity dated no later than that close is backlog, not a new read: it
       // joins the read it falls within, and activity from before that read began joins nothing.
+      // A session that began before (or within clock-skew of) the close belongs to the finished read.
       if (
         !active &&
         !input.strongRereadEvidence &&
         latest?.outcome === 'completed' &&
         latest.endedOn !== null &&
-        input.occurredOn <= latest.endedOn
+        input.occurredOn <= latest.endedOn &&
+        !(startedAt && startedAt.getTime() > latest.updatedAt.getTime() + 5 * 60_000)
       ) {
         if (input.timeZone && (latest.startedOn === null || input.occurredOn >= latest.startedOn)) {
           await this.repo.attachBackfilledSessions(
@@ -310,6 +352,23 @@ export class ReadingAttemptService {
         return null;
       }
       if (!active && hasCompleted && !input.strongRereadEvidence && !input.meaningfulActivity) return null;
+      if (!active && hasCompleted && (await this.repeatsLatestFinish(tx, input.userId, input.bookId, input.occurredOn))) {
+        if (input.meaningfulActivity && input.timeZone) {
+          const finished = await this.repo.findLatestCompleted(tx, input.userId, input.bookId);
+          if (finished && (finished.startedOn === null || input.occurredOn >= finished.startedOn)) {
+            await this.repo.attachBackfilledSessions(
+              tx,
+              input.userId,
+              input.bookId,
+              finished.id,
+              input.timeZone,
+              finished.startedOn ?? input.occurredOn,
+              finished.endedOn,
+            );
+          }
+        }
+        return null;
+      }
       if (!active && isFinished && !hasCompleted) {
         latest = await this.repo.create(tx, {
           userId: input.userId,
@@ -322,23 +381,31 @@ export class ReadingAttemptService {
         changed = true;
       }
       if (!active && isFinished && hasCompleted && input.strongRereadEvidence) {
-        latest = await this.repo.create(tx, {
-          userId: input.userId,
-          bookId: input.bookId,
-          startedOn: input.occurredOn,
-          endedOn: input.occurredOn,
-          outcome: 'completed',
-          origin: input.origin,
-        });
+        latest = this.isRecentFinish(latest, now, input.timeZone)
+          ? await this.repo.update(tx, input.userId, input.bookId, latest.id, {
+              endedOn: notBeforeStart(input.occurredOn, latest.startedOn),
+              outcome: 'completed',
+            })
+          : await this.repo.create(tx, {
+              userId: input.userId,
+              bookId: input.bookId,
+              startedOn: input.occurredOn,
+              endedOn: input.occurredOn,
+              outcome: 'completed',
+              origin: input.origin,
+            });
         changed = true;
       }
       if (!active && !isFinished && (input.progress > 0 || input.strongRereadEvidence || input.meaningfulActivity)) {
-        active = await this.repo.createActive(tx, {
-          userId: input.userId,
-          bookId: input.bookId,
-          startedOn: input.occurredOn,
-          origin: input.origin,
-        });
+        active =
+          hasCompleted && this.isRecentFinish(latest, now, input.timeZone)
+            ? await this.repo.update(tx, input.userId, input.bookId, latest.id, { endedOn: null, outcome: null })
+            : await this.repo.createActive(tx, {
+                userId: input.userId,
+                bookId: input.bookId,
+                startedOn: input.occurredOn,
+                origin: input.origin,
+              });
         changed = true;
       }
 
@@ -352,6 +419,7 @@ export class ReadingAttemptService {
         changed = true;
         status = 'read';
       } else if (active) {
+        hasCompleted = await this.repo.hasCompleted(tx, input.userId, input.bookId);
         status = hasCompleted ? 'rereading' : 'reading';
       } else if (latest?.outcome === 'completed') {
         status = 'read';
@@ -451,7 +519,7 @@ export class ReadingAttemptService {
       }
       return true;
     });
-    if (changed) this.events.notifyChanged(userId);
+    if (changed) await this.rebuildProjection(userId, bookId);
   }
 
   /**
@@ -464,31 +532,45 @@ export class ReadingAttemptService {
   async importUnlinkedRead(
     userId: number,
     bookId: number,
-    input: { origin: 'audiobookshelf'; startedOn: string | null; endedOn: string | null },
-  ): Promise<void> {
+    input: { origin: 'audiobookshelf'; startedOn: string | null; endedOn: string | null; occurredOn?: string; timeZone?: string },
+  ): Promise<'imported' | 'repeat' | 'reopened'> {
     this.validateDates(input.startedOn, input.endedOn);
-    await this.repo.transaction(async (tx) => {
+    const result = await this.repo.transaction(async (tx): Promise<'imported' | 'repeat' | 'reopened'> => {
       if (input.endedOn === null) {
         const active = await this.repo.findActive(tx, userId, bookId);
-        if (active) return;
+        if (active) return 'imported';
         const deletedActive = await this.repo.findDeletedActiveByOrigin(tx, userId, bookId, input.origin);
-        if (deletedActive) return;
+        if (deletedActive) return 'imported';
+        // Audiobookshelf un-finishes a book whenever a position short of the end reaches it, keeping the
+        // original start, so a finished book that bounces off its end reads as in progress again.
+        if (input.occurredOn && (await this.repeatsLatestFinish(tx, userId, bookId, input.occurredOn))) return 'repeat';
+        const latest = await this.repo.findLatest(tx, userId, bookId);
+        if ((await this.repo.hasCompleted(tx, userId, bookId)) && this.isRecentFinish(latest, new Date(), input.timeZone)) {
+          const reopened = await this.repo.update(tx, userId, bookId, latest.id, { endedOn: null, outcome: null });
+          await this.repo.project(tx, userId, bookId, {
+            status: (await this.repo.hasCompleted(tx, userId, bookId)) ? 'rereading' : 'reading',
+            source: 'auto',
+            startedAt: dateToUtcDate(reopened.startedOn),
+            finishedAt: null,
+          });
+          return 'reopened';
+        }
         await this.repo.createActive(tx, {
           userId,
           bookId,
           startedOn: input.startedOn,
           origin: input.origin,
         });
-        return;
+        return 'imported';
       }
 
       const existing = await this.repo.findByOriginAndEndedOn(tx, userId, bookId, input.origin, input.endedOn);
       if (existing) {
-        if (existing.deletedAt) return;
+        if (existing.deletedAt) return 'imported';
         if (existing.startedOn === null && input.startedOn !== null) {
           await this.repo.update(tx, userId, bookId, existing.id, { startedOn: input.startedOn });
         }
-        return;
+        return 'imported';
       }
 
       // A newer-than-the-finish active attempt belongs to a later read; leave it running and record
@@ -501,8 +583,10 @@ export class ReadingAttemptService {
           endedOn: input.endedOn,
           outcome: 'completed',
         });
-        return;
+        return 'imported';
       }
+
+      if (await this.repeatsLatestFinish(tx, userId, bookId, input.endedOn, true)) return 'repeat';
 
       await this.repo.create(tx, {
         userId,
@@ -512,7 +596,10 @@ export class ReadingAttemptService {
         outcome: 'completed',
         origin: input.origin,
       });
+      return 'imported';
     });
+    if (result === 'reopened') this.events.notifyChanged(userId);
+    return result;
   }
 
   async update(userId: number, bookId: number, attemptId: number, patch: ReadingAttemptPatch): Promise<ReadingAttempt> {

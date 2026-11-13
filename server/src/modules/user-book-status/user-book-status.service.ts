@@ -24,6 +24,7 @@ type ManualStatusPatch = {
 export type AutoReadingActivity = {
   /** The instant the activity happened. The calendar day is derived from it per reader timezone. */
   occurredAt?: Date;
+  activityStartedAt?: Date;
   /** Saves a lookup when the caller already holds the reader's timezone. Never a default. */
   timeZone?: string;
   origin?: 'bookorbit' | 'kobo' | 'koreader';
@@ -260,6 +261,21 @@ export class UserBookStatusService {
     }
   }
 
+  /**
+   * What a status change through updateManual tells others (achievements and integrations, Kobo), for
+   * an Audiobookshelf import that reopened a recent read and so changed the status without it.
+   */
+  async notifyAutoStatusChanged(userId: number, bookId: number, status: ReadStatus, previousStatus: ReadStatus | null): Promise<void> {
+    if (status === previousStatus) return;
+    this.achievementEvents.emit(ACHIEVEMENT_EVENT_BOOK_STATUS_CHANGED, {
+      userId,
+      bookId,
+      newStatus: status,
+      previousStatus,
+    });
+    await this.projectToKobo(userId, [bookId], status);
+  }
+
   async autoUpdate(
     userId: number,
     bookId: number,
@@ -284,6 +300,8 @@ export class UserBookStatusService {
         userId,
         bookId,
         occurredOn: this.dayKeyFor(activity.occurredAt, timeZone),
+        occurredAt: activity.occurredAt,
+        activityStartedAt: activity.activityStartedAt,
         origin: activity.origin ?? 'bookorbit',
         progress: normalizedPercentage,
         finishThreshold: normalizedFinishThreshold,

@@ -566,7 +566,12 @@ describe('ReadingSessionService - read status activity', () => {
       12,
       expect.objectContaining({ bookId: 2179 }),
       100,
-      expect.objectContaining({ occurredAt: new Date(ENDED_AT), origin: 'bookorbit', meaningfulActivity: true }),
+      expect.objectContaining({
+        activityStartedAt: new Date('2026-09-20T01:02:15.815Z'),
+        occurredAt: new Date(ENDED_AT),
+        origin: 'bookorbit',
+        meaningfulActivity: true,
+      }),
     );
   });
 

@@ -6,6 +6,8 @@ type Row = typeof readingAttempts.$inferSelect;
 
 export function makeFakeRepo() {
   const rows: Row[] = [];
+  /** Reading sessions by book, as their start times; hasSessionsSince reads them. */
+  const sessionStarts: Array<{ userId: number; bookId: number; startedAt: Date }> = [];
   let nextId = 1;
   const transactionContext = {};
   const statuses = new Map<string, { status: ReadStatus; source: string; startedAt: Date | null; finishedAt: Date | null }>();
@@ -45,6 +47,16 @@ export function makeFakeRepo() {
       Promise.resolve([...rows].reverse().find((row) => row.userId === userId && row.bookId === bookId && row.deletedAt === null)),
     ),
     attachBackfilledSessions: vi.fn(() => Promise.resolve()),
+    findLatestCompleted: vi.fn((_tx: object, userId: number, bookId: number) =>
+      Promise.resolve(
+        rows
+          .filter((row) => row.userId === userId && row.bookId === bookId && row.outcome === 'completed' && row.deletedAt === null)
+          .sort((a, b) => (b.endedOn ?? '').localeCompare(a.endedOn ?? '') || b.id - a.id)[0] ?? null,
+      ),
+    ),
+    hasSessionsSince: vi.fn((_tx: object, userId: number, bookId: number, since: Date) =>
+      Promise.resolve(sessionStarts.some((s) => s.userId === userId && s.bookId === bookId && s.startedAt.getTime() > since.getTime())),
+    ),
     hasCompleted: vi.fn((_tx: object, userId: number, bookId: number) =>
       Promise.resolve(rows.some((row) => row.userId === userId && row.bookId === bookId && row.outcome === 'completed' && row.deletedAt === null)),
     ),
@@ -121,5 +133,5 @@ export function makeFakeRepo() {
     }),
     list: vi.fn(() => Promise.resolve({ items: [], total: 0 })),
   };
-  return { repo, rows, projections, transactionContext };
+  return { repo, rows, sessionStarts, projections, transactionContext };
 }

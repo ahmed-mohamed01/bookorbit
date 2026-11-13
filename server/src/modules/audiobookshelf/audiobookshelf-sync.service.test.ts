@@ -1,7 +1,8 @@
 import { BadRequestException, ConflictException, Logger } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED } from '../achievement/achievement-events.service';
+import { UserBookStatusService } from '../user-book-status/user-book-status.service';
+import { ACHIEVEMENT_EVENT_BOOK_STATUS_CHANGED, ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED } from '../achievement/achievement-events.service';
 import { AudiobookshelfApiError, type AbsMediaProgress } from './audiobookshelf-client.service';
 import { AudiobookshelfSyncCoordinatorService } from './audiobookshelf-sync-coordinator.service';
 import {
@@ -36,6 +37,7 @@ const mockAttempts = {
 const mockStatusService = {
   findOne: vi.fn(),
   updateManual: vi.fn(),
+  notifyAutoStatusChanged: vi.fn(),
 };
 
 const mockSessionsService = {
@@ -404,6 +406,52 @@ describe('AudiobookshelfSyncService.sync', () => {
       await makeService().sync(user);
 
       expect(mockStatusService.updateManual).toHaveBeenCalledWith(user.id, 10, { status: 'rereading' });
+    });
+
+    it('leaves a finished book read when its in-progress state only repeats the latest finish', async () => {
+      const bounced = makeMp({ isFinished: false, progress: 0.4, currentTime: 400, duration: 1000 });
+      mockClient.getMe.mockResolvedValue({ mediaProgress: [bounced] });
+      mockRepo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState({ bookId: 10 })]);
+      mockStatusService.findOne.mockResolvedValue({ status: 'read' });
+      mockAttempts.importUnlinkedRead.mockResolvedValue('repeat');
+      mockRepo.findAudioFilesInPlayOrderForBooks.mockResolvedValue(new Map([[10, [{ id: 501, format: 'm4b', durationSeconds: 1000 }]]]));
+
+      await makeService().sync(user);
+
+      expect(mockAttempts.importUnlinkedRead).toHaveBeenCalledWith(
+        user.id,
+        10,
+        expect.objectContaining({ endedOn: null, occurredOn: expect.any(String) }),
+      );
+      expect(mockStatusService.updateManual).not.toHaveBeenCalled();
+    });
+    it.each(['reading', 'rereading'] as const)('notifies status and Kobo when ABS reopens as %s', async (status) => {
+      const kobo = { isEnabled: vi.fn().mockResolvedValue(true), project: vi.fn().mockResolvedValue([10]) };
+      const statusService = new UserBookStatusService({} as never, mockAchievementEvents as never, kobo as never);
+      mockStatusService.notifyAutoStatusChanged.mockImplementation(statusService.notifyAutoStatusChanged.bind(statusService));
+      const bounced = makeMp({ isFinished: false, progress: 0.4, currentTime: 400, duration: 1000 });
+      mockClient.getMe.mockResolvedValue({ mediaProgress: [bounced] });
+      mockRepo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState({ bookId: 10 })]);
+      mockStatusService.findOne.mockResolvedValueOnce({ status: 'read' }).mockResolvedValue({ status });
+      mockAttempts.importUnlinkedRead.mockResolvedValue('reopened');
+      mockRepo.findAudioFilesInPlayOrderForBooks.mockResolvedValue(new Map([[10, [{ id: 501, format: 'm4b', durationSeconds: 1000 }]]]));
+
+      const result = await makeService().sync(user);
+      expect(result.statusApplied).toBe(1);
+      expect(mockAchievementEvents.emit).toHaveBeenCalledWith(ACHIEVEMENT_EVENT_BOOK_STATUS_CHANGED, {
+        userId: user.id,
+        bookId: 10,
+        newStatus: status,
+        previousStatus: 'read',
+      });
+      expect(kobo.project).toHaveBeenCalledExactlyOnceWith(user.id, [10], status);
+
+      expect(mockAttempts.importUnlinkedRead).toHaveBeenCalledWith(
+        user.id,
+        10,
+        expect.objectContaining({ endedOn: null, occurredOn: expect.any(String) }),
+      );
+      expect(mockStatusService.updateManual).not.toHaveBeenCalled();
     });
   });
 

@@ -90,6 +90,7 @@ export class ReadingSessionService {
           await this.bookService.autoUpdateReadStatusForProgress(user.id, file, dto.endProgress, {
             origin: source === 'koreader' ? 'koreader' : 'bookorbit',
             occurredAt: endedAt,
+            activityStartedAt: startedAt,
             timeZone: this.resolveUserTimeZone(user),
             meaningfulActivity: true,
           });

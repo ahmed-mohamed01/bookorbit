@@ -1,5 +1,5 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReadingAttemptService } from './reading-attempt.service';
 import { ReadingAttemptEventsService } from './reading-attempt-events.service';
 import { makeFakeRepo } from '../../../test/helpers/reading-attempt-repository.fake';
@@ -7,6 +7,8 @@ import { makeFakeRepo } from '../../../test/helpers/reading-attempt-repository.f
 describe('ReadingAttemptService', () => {
   let fake: ReturnType<typeof makeFakeRepo>;
   let service: ReadingAttemptService;
+
+  afterEach(() => vi.useRealTimers());
 
   beforeEach(() => {
     fake = makeFakeRepo();
@@ -440,6 +442,29 @@ describe('ReadingAttemptService', () => {
     await expect(service.delete(1, 10, 999)).rejects.toBeInstanceOf(NotFoundException);
   });
 
+  it('rebuilds the projection when Hardcover closes a reopened linked attempt', async () => {
+    await fake.repo.create({}, { userId: 1, bookId: 10, startedOn: '2025-01-01', endedOn: '2025-01-10', outcome: 'completed', origin: 'manual' });
+    const row = await fake.repo.createActive(
+      {},
+      {
+        userId: 1,
+        bookId: 10,
+        startedOn: '2026-07-01',
+        origin: 'hardcover',
+        externalProvider: 'hardcover',
+        externalId: '77',
+      },
+    );
+    await fake.repo.project({}, 1, 10, { status: 'rereading', source: 'auto', startedAt: new Date('2026-07-01'), finishedAt: null });
+    fake.projections.length = 0;
+    await service.importExternalRead(1, 10, { provider: 'hardcover', externalId: '77', startedOn: '2026-07-01', endedOn: '2026-07-12' });
+    expect(row.outcome).toBe('completed');
+    expect(fake.projections).toEqual([expect.objectContaining({ status: 'read', finishedAt: new Date('2026-07-12') })]);
+    fake.projections.length = 0;
+    await service.importExternalRead(1, 10, { provider: 'hardcover', externalId: '77', startedOn: '2026-07-01', endedOn: '2026-07-12' });
+    expect(fake.projections).toHaveLength(0);
+  });
+
   it('does not resurrect a tombstoned Hardcover read', async () => {
     const row = await fake.repo.create(
       {},
@@ -689,6 +714,342 @@ describe('ReadingAttemptService', () => {
         externalProvider: null,
         externalId: null,
       });
+    });
+  });
+
+  describe('recent finish catch-up', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-11-13T18:00:00Z'));
+    });
+    const today = () => new Date().toISOString().slice(0, 10);
+    async function finish(hours = 2, endedOn = today()) {
+      const row = await fake.repo.create(
+        {},
+        { userId: 1, bookId: 10, startedOn: '2023-01-01', endedOn, outcome: 'completed', origin: 'audiobookshelf' },
+      );
+      row.updatedAt = new Date(Date.now() - hours * 3600000);
+      fake.sessionStarts.push({ userId: 1, bookId: 10, startedAt: new Date() });
+      return row;
+    }
+    const push = (progress = 40) =>
+      service.recordActivity({
+        userId: 1,
+        bookId: 10,
+        occurredOn: today(),
+        occurredAt: new Date(),
+        origin: 'bookorbit',
+        progress,
+        finishThreshold: 98,
+        strongRereadEvidence: progress === 100,
+        meaningfulActivity: true,
+      });
+
+    it('reopens the sleeping reader attempt and finishes the same row', async () => {
+      const row = await finish();
+      await expect(push()).resolves.toMatchObject({ status: 'reading' });
+      expect(fake.rows).toHaveLength(1);
+      expect(fake.rows[0]).toMatchObject({ id: row.id, startedOn: '2023-01-01', endedOn: null, outcome: null });
+      expect(fake.sessionStarts).toHaveLength(1);
+      await expect(push(100)).resolves.toMatchObject({ status: 'read' });
+      expect(fake.rows).toHaveLength(1);
+      expect(fake.rows[0]).toMatchObject({ id: row.id, endedOn: today(), outcome: 'completed' });
+    });
+    it('opens a new read after the window', async () => {
+      await finish(25);
+      await expect(push()).resolves.toMatchObject({ status: 'rereading' });
+      expect(fake.rows).toHaveLength(2);
+    });
+    it('opens a new read for a recently imported old finish', async () => {
+      await finish(2, '2023-03-01');
+      await push();
+      expect(fake.rows).toHaveLength(2);
+    });
+    it('labels a reopened subsequent read rereading', async () => {
+      await finish(100, '2023-03-01');
+      const row = await finish();
+      await expect(push()).resolves.toMatchObject({ status: 'rereading' });
+      expect(fake.rows).toHaveLength(2);
+      expect(fake.rows[1]).toMatchObject({ id: row.id, outcome: null });
+    });
+    it('updates a strong-evidence finish without another row', async () => {
+      const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+      const row = await finish(2, yesterday);
+      await push(100);
+      expect(fake.rows).toHaveLength(1);
+      expect(fake.rows[0]).toMatchObject({ id: row.id, endedOn: today(), outcome: 'completed' });
+    });
+    it('reopens an ABS in-progress import and projects reading', async () => {
+      const row = await finish();
+      await expect(
+        service.importUnlinkedRead(1, 10, { origin: 'audiobookshelf', startedOn: today(), endedOn: null, occurredOn: today() }),
+      ).resolves.toBe('reopened');
+      expect(fake.rows).toHaveLength(1);
+      expect(fake.rows[0]).toMatchObject({ id: row.id, outcome: null });
+      expect(fake.projections.at(-1)).toMatchObject({ status: 'reading', source: 'auto', finishedAt: null });
+    });
+    it.each(['abandoned', 'skimmed'] as const)('does not reopen a completion before a later %s attempt', async (outcome) => {
+      await finish();
+      await fake.repo.create({}, { userId: 1, bookId: 10, startedOn: today(), endedOn: today(), outcome, origin: 'manual' });
+      await push();
+      expect(fake.rows).toHaveLength(3);
+      expect(fake.rows[0].outcome).toBe('completed');
+    });
+    it('uses the reader timezone for the recent finish date cutoff', async () => {
+      vi.setSystemTime(new Date('2026-11-13T01:00:00Z'));
+      const row = await finish(2, '2026-11-11');
+      await expect(
+        service.importUnlinkedRead(1, 10, {
+          origin: 'audiobookshelf',
+          startedOn: null,
+          endedOn: null,
+          occurredOn: today(),
+          timeZone: 'America/Los_Angeles',
+        }),
+      ).resolves.toBe('reopened');
+      expect(fake.rows).toHaveLength(1);
+      expect(fake.rows[0]).toMatchObject({ id: row.id, outcome: null });
+    });
+    it('keeps deliberate manual rereading as a new attempt', async () => {
+      await finish();
+      await service.applyManualStatus(1, 10, 'rereading', undefined, undefined, today());
+      expect(fake.rows).toHaveLength(2);
+      expect(fake.rows[1].outcome).toBeNull();
+    });
+  });
+
+  describe('a finish heard again', () => {
+    // The fake stamps every row it writes at 2026-07-12T12:00Z, so that is when this read closed.
+    const finishedRead = () =>
+      fake.repo.create({}, { userId: 1, bookId: 10, startedOn: '2025-05-29', endedOn: '2026-07-12', outcome: 'completed', origin: 'audiobookshelf' });
+    const push = (progress: number, strongRereadEvidence: boolean, occurredOn = '2026-07-12') =>
+      service.recordActivity({
+        userId: 1,
+        bookId: 10,
+        occurredOn,
+        origin: 'bookorbit',
+        progress,
+        finishThreshold: 98,
+        strongRereadEvidence,
+        meaningfulActivity: false,
+      });
+    const absInProgress = (occurredOn = '2026-07-12') =>
+      service.importUnlinkedRead(1, 10, { origin: 'audiobookshelf', startedOn: '2025-05-29', endedOn: null, occurredOn });
+
+    it('opens no read when Audiobookshelf un-finishes the book the day it finished', async () => {
+      await finishedRead();
+
+      for (let i = 0; i < 5; i++) {
+        await expect(absInProgress()).resolves.toBe('repeat');
+        await push(100, false);
+      }
+
+      expect(fake.rows).toHaveLength(1);
+    });
+
+    it('opens no read when the position bounces off the end the day it finished', async () => {
+      await finishedRead();
+
+      for (let i = 0; i < 5; i++) {
+        await expect(push(40, true)).resolves.toBeNull();
+        await push(100, true);
+      }
+
+      expect(fake.rows).toHaveLength(1);
+    });
+
+    it('reopens the same read once something was read after the finish', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-07-12T18:00:00Z'));
+      await finishedRead();
+      fake.sessionStarts.push({ userId: 1, bookId: 10, startedAt: new Date('2026-07-12T15:00:00.000Z') });
+
+      await expect(push(5, true)).resolves.toMatchObject({ status: 'reading' });
+      await expect(absInProgress()).resolves.toBe('imported');
+      expect(fake.rows).toHaveLength(1);
+    });
+
+    it('reopens the same-day read when its session arrives after the rewind', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-07-12T18:00:00Z'));
+      await finishedRead();
+      await expect(push(0, true)).resolves.toBeNull();
+      fake.sessionStarts.push({ userId: 1, bookId: 10, startedAt: new Date('2026-07-12T13:00:00.000Z') });
+
+      await expect(
+        service.recordActivity({
+          userId: 1,
+          bookId: 10,
+          occurredOn: '2026-07-12',
+          activityStartedAt: new Date('2026-07-12T13:00:00.000Z'),
+          occurredAt: new Date('2026-07-12T13:30:00.000Z'),
+          origin: 'bookorbit',
+          progress: 20,
+          finishThreshold: 98,
+          meaningfulActivity: true,
+          timeZone: 'UTC',
+        }),
+      ).resolves.toMatchObject({ status: 'reading' });
+      expect(fake.rows).toHaveLength(1);
+      expect(fake.repo.attachBackfilledSessions).not.toHaveBeenCalled();
+
+      await expect(push(100, false)).resolves.toMatchObject({ status: 'read' });
+      expect(fake.rows).toHaveLength(1);
+      expect(fake.rows[0].outcome).toBe('completed');
+    });
+
+    it.each([
+      { label: 'an older session despite a post-finish session', occurredOn: '2026-07-11', occurredAt: '2026-07-11T20:00:00.000Z' },
+      { label: 'a session within the clock skew margin', occurredOn: '2026-07-12', occurredAt: '2026-07-12T12:02:00.000Z' },
+    ])('backfills $label without opening a reread', async ({ occurredOn, occurredAt }) => {
+      await finishedRead();
+      fake.sessionStarts.push({ userId: 1, bookId: 10, startedAt: new Date('2026-07-12T13:00:00.000Z') });
+      await expect(
+        service.recordActivity({
+          userId: 1,
+          bookId: 10,
+          occurredOn,
+          activityStartedAt: new Date(occurredAt),
+          occurredAt: new Date(occurredAt),
+          origin: 'bookorbit',
+          progress: 20,
+          finishThreshold: 98,
+          strongRereadEvidence: false,
+          meaningfulActivity: true,
+          timeZone: 'UTC',
+        }),
+      ).resolves.toBeNull();
+      expect(fake.rows).toHaveLength(1);
+      expect(fake.repo.attachBackfilledSessions).toHaveBeenCalledWith({}, 1, 10, fake.rows[0].id, 'UTC', '2025-05-29', '2026-07-12');
+    });
+
+    it.each([
+      { label: 'a session spanning the finish', activityStartedAt: '2026-07-12T11:00:00.000Z', strongRereadEvidence: false },
+      { label: 'a session heard before the finish with rewind evidence', activityStartedAt: '2026-07-12T11:00:00.000Z', strongRereadEvidence: true },
+    ])('attaches $label to the finished read', async ({ activityStartedAt, strongRereadEvidence }) => {
+      await finishedRead();
+      await expect(
+        service.recordActivity({
+          userId: 1,
+          bookId: 10,
+          occurredOn: '2026-07-12',
+          activityStartedAt: new Date(activityStartedAt),
+          occurredAt: new Date('2026-07-12T12:30:00.000Z'),
+          origin: 'bookorbit',
+          progress: 98,
+          finishThreshold: 98,
+          strongRereadEvidence,
+          meaningfulActivity: true,
+          timeZone: 'UTC',
+        }),
+      ).resolves.toBeNull();
+      expect(fake.rows).toHaveLength(1);
+      expect(fake.repo.attachBackfilledSessions).toHaveBeenCalledWith({}, 1, 10, fake.rows[0].id, 'UTC', '2025-05-29', '2026-07-12');
+      if (!strongRereadEvidence) expect(fake.repo.hasSessionsSince).not.toHaveBeenCalled();
+    });
+
+    it.each([true, false])('backfills future activity with an explicit start: %s', async (explicitStart) => {
+      await finishedRead();
+      const now = new Date();
+      fake.rows[0].updatedAt = now;
+      const future = new Date(now.getTime() + 60 * 60_000);
+      fake.sessionStarts.push({ userId: 1, bookId: 10, startedAt: future });
+      await expect(
+        service.recordActivity({
+          userId: 1,
+          bookId: 10,
+          occurredOn: '2026-07-12',
+          activityStartedAt: explicitStart ? future : undefined,
+          occurredAt: future,
+          origin: 'bookorbit',
+          progress: 20,
+          finishThreshold: 98,
+          strongRereadEvidence: false,
+          meaningfulActivity: true,
+          timeZone: 'UTC',
+        }),
+      ).resolves.toBeNull();
+      expect(fake.rows).toHaveLength(1);
+      expect(fake.repo.attachBackfilledSessions).toHaveBeenCalledWith({}, 1, 10, fake.rows[0].id, 'UTC', '2025-05-29', '2026-07-12');
+    });
+
+    it('treats a session from a clock running fast as backlog, even after its start was saved', async () => {
+      await finishedRead();
+      const now = new Date();
+      fake.rows[0].updatedAt = new Date(now.getTime() - 10 * 60_000);
+      const fast = new Date(now.getTime() + 2 * 60 * 60_000);
+      fake.sessionStarts.push({ userId: 1, bookId: 10, startedAt: fast });
+      await expect(
+        service.recordActivity({
+          userId: 1,
+          bookId: 10,
+          occurredOn: '2026-07-12',
+          activityStartedAt: fast,
+          occurredAt: new Date(fast.getTime() + 30 * 60_000),
+          origin: 'bookorbit',
+          progress: 60,
+          finishThreshold: 98,
+          meaningfulActivity: true,
+          timeZone: 'UTC',
+        }),
+      ).resolves.toBeNull();
+      expect(fake.rows).toHaveLength(1);
+      expect(fake.repo.attachBackfilledSessions).toHaveBeenCalled();
+    });
+
+    it('imports an older Audiobookshelf finish before a later BookOrbit read', async () => {
+      await fake.repo.create({}, { userId: 1, bookId: 10, startedOn: null, endedOn: '2025-06-10', outcome: 'completed', origin: 'bookorbit' });
+      await expect(service.importUnlinkedRead(1, 10, { origin: 'audiobookshelf', startedOn: null, endedOn: '2023-03-01' })).resolves.toBe('imported');
+      expect(fake.rows).toHaveLength(2);
+      expect(fake.rows[1]).toMatchObject({ endedOn: '2023-03-01', outcome: 'completed', origin: 'audiobookshelf' });
+    });
+
+    it('ignores an Audiobookshelf finish already recorded by BookOrbit on the same day', async () => {
+      await fake.repo.create(
+        {},
+        {
+          userId: 1,
+          bookId: 10,
+          startedOn: '2026-07-01',
+          endedOn: '2026-07-12',
+          outcome: 'completed',
+          origin: 'bookorbit',
+        },
+      );
+
+      await expect(service.importUnlinkedRead(1, 10, { origin: 'audiobookshelf', startedOn: null, endedOn: '2026-07-12' })).resolves.toBe('repeat');
+      expect(fake.rows).toHaveLength(1);
+    });
+
+    it('imports an Audiobookshelf finish on a later day than the BookOrbit finish', async () => {
+      await fake.repo.create(
+        {},
+        {
+          userId: 1,
+          bookId: 10,
+          startedOn: '2026-07-01',
+          endedOn: '2026-07-12',
+          outcome: 'completed',
+          origin: 'bookorbit',
+        },
+      );
+
+      await expect(service.importUnlinkedRead(1, 10, { origin: 'audiobookshelf', startedOn: null, endedOn: '2026-07-13' })).resolves.toBe('imported');
+      expect(fake.rows).toHaveLength(2);
+    });
+
+    it('still opens a reread on a later day outside the reopen window', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-07-13T18:00:00Z'));
+      await finishedRead();
+
+      await expect(push(5, true, '2026-07-13')).resolves.toMatchObject({ status: 'rereading' });
+      expect(fake.rows).toHaveLength(2);
+    });
+
+    it('still records a first finish', async () => {
+      await expect(push(100, false)).resolves.toMatchObject({ status: 'read' });
+      expect(fake.rows).toHaveLength(1);
     });
   });
 });
