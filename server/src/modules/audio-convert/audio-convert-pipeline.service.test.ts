@@ -1,6 +1,8 @@
 import { Test } from '@nestjs/testing';
+import { EventEmitter } from 'events';
 
 import { appConfig } from '../../config/config';
+import { BOOK_DOCK_BOOKS_FILED } from '../book-dock/book-dock-events.service';
 import { ChapterEditorService } from '../chapter-editor/chapter-editor.service';
 import { AudioConvertConverterService } from './audio-convert-converter.service';
 import { AudioConvertPipelineService } from './audio-convert-pipeline.service';
@@ -75,7 +77,7 @@ async function setup() {
     hasAnyJob: vi.fn().mockResolvedValue(false),
     findContentAudioFiles: vi.fn().mockResolvedValue([mp3(1), mp3(2)]),
     createJob: vi.fn().mockImplementation((values: Partial<AudioConvertJobRow>) => Promise.resolve(job(values))),
-    findBook: vi.fn().mockResolvedValue({ bookId: 9, lastMetadataFetchAt: null }),
+    findBook: vi.fn().mockResolvedValue({ bookId: 9, libraryId: 2, status: 'present', lastMetadataFetchAt: null }),
     metadataFetchState: vi.fn().mockResolvedValue('none'),
     requestMetadataFetch: vi.fn().mockResolvedValue(undefined),
     transition: vi.fn().mockResolvedValue(job()),
@@ -125,6 +127,93 @@ describe('AudioConvertPipelineService', () => {
       repo.findContentAudioFiles.mockResolvedValue([mp3(1), { ...mp3(2), format: 'm4b' }]);
       await pipeline.admitQuietBooks(settings);
       expect(repo.createJob).not.toHaveBeenCalled();
+    });
+
+    it('stops watching a quiet book even when its plan refuses, so it is looked at once', async () => {
+      const { pipeline, repo, converter } = await setup();
+      repo.quietWatchedBooks.mockResolvedValue([{ bookId: 9, libraryId: 2 }]);
+      converter.plan.mockResolvedValue({ status: 'cannot', reason: 'low_disk' });
+      await pipeline.admitQuietBooks(settings);
+      expect(repo.unwatch).toHaveBeenCalledWith(9);
+    });
+  });
+
+  describe('books filed from the Book Dock', () => {
+    it('admits them at once, without waiting for the files to go quiet', async () => {
+      const { pipeline, repo } = await setup();
+      await pipeline.admitFiledBooks([9, 9]);
+      expect(repo.quietWatchedBooks).toHaveBeenCalled();
+      expect(repo.unwatch).toHaveBeenCalledWith(9);
+      expect(repo.createJob).toHaveBeenCalledTimes(1);
+      expect(repo.createJob).toHaveBeenCalledWith(expect.objectContaining({ bookId: 9, libraryId: 2, status: 'waiting', stage: 'metadata' }));
+      expect(repo.unwatch.mock.invocationCallOrder[0]).toBeGreaterThan(repo.createJob.mock.invocationCallOrder[0]!);
+      expect(repo.waitingJobsDue).toHaveBeenCalled();
+    });
+
+    it('keeps the watch when the plan refuses for now, so the quiet path tries again later', async () => {
+      const { pipeline, repo, converter } = await setup();
+      converter.plan.mockResolvedValue({ status: 'cannot', reason: 'low_disk' });
+      await pipeline.admitFiledBooks([9]);
+      expect(repo.createJob).not.toHaveBeenCalled();
+      expect(repo.unwatch).not.toHaveBeenCalled();
+    });
+
+    it('skips a book that is no longer present', async () => {
+      const { pipeline, repo } = await setup();
+      repo.findBook.mockResolvedValue({ bookId: 9, libraryId: 2, status: 'missing', lastMetadataFetchAt: null });
+      await pipeline.admitFiledBooks([9]);
+      expect(repo.createJob).not.toHaveBeenCalled();
+    });
+
+    it('runs the metadata step after a tick that was already under way when the book was filed', async () => {
+      const { pipeline, repo } = await setup();
+      let release: (value: AudioConvertSettingsRow) => void = () => undefined;
+      repo.getSettings.mockImplementationOnce(() => new Promise((resolve) => (release = resolve)));
+      const running = pipeline.tick();
+      await pipeline.admitFiledBooks([9]);
+      expect(repo.waitingJobsDue).not.toHaveBeenCalled();
+      release(settings);
+      await running;
+      await vi.waitFor(() => expect(repo.waitingJobsDue).toHaveBeenCalledTimes(2));
+    });
+
+    it('leaves them alone while automatic conversion is off', async () => {
+      const { pipeline, repo } = await setup();
+      repo.getSettings.mockResolvedValue({ ...settings, autoConvert: false });
+      await pipeline.admitFiledBooks([9]);
+      expect(repo.createJob).not.toHaveBeenCalled();
+    });
+
+    it('skips a book that is not all MP3', async () => {
+      const { pipeline, repo } = await setup();
+      repo.findContentAudioFiles.mockResolvedValue([{ ...mp3(1), format: 'm4b' }]);
+      await pipeline.admitFiledBooks([9]);
+      expect(repo.createJob).not.toHaveBeenCalled();
+      expect(repo.waitingJobsDue).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('listening for filed books', () => {
+    async function wired(nodeEnv: string) {
+      const { repo, chapters, converter } = await setup();
+      const events = new EventEmitter();
+      const pipeline = new AudioConvertPipelineService(repo as never, chapters as never, converter as never, { nodeEnv } as never, events as never);
+      return { pipeline, events };
+    }
+
+    it('listens once the module starts outside tests and stops when it is destroyed', async () => {
+      const { pipeline, events } = await wired('production');
+      pipeline.onModuleInit();
+      expect(events.listenerCount(BOOK_DOCK_BOOKS_FILED)).toBe(1);
+      pipeline.onModuleDestroy();
+      expect(events.listenerCount(BOOK_DOCK_BOOKS_FILED)).toBe(0);
+    });
+
+    it('does not listen under tests', async () => {
+      const { pipeline, events } = await wired('test');
+      pipeline.onModuleInit();
+      expect(events.listenerCount(BOOK_DOCK_BOOKS_FILED)).toBe(0);
+      pipeline.onModuleDestroy();
     });
   });
 

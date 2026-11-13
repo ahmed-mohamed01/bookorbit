@@ -4,6 +4,7 @@ import { CommonModule } from '../../common/common.module';
 import { SelfWriteRegistryModule } from '../../common/self-write-registry.module';
 import { BookConsolidationModule } from '../book-consolidation/book-consolidation.module';
 import { BookCoverStoreModule } from '../book-cover-store/book-cover-store.module';
+import { BookDockModule } from '../book-dock/book-dock.module';
 import { BookModule } from '../book/book.module';
 import { ChapterEditorModule } from '../chapter-editor/chapter-editor.module';
 import { FileWriteModule } from '../file-write/file-write.module';
@@ -21,6 +22,8 @@ import { AudioConvertService } from './audio-convert.service';
 @Module({
   imports: [
     BookConsolidationModule,
+    // Fork: the dock says when a book it filed has all its files, so conversion need not wait.
+    BookDockModule,
     BookCoverStoreModule,
     BookModule,
     ChapterEditorModule,

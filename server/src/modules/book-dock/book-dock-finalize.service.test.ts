@@ -80,12 +80,13 @@ function makeService() {
   };
   const processor = {
     withFolderBookLock: vi.fn((_libraryId: number, _folderPath: string, work: () => Promise<unknown>) => work()),
-    createUnitBookRecords: vi.fn().mockResolvedValue({ bookIds: [101], createdBookIds: [101], attachedFileIds: [] }),
+    createUnitBookRecords: vi.fn().mockResolvedValue({ bookIds: [101], createdBookIds: [101], audioBookIds: [], attachedFileIds: [] }),
     deleteUnitBookRecords: vi.fn().mockResolvedValue(undefined),
     reconcileCoversAsync: vi.fn(),
   };
   const events = {
     on: vi.fn(),
+    emit: vi.fn(),
   };
   const gateway = {
     emitChanged: vi.fn(),
@@ -602,7 +603,7 @@ describe('BookDockFinalizeService', () => {
       repo.findExistingBooksByAbsolutePaths.mockResolvedValue([{ absolutePath: '/library/stale.epub', bookId: 77, libraryId: 5 }]);
       mockAccess.mockRejectedValueOnce(Object.assign(new Error('not found'), { code: 'ENOENT' }));
       mockStat.mockResolvedValueOnce({ size: 100 } as never);
-      processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [77], createdBookIds: [77], attachedFileIds: [] });
+      processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [77], createdBookIds: [77], audioBookIds: [], attachedFileIds: [] });
 
       const result = await (service as any).finalizeFile(
         makeRow({ targetLibraryId: 5, targetFolderId: 9 }),
@@ -645,7 +646,7 @@ describe('BookDockFinalizeService', () => {
       vi.spyOn(service as never, 'resolveDestination').mockResolvedValue('/library/new/book.epub' as never);
       mockAccess.mockRejectedValueOnce(Object.assign(new Error('not found'), { code: 'ENOENT' }));
       mockStat.mockResolvedValueOnce({ size: 321 } as never);
-      processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [808], createdBookIds: [808], attachedFileIds: [] });
+      processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [808], createdBookIds: [808], audioBookIds: [], attachedFileIds: [] });
       const constraintError = new Error('Failed query: update "book_metadata" set ...');
       (constraintError as Error & { cause?: unknown }).cause = {
         code: '23514',
@@ -682,7 +683,7 @@ describe('BookDockFinalizeService', () => {
       vi.spyOn(service as never, 'cleanupBookDockRecord').mockResolvedValue(undefined as never);
       mockAccess.mockRejectedValueOnce(Object.assign(new Error('not found'), { code: 'ENOENT' }));
       mockStat.mockResolvedValueOnce({ size: 100 } as never);
-      processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [555], createdBookIds: [555], attachedFileIds: [] });
+      processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [555], createdBookIds: [555], audioBookIds: [], attachedFileIds: [] });
 
       await expect(
         (service as any).finalizeFile(makeRow({ targetLibraryId: 5, targetFolderId: 9 }), undefined, undefined, new Map(), 1, true),
@@ -704,6 +705,59 @@ describe('BookDockFinalizeService', () => {
           sortOrder: 0,
         },
       ]);
+    });
+    describe('announcing filed books', () => {
+      async function fileWith(written: Record<string, unknown>, metadataError?: Error) {
+        const harness = makeService();
+        const { service, processor } = harness;
+        vi.spyOn(service as never, 'findLibraryOrFail').mockResolvedValue({ id: 5, allowedFormats: ['epub'], fileNamingPattern: null } as never);
+        vi.spyOn(service as never, 'findFolderOrFail').mockResolvedValue({ id: 9, libraryId: 5, path: '/library' } as never);
+        vi.spyOn(service as never, 'resolveDestination').mockResolvedValue('/library/new/book.epub' as never);
+        vi.spyOn(service as never, 'applyMetadata').mockImplementation((() =>
+          metadataError ? Promise.reject(metadataError) : Promise.resolve(undefined)) as never);
+        vi.spyOn(service as never, 'applyJoinedMetadata').mockResolvedValue(undefined as never);
+        vi.spyOn(service as never, 'cleanupBookDockRecord').mockResolvedValue(undefined as never);
+        mockAccess.mockRejectedValueOnce(Object.assign(new Error('not found'), { code: 'ENOENT' }));
+        mockStat.mockResolvedValueOnce({ size: 100 } as never);
+        processor.createUnitBookRecords.mockResolvedValueOnce({ attachedFileIds: [], ...written });
+        const result = await (service as any).finalizeFile(
+          makeRow({ targetLibraryId: 5, targetFolderId: 9 }),
+          undefined,
+          undefined,
+          new Map(),
+          1,
+          true,
+        );
+        return { ...harness, result };
+      }
+
+      it('announces an audio book the unit created', async () => {
+        const { events, result } = await fileWith({ bookIds: [555], createdBookIds: [555], audioBookIds: [555] });
+        expect(result).toMatchObject({ success: true });
+        expect(events.emit).toHaveBeenCalledWith('book-dock.books.filed', [555]);
+      });
+
+      it('does not announce an existing book the unit only joined', async () => {
+        const { events, result } = await fileWith({ bookIds: [42, 555], createdBookIds: [555], audioBookIds: [42] });
+        expect(result).toMatchObject({ success: true });
+        expect(events.emit).not.toHaveBeenCalledWith('book-dock.books.filed', expect.anything());
+      });
+
+      it('does not announce a created book that received no audio', async () => {
+        const { events, result } = await fileWith({ bookIds: [555], createdBookIds: [555], audioBookIds: [] });
+        expect(result).toMatchObject({ success: true });
+        expect(events.emit).not.toHaveBeenCalledWith('book-dock.books.filed', expect.anything());
+      });
+
+      it('announces nothing when filing fails and is rolled back', async () => {
+        const { events, processor, result } = await fileWith(
+          { bookIds: [555], createdBookIds: [555], audioBookIds: [555] },
+          new Error('metadata failed'),
+        );
+        expect(result).toMatchObject({ success: false });
+        expect(processor.deleteUnitBookRecords).toHaveBeenCalled();
+        expect(events.emit).not.toHaveBeenCalledWith('book-dock.books.filed', expect.anything());
+      });
     });
 
     describe('as another format of an existing book', () => {
@@ -730,7 +784,7 @@ describe('BookDockFinalizeService', () => {
         const applyJoined = vi.spyOn(service as never, 'applyJoinedMetadata').mockResolvedValue(undefined as never);
         mockAccess.mockRejectedValueOnce(Object.assign(new Error('not found'), { code: 'ENOENT' }));
         mockStat.mockResolvedValueOnce({ size: 100 } as never);
-        processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [42], createdBookIds: [], attachedFileIds: [900] });
+        processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [42], createdBookIds: [], audioBookIds: [], attachedFileIds: [900] });
 
         await expect((service as any).finalizeFile(audioRow(), undefined, undefined, new Map([[1, { joinBook }]]), 1, true)).resolves.toMatchObject({
           success: true,
@@ -753,7 +807,7 @@ describe('BookDockFinalizeService', () => {
         vi.spyOn(service as never, 'applyJoinedMetadata').mockResolvedValue(undefined as never);
         mockAccess.mockRejectedValueOnce(Object.assign(new Error('not found'), { code: 'ENOENT' }));
         mockStat.mockResolvedValueOnce({ size: 100 } as never);
-        processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [42], createdBookIds: [], attachedFileIds: [900] });
+        processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [42], createdBookIds: [], audioBookIds: [], attachedFileIds: [900] });
 
         await (service as any).finalizeFile(audioRow(), undefined, undefined, new Map([[1, { joinBook }]]), 1, true);
 
@@ -927,7 +981,7 @@ describe('BookDockFinalizeService', () => {
       vi.spyOn(service as never, 'applyMetadata').mockResolvedValue(undefined as never);
       vi.spyOn(service as never, 'cleanupBookDockRecord').mockResolvedValue(undefined as never);
       mockStat.mockResolvedValueOnce({ size: 100 } as never);
-      processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [557], createdBookIds: [557], attachedFileIds: [] });
+      processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [557], createdBookIds: [557], audioBookIds: [], attachedFileIds: [] });
       const row = makeRow({ targetLibraryId: 5, targetFolderId: 9, selectedMetadata: defaultPatternMetadata() });
       const destPath = '/library/Frank Herbert/Dune/01. Dune (1965).epub';
 
@@ -966,7 +1020,7 @@ describe('BookDockFinalizeService', () => {
       vi.spyOn(service as never, 'cleanupBookDockRecord').mockResolvedValue(undefined as never);
       mockAccess.mockRejectedValueOnce(Object.assign(new Error('not found'), { code: 'ENOENT' }));
       mockStat.mockResolvedValueOnce({ size: 100 } as never);
-      processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [556], createdBookIds: [556], attachedFileIds: [] });
+      processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [556], createdBookIds: [556], audioBookIds: [], attachedFileIds: [] });
 
       await expect(
         (service as any).finalizeFile(makeRow({ targetLibraryId: 5, targetFolderId: 9 }), undefined, undefined, new Map(), 1, true),
@@ -1001,7 +1055,12 @@ describe('BookDockFinalizeService', () => {
       mockStat.mockResolvedValue({ size: 100 } as never);
 
       for (const [index, title] of ['First Book', 'Second Book'].entries()) {
-        processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [101 + index], createdBookIds: [101 + index], attachedFileIds: [] });
+        processor.createUnitBookRecords.mockResolvedValueOnce({
+          bookIds: [101 + index],
+          createdBookIds: [101 + index],
+          audioBookIds: [],
+          attachedFileIds: [],
+        });
         const row = makeRow({
           id: index + 1,
           targetLibraryId: 5,
@@ -1067,7 +1126,7 @@ describe('BookDockFinalizeService', () => {
         vi.spyOn(service as never, 'cleanupBookDockRecord').mockResolvedValue(undefined as never);
         mockAccess.mockRejectedValueOnce(Object.assign(new Error('not found'), { code: 'ENOENT' }));
         mockStat.mockResolvedValueOnce({ size: 1024 } as never);
-        processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [42], createdBookIds: [42], attachedFileIds: [] });
+        processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [42], createdBookIds: [42], audioBookIds: [], attachedFileIds: [] });
 
         const overrideMap = new Map([[7, { libraryId: 5, folderId: 9 }]]);
         const result = await (service as any).finalizeFile(
@@ -1108,7 +1167,7 @@ describe('BookDockFinalizeService', () => {
         vi.spyOn(service as never, 'cleanupBookDockRecord').mockResolvedValue(undefined as never);
         mockAccess.mockRejectedValueOnce(Object.assign(new Error('not found'), { code: 'ENOENT' }));
         mockStat.mockResolvedValueOnce({ size: 2048 } as never);
-        processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [300], createdBookIds: [300], attachedFileIds: [] });
+        processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [300], createdBookIds: [300], audioBookIds: [], attachedFileIds: [] });
 
         const overrideMap = new Map([[8, { libraryId: 6, folderId: 10 }]]);
         const result = await (service as any).finalizeFile(
@@ -1153,7 +1212,7 @@ describe('BookDockFinalizeService', () => {
       vi.spyOn(service as never, 'cleanupBookDockRecord').mockResolvedValue(undefined as never);
       mockAccess.mockRejectedValueOnce(Object.assign(new Error('not found'), { code: 'ENOENT' }));
       mockStat.mockResolvedValueOnce({ size: 993 } as never);
-      processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [500], createdBookIds: [500], attachedFileIds: [] });
+      processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [500], createdBookIds: [500], audioBookIds: [], attachedFileIds: [] });
 
       const overrideMap = new Map([[1, { libraryId: 5, folderId: 9, targetFileName: '1_alt' }]]);
       const result = await (service as any).finalizeFile(
@@ -1279,7 +1338,7 @@ describe('BookDockFinalizeService', () => {
       vi.spyOn(service as never, 'cleanupBookDockRecord').mockResolvedValue(undefined as never);
       mockAccess.mockRejectedValueOnce(Object.assign(new Error('not found'), { code: 'ENOENT' }));
       mockStat.mockResolvedValueOnce({ size: 200 } as never);
-      processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [600], createdBookIds: [600], attachedFileIds: [] });
+      processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [600], createdBookIds: [600], audioBookIds: [], attachedFileIds: [] });
 
       // User types "Title (alt).epub" - should NOT produce "Title (alt).epub.epub"
       const overrideMap = new Map([[1, { libraryId: 5, folderId: 9, targetFileName: 'Title (alt).epub' }]]);
@@ -2146,7 +2205,7 @@ describe('BookDockFinalizeService', () => {
       const applyJoined = vi.spyOn(service as never, 'applyJoinedMetadata').mockResolvedValue(undefined as never);
       repo.findByIds.mockResolvedValue([pdfRow()]);
       joinService.resolveRequested.mockResolvedValue(target());
-      processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [42], createdBookIds: [], attachedFileIds: [900] });
+      processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [42], createdBookIds: [], audioBookIds: [], attachedFileIds: [900] });
 
       const result = await service.finalize(
         7,
@@ -2460,7 +2519,7 @@ describe('BookDockFinalizeService', () => {
       stubLibrary(service);
       const applyMetadata = vi.spyOn(service as never, 'applyMetadata').mockResolvedValue(undefined as never);
       const applyJoined = vi.spyOn(service as never, 'applyJoinedMetadata').mockResolvedValue(undefined as never);
-      processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [42], createdBookIds: [], attachedFileIds: [900] });
+      processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [42], createdBookIds: [], audioBookIds: [], attachedFileIds: [900] });
 
       const result = await (service as any).finalizeFile(pdfRow({ targetLibraryId: 5, targetFolderId: 9 }), undefined, undefined, new Map(), 0, true);
 
@@ -2474,7 +2533,7 @@ describe('BookDockFinalizeService', () => {
       stubLibrary(service);
       const applyMetadata = vi.spyOn(service as never, 'applyMetadata').mockResolvedValue(undefined as never);
       const applyJoined = vi.spyOn(service as never, 'applyJoinedMetadata').mockResolvedValue(undefined as never);
-      processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [101], createdBookIds: [101], attachedFileIds: [] });
+      processor.createUnitBookRecords.mockResolvedValueOnce({ bookIds: [101], createdBookIds: [101], audioBookIds: [], attachedFileIds: [] });
 
       await (service as any).finalizeFile(pdfRow({ targetLibraryId: 5, targetFolderId: 9 }), undefined, undefined, new Map(), 0, true);
 
@@ -2574,7 +2633,7 @@ describe('BookDockFinalizeService', () => {
       const harness = makeService();
       harness.repo.findUnitFiles.mockResolvedValue(AUDIO_UNIT_FILES);
       arrange(harness);
-      harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [77], createdBookIds: [77], attachedFileIds: [] });
+      harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [77], createdBookIds: [77], audioBookIds: [], attachedFileIds: [] });
 
       const result = await finalize(harness, unitRow({ unitDirectory }));
 
@@ -2601,7 +2660,7 @@ describe('BookDockFinalizeService', () => {
       const harness = makeService();
       harness.repo.findUnitFiles.mockResolvedValue(AUDIO_UNIT_FILES);
       arrange(harness);
-      const written = { bookIds: [77], createdBookIds: [77], attachedFileIds: [9] };
+      const written = { bookIds: [77], createdBookIds: [77], audioBookIds: [], attachedFileIds: [9] };
       harness.processor.createUnitBookRecords.mockResolvedValue(written);
       vi.spyOn(harness.service as never, 'applyMetadata').mockRejectedValue(new Error('metadata exploded') as never);
 
@@ -2618,7 +2677,7 @@ describe('BookDockFinalizeService', () => {
       const harness = makeService();
       harness.repo.findUnitFiles.mockResolvedValue(AUDIO_UNIT_FILES);
       arrange(harness);
-      harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [77], createdBookIds: [77], attachedFileIds: [] });
+      harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [77], createdBookIds: [77], audioBookIds: [], attachedFileIds: [] });
       harness.processor.deleteUnitBookRecords.mockRejectedValue(new Error('rollback exploded'));
       vi.spyOn(harness.service as never, 'applyMetadata').mockRejectedValue(new Error('metadata exploded') as never);
 
@@ -2656,7 +2715,7 @@ describe('BookDockFinalizeService', () => {
         },
       ]);
       arrange(harness);
-      harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [80], createdBookIds: [80], attachedFileIds: [] });
+      harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [80], createdBookIds: [80], audioBookIds: [], attachedFileIds: [] });
 
       const result = await finalize(harness, unitRow({ absolutePath: `${UNIT_DIR}/CD 1/track01.mp3`, unitDirectory }));
 
@@ -2747,7 +2806,7 @@ describe('BookDockFinalizeService', () => {
       const harness = makeService();
       harness.repo.findUnitFiles.mockResolvedValue(MULTI_FORMAT_FILES);
       arrange(harness, { destPath: '/library/Dune/Dune.epub', importFormats: 'all' });
-      harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [78], createdBookIds: [78], attachedFileIds: [] });
+      harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [78], createdBookIds: [78], audioBookIds: [], attachedFileIds: [] });
 
       const result = await finalize(harness, multiFormatRow());
 
@@ -2759,7 +2818,7 @@ describe('BookDockFinalizeService', () => {
       const harness = makeService();
       harness.repo.findUnitFiles.mockResolvedValue(MULTI_FORMAT_FILES);
       arrange(harness, { formatPriority: ['pdf', 'epub'], destPath: '/library/Dune/Dune.epub', importFormats: 'preferred' });
-      harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [78], createdBookIds: [78], attachedFileIds: [] });
+      harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [78], createdBookIds: [78], audioBookIds: [], attachedFileIds: [] });
 
       const result = await finalize(harness, multiFormatRow());
 
@@ -2780,7 +2839,12 @@ describe('BookDockFinalizeService', () => {
       const harness = makeService();
       harness.repo.findUnitFiles.mockResolvedValue(MULTI_FORMAT_FILES);
       arrange(harness, { organizationMode: 'book_per_file', destPath: '/library/Dune.epub', importFormats: 'all' });
-      harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [81, 82], createdBookIds: [81, 82], attachedFileIds: [] });
+      harness.processor.createUnitBookRecords.mockResolvedValue({
+        bookIds: [81, 82],
+        createdBookIds: [81, 82],
+        audioBookIds: [],
+        attachedFileIds: [],
+      });
       const applyMetadata = vi.spyOn(harness.service as never, 'applyMetadata').mockResolvedValue(undefined as never);
 
       const result = await finalize(harness, multiFormatRow());
@@ -2806,7 +2870,12 @@ describe('BookDockFinalizeService', () => {
         const harness = makeService();
         harness.repo.findUnitFiles.mockResolvedValue(MULTI_FORMAT_FILES);
         arrange(harness, { organizationMode: 'book_per_file', destPath: '/library/Dune.epub', fileWriteEnabled: true });
-        harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [101, 102], createdBookIds: [101, 102], attachedFileIds: [] });
+        harness.processor.createUnitBookRecords.mockResolvedValue({
+          bookIds: [101, 102],
+          createdBookIds: [101, 102],
+          audioBookIds: [],
+          attachedFileIds: [],
+        });
         const order: string[] = [];
         vi.spyOn(harness.service as never, 'applyMetadata').mockImplementation(((bookId: number) => {
           order.push(`metadata:${bookId}`);
@@ -2830,7 +2899,7 @@ describe('BookDockFinalizeService', () => {
         const harness = makeService();
         harness.repo.findUnitFiles.mockResolvedValue(AUDIO_UNIT_FILES);
         arrange(harness);
-        harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [77], createdBookIds: [77], attachedFileIds: [] });
+        harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [77], createdBookIds: [77], audioBookIds: [], attachedFileIds: [] });
 
         const result = await finalize(harness, unitRow());
 
@@ -2842,7 +2911,12 @@ describe('BookDockFinalizeService', () => {
         const harness = makeService();
         harness.repo.findUnitFiles.mockResolvedValue(MULTI_FORMAT_FILES);
         arrange(harness, { organizationMode: 'book_per_file', destPath: '/library/Dune.epub', fileWriteEnabled: true });
-        harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [101, 102], createdBookIds: [101, 102], attachedFileIds: [] });
+        harness.processor.createUnitBookRecords.mockResolvedValue({
+          bookIds: [101, 102],
+          createdBookIds: [101, 102],
+          audioBookIds: [],
+          attachedFileIds: [],
+        });
         harness.metadataService.measureMissingAudioDurations
           .mockRejectedValueOnce(new Error('connection reset'))
           .mockResolvedValueOnce({ measured: 1, failed: 0 });
@@ -2865,7 +2939,7 @@ describe('BookDockFinalizeService', () => {
         const harness = makeService();
         harness.repo.findUnitFiles.mockResolvedValue(AUDIO_UNIT_FILES);
         arrange(harness);
-        harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [77], createdBookIds: [77], attachedFileIds: [] });
+        harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [77], createdBookIds: [77], audioBookIds: [], attachedFileIds: [] });
         harness.metadataService.measureMissingAudioDurations.mockResolvedValueOnce({ measured: 1, failed: 1 });
         const warn = vi.spyOn((harness.service as any).logger, 'warn').mockImplementation(() => undefined);
 
@@ -2881,7 +2955,7 @@ describe('BookDockFinalizeService', () => {
         const harness = makeService();
         harness.repo.findUnitFiles.mockResolvedValue(AUDIO_UNIT_FILES);
         arrange(harness);
-        harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [77], createdBookIds: [77], attachedFileIds: [] });
+        harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [77], createdBookIds: [77], audioBookIds: [], attachedFileIds: [] });
         vi.spyOn(harness.service as never, 'applyMetadata').mockRejectedValue(new Error('metadata exploded') as never);
 
         const result = await finalize(harness, unitRow());
@@ -2908,7 +2982,12 @@ describe('BookDockFinalizeService', () => {
         const harness = makeService();
         harness.repo.findUnitFiles.mockResolvedValue(MULTI_FORMAT_FILES);
         arrange(harness, { organizationMode: 'book_per_file', destPath: '/library/Dune.epub', fileWriteEnabled: true });
-        harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [101, 102], createdBookIds: [101, 102], attachedFileIds: [] });
+        harness.processor.createUnitBookRecords.mockResolvedValue({
+          bookIds: [101, 102],
+          createdBookIds: [101, 102],
+          audioBookIds: [],
+          attachedFileIds: [],
+        });
 
         const result = await finalize(harness, multiFormatRow());
 
@@ -2923,7 +3002,7 @@ describe('BookDockFinalizeService', () => {
         const harness = makeService();
         harness.repo.findUnitFiles.mockResolvedValue(AUDIO_UNIT_FILES);
         arrange(harness, { fileWriteEnabled: false });
-        harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [101], createdBookIds: [101], attachedFileIds: [] });
+        harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [101], createdBookIds: [101], audioBookIds: [], attachedFileIds: [] });
 
         const result = await finalize(harness, unitRow());
 
@@ -2935,7 +3014,12 @@ describe('BookDockFinalizeService', () => {
         const harness = makeService();
         harness.repo.findUnitFiles.mockResolvedValue(MULTI_FORMAT_FILES);
         arrange(harness, { organizationMode: 'book_per_file', destPath: '/library/Dune.epub', fileWriteEnabled: true });
-        harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [101, 102], createdBookIds: [102], attachedFileIds: [9] });
+        harness.processor.createUnitBookRecords.mockResolvedValue({
+          bookIds: [101, 102],
+          createdBookIds: [102],
+          audioBookIds: [],
+          attachedFileIds: [9],
+        });
         vi.spyOn(harness.service as never, 'applyMetadata')
           .mockResolvedValueOnce(undefined as never)
           .mockRejectedValueOnce(new Error('metadata exploded') as never);
@@ -2951,7 +3035,7 @@ describe('BookDockFinalizeService', () => {
         const harness = makeService();
         harness.repo.findUnitFiles.mockResolvedValue(AUDIO_UNIT_FILES);
         arrange(harness, { fileWriteEnabled: true });
-        harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [101], createdBookIds: [101], attachedFileIds: [] });
+        harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [101], createdBookIds: [101], audioBookIds: [], attachedFileIds: [] });
         vi.spyOn(harness.service as never, 'cleanupBookDockRecord').mockRejectedValue(new Error('cleanup failed') as never);
 
         const result = await finalize(harness, unitRow());
@@ -2969,7 +3053,7 @@ describe('BookDockFinalizeService', () => {
       const harness = makeService();
       harness.repo.findUnitFiles.mockResolvedValue(AUDIO_UNIT_FILES);
       arrange(harness, { destPath: '/library/track-01.mp3' });
-      harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [79], createdBookIds: [79], attachedFileIds: [] });
+      harness.processor.createUnitBookRecords.mockResolvedValue({ bookIds: [79], createdBookIds: [79], audioBookIds: [], attachedFileIds: [] });
 
       const result = await finalize(harness, unitRow());
 

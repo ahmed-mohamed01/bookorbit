@@ -49,6 +49,8 @@ export interface UnitBookRecords {
   /** Every book the unit touched, primary first. */
   bookIds: number[];
   createdBookIds: number[];
+  /** Fork: the books that received an audio file from this unit. */
+  audioBookIds: number[];
   attachedFileIds: number[];
   replacedPrimaries: ReplacedPrimary[];
 }
@@ -251,7 +253,7 @@ export class UploadProcessorService {
         if (replaced) replacedPrimaries.push(replaced);
       }
 
-      return { bookIds, createdBookIds, attachedFileIds, replacedPrimaries };
+      return { bookIds, createdBookIds, audioBookIds: [...audioBookIds], attachedFileIds, replacedPrimaries };
     });
   }
 

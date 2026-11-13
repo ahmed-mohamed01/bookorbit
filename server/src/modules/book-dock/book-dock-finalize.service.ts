@@ -71,7 +71,7 @@ import { UploadStorageService } from '../upload/upload-storage.service';
 import { UploadValidatorService } from '../upload/upload-validator.service';
 import { inspectEpubMediaOverlayFields } from '../reader/epub/epub-media-overlay-capability';
 import { BookDockRepository } from './book-dock.repository';
-import { BookDockEventsService, BOOK_DOCK_FILE_INGESTED } from './book-dock-events.service';
+import { BookDockEventsService, BOOK_DOCK_BOOKS_FILED, BOOK_DOCK_FILE_INGESTED } from './book-dock-events.service';
 import { BookDockGateway } from './book-dock.gateway';
 import {
   BookDockJoinService,
@@ -500,6 +500,9 @@ export class BookDockFinalizeService implements OnModuleInit, OnApplicationBoots
       }
       existingDestinations.set(this.destinationKey(library.id, destPath), bookId);
       existingDestinations.set(this.destinationKey(library.id, persistedDestPath), bookId);
+      // Fork: announce the audio books this unit created, whose files are now all in place.
+      const filedAudioBookIds = written.createdBookIds.filter((id) => written.audioBookIds.includes(id));
+      if (filedAudioBookIds.length > 0) this.events.emit(BOOK_DOCK_BOOKS_FILED, filedAudioBookIds);
       if (analysis.joinSummary) {
         this.logger.log(
           `[book_dock.join_book] [end] fileId=${row.id} bookId=${analysis.joinSummary.bookId} landedBookId=${bookId} files=${placement.length} - filed as another format of an existing book`,

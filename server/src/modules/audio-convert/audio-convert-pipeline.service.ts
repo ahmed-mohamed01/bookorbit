@@ -1,10 +1,11 @@
 import { AUDIO_CONVERT_NEW_BOOK_QUIET_MINUTES, type AudioConvertChapterOutcome, type AudioConvertMetadataOutcome } from '@bookorbit/types';
-import { Inject, Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 
 import { orderAudiobookTracks } from '../../common/utils/audiobook-chapters.utils';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { appConfig } from '../../config/config';
+import { BOOK_DOCK_BOOKS_FILED, BookDockEventsService } from '../book-dock/book-dock-events.service';
 import { ChapterEditorService } from '../chapter-editor/chapter-editor.service';
 import { AudioConvertConverterService } from './audio-convert-converter.service';
 import { AudioConvertRepository } from './audio-convert.repository';
@@ -26,32 +27,66 @@ const EVENT = 'audio_convert.pipeline';
 /**
  * New MP3 books: once their files stop arriving, fill metadata, fetch chapters, then queue the
  * conversion. A book goes through this once; a skipped or failed run is not retried automatically.
+ *
+ * Fork: a book filed from the Book Dock enters as soon as it is filed, since the dock places every
+ * file of the unit before it says so. Only books the scanner finds wait for their files to go quiet.
  */
 @Injectable()
 export class AudioConvertPipelineService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AudioConvertPipelineService.name);
   private timer: NodeJS.Timeout | null = null;
   private running = false;
+  /** A tick was asked for while one was running; the running one starts another when it ends. */
+  private rerun = false;
 
   constructor(
     private readonly repo: AudioConvertRepository,
     private readonly chapters: ChapterEditorService,
     private readonly converter: AudioConvertConverterService,
     @Inject(appConfig.KEY) private readonly app: ConfigType<typeof appConfig>,
+    @Optional() private readonly dockEvents?: BookDockEventsService,
   ) {}
+
+  /** `admitFiledBooks` catches everything, so the dock's emit can never see a throw from here. */
+  private readonly onBooksFiled = (bookIds: number[]) => void this.admitFiledBooks(bookIds);
 
   onModuleInit(): void {
     if (this.app.nodeEnv === 'test') return;
+    this.dockEvents?.on(BOOK_DOCK_BOOKS_FILED, this.onBooksFiled);
     this.timer = setInterval(() => void this.tick(), TICK_MS);
     this.timer.unref();
   }
 
   onModuleDestroy(): void {
+    this.dockEvents?.off(BOOK_DOCK_BOOKS_FILED, this.onBooksFiled);
     if (this.timer) clearInterval(this.timer);
   }
 
+  /** Fork: books the Book Dock just filed, whose files are all in place, enter without the quiet wait. */
+  async admitFiledBooks(bookIds: number[]): Promise<void> {
+    const startedAt = Date.now();
+    try {
+      const settings = await this.repo.getSettings();
+      if (!settings.enabled || !settings.autoConvert) return;
+      let admitted = 0;
+      for (const bookId of new Set(bookIds)) {
+        const book = await this.repo.findBook(bookId);
+        if (book?.status === 'present' && (await this.admit(bookId, book.libraryId, settings, 'filed'))) admitted++;
+      }
+      // Start the metadata step now, or straight after the tick already under way.
+      if (admitted > 0) await this.tick();
+    } catch (error) {
+      this.logger.error(
+        `[${EVENT}] [fail] bookIds=${sanitizeLogValue(bookIds.join(','))} durationMs=${Date.now() - startedAt} errorClass=${errorClass(error)} error="${sanitizeLogValue(errorMessage(error))}" - filed books could not enter the pipeline`,
+      );
+    }
+  }
+
   async tick(): Promise<void> {
-    if (this.running) return;
+    if (this.running) {
+      this.rerun = true;
+      return;
+    }
     this.running = true;
     const startedAt = Date.now();
     try {
@@ -78,33 +113,48 @@ export class AudioConvertPipelineService implements OnModuleInit, OnModuleDestro
       );
     } finally {
       this.running = false;
+      if (this.rerun) {
+        this.rerun = false;
+        void this.tick();
+      }
     }
   }
 
   async admitQuietBooks(settings: AudioConvertSettingsRow): Promise<void> {
     const books = await this.repo.quietWatchedBooks(AUDIO_CONVERT_NEW_BOOK_QUIET_MINUTES * 60_000, BATCH);
-    for (const { bookId, libraryId } of books) {
-      await this.repo.unwatch(bookId);
-      if (await this.repo.hasAnyJob(bookId)) continue;
-      const files = orderAudiobookTracks(await this.repo.findContentAudioFiles(bookId));
-      if (files.length === 0 || !files.every((file) => (file.format ?? '').toLowerCase() === 'mp3')) continue;
-      // Only a book the tool can actually convert enters the pipeline (probes, writable folder, disk room).
-      if ((await this.converter.plan(bookId)).status !== 'can_convert') continue;
-      const job = await this.repo.createJob({
-        bookId,
-        libraryId,
-        userId: settings.updatedByUserId,
-        trigger: 'auto',
-        status: 'waiting',
-        stage: 'metadata',
-        codec: settings.codec,
-        bitrate: settings.bitrate,
-        channels: settings.channels,
-        nextStepAt: new Date(),
-        result: { warnings: [] },
-      });
-      if (job) this.logger.log(`[${EVENT}] [start] jobId=${job.id} bookId=${bookId} - new MP3 book entered the pipeline`);
-    }
+    for (const { bookId, libraryId } of books) await this.admit(bookId, libraryId, settings, 'quiet');
+  }
+
+  /**
+   * Starts `bookId` through the pipeline when it is all MP3, never had a job, and can convert. A quiet
+   * book is unwatched first, so it is looked at once. A filed book keeps its watch until its job
+   * exists, so a passing refusal (low disk, a probe racing the dock's write-back) is retried by the
+   * quiet path instead of dropping the book.
+   */
+  private async admit(bookId: number, libraryId: number, settings: AudioConvertSettingsRow, via: 'quiet' | 'filed'): Promise<boolean> {
+    if (via === 'quiet') await this.repo.unwatch(bookId);
+    if (await this.repo.hasAnyJob(bookId)) return false;
+    const files = orderAudiobookTracks(await this.repo.findContentAudioFiles(bookId));
+    if (files.length === 0 || !files.every((file) => (file.format ?? '').toLowerCase() === 'mp3')) return false;
+    // Only a book the tool can actually convert enters the pipeline (probes, writable folder, disk room).
+    if ((await this.converter.plan(bookId)).status !== 'can_convert') return false;
+    const job = await this.repo.createJob({
+      bookId,
+      libraryId,
+      userId: settings.updatedByUserId,
+      trigger: 'auto',
+      status: 'waiting',
+      stage: 'metadata',
+      codec: settings.codec,
+      bitrate: settings.bitrate,
+      channels: settings.channels,
+      nextStepAt: new Date(),
+      result: { warnings: [] },
+    });
+    if (!job) return false;
+    if (via === 'filed') await this.repo.unwatch(bookId);
+    this.logger.log(`[${EVENT}] [start] jobId=${job.id} bookId=${bookId} via=${via} - new MP3 book entered the pipeline`);
+    return true;
   }
 
   async step(job: AudioConvertJobRow, settings: AudioConvertSettingsRow): Promise<void> {

@@ -505,7 +505,7 @@ describe('UploadProcessorService', () => {
       const result = await service.createUnitBookRecords(1, 2, unitFiles);
 
       expect(db.transaction).toHaveBeenCalledTimes(1);
-      expect(result).toEqual({ bookIds: [42], createdBookIds: [42], attachedFileIds: [], replacedPrimaries: [] });
+      expect(result).toEqual({ bookIds: [42], createdBookIds: [42], audioBookIds: [42], attachedFileIds: [], replacedPrimaries: [] });
       expect(insertBooksValues).toHaveBeenCalledTimes(1);
       expect(insertBookFilesValues).toHaveBeenCalledTimes(2);
     });
@@ -517,7 +517,7 @@ describe('UploadProcessorService', () => {
 
       const result = await service.createUnitBookRecords(1, 2, [unitFiles[0]!]);
 
-      expect(result).toEqual({ bookIds: [99], createdBookIds: [], attachedFileIds: [777], replacedPrimaries: [] });
+      expect(result).toEqual({ bookIds: [99], createdBookIds: [], audioBookIds: [99], attachedFileIds: [777], replacedPrimaries: [] });
     });
 
     it('leaves a row that already pointed at that path out of the rollback set', async () => {
@@ -525,7 +525,7 @@ describe('UploadProcessorService', () => {
 
       const result = await service.createUnitBookRecords(1, 2, [unitFiles[0]!]);
 
-      expect(result).toEqual({ bookIds: [99], createdBookIds: [], attachedFileIds: [], replacedPrimaries: [] });
+      expect(result).toEqual({ bookIds: [99], createdBookIds: [], audioBookIds: [99], attachedFileIds: [], replacedPrimaries: [] });
     });
 
     it('hashes every file before opening the transaction', async () => {
@@ -565,6 +565,16 @@ describe('UploadProcessorService', () => {
       ]);
 
       expect(mockRealignAudioTrackOrder).not.toHaveBeenCalled();
+    });
+
+    it('reports no audio book when the unit brought no audio', async () => {
+      selectLimit.mockResolvedValueOnce([{ id: 99, primaryFileId: 5, status: 'present', formatPriority: ['epub'] }]).mockResolvedValueOnce([]);
+
+      const result = await service.createUnitBookRecords(1, 2, [
+        { folderPath: '/library/Book', absolutePath: '/library/Book/book.epub', relPath: 'Book/book.epub', format: 'epub', sizeBytes: 10 },
+      ]);
+
+      expect(result.audioBookIds).toEqual([]);
     });
 
     it('rolls the whole unit back when the renumbering fails', async () => {
@@ -705,6 +715,7 @@ describe('UploadProcessorService', () => {
       expect(result).toEqual({
         bookIds: [99],
         createdBookIds: [],
+        audioBookIds: [99],
         attachedFileIds: [777],
         replacedPrimaries: [{ bookId: 99, previousPrimaryFileId: 500, primaryFileId: 777 }],
       });
@@ -803,7 +814,7 @@ describe('UploadProcessorService', () => {
     });
 
     it('does nothing when the unit created nothing of its own', async () => {
-      await service.deleteUnitBookRecords({ bookIds: [99], createdBookIds: [], attachedFileIds: [], replacedPrimaries: [] });
+      await service.deleteUnitBookRecords({ bookIds: [99], createdBookIds: [], audioBookIds: [99], attachedFileIds: [], replacedPrimaries: [] });
 
       expect(db.transaction).not.toHaveBeenCalled();
     });
