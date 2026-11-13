@@ -103,6 +103,17 @@ describe('EditionSyncBookStateService.getState', () => {
     expect(state.index).toMatchObject({ status: 'ready', indexFileId: 55, sentences: 433, matchedSentences: 430, queuePosition: null });
   });
 
+  it('reports the EPUB the ready index was aligned to from its provenance', async () => {
+    const row = { bookId: 10, status: 'ready', indexFileId: 3, indexPath: '/x', provenance: { epub: { bookFileId: 21 } } };
+    const { service } = setup({ row });
+    expect((await service.getState(user, 10)).index.epubFileId).toBe(21);
+  });
+
+  it('reports no aligned EPUB for an older index without provenance', async () => {
+    const { service } = setup({ row: { bookId: 10, status: 'ready', indexFileId: 3, indexPath: '/x', provenance: null } });
+    expect((await service.getState(user, 10)).index.epubFileId).toBeNull();
+  });
+
   const failedRow = {
     bookId: 10,
     status: 'failed',

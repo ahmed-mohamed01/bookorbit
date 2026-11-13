@@ -6,6 +6,7 @@ import { useFoliateSelection } from './useFoliateSelection'
 import { useFoliateInput } from './useFoliateInput'
 import { scalePublisherFontSizes } from '../lib/publisher-font-sizes'
 import { markBookAlignment } from '../lib/book-alignment'
+import { goToIndexSentence, hasIndexNarration, markIndexSection } from '../../media-overlay/lib/index-narration'
 import { loadFoliate, openStreamingEpub } from '../foliate-loader'
 import type { EpubReaderSettings } from '@bookorbit/types'
 import type { CrossFormatEbookResume } from '../../shared/composables/useCrossFormatResume'
@@ -124,6 +125,8 @@ export interface FoliateOpenOptions extends EpubOpenOptions {
   mediaOverlaySectionIndex?: number | null
   preferMediaOverlay?: boolean
   crossFormatResume?: CrossFormatEbookResume | null
+  /** Fork: narrate from the timing-index playlist already loaded, rather than asking for it again. */
+  keepIndexNarration?: boolean
 }
 
 export function useFoliate(
@@ -141,6 +144,10 @@ export function useFoliate(
   const bookLanguage = ref<string>('en')
   const isFixedLayout = ref(false)
   const hasMediaOverlay = ref(false)
+  /** Fork: the narration is the audiobook, timed by the book's edition sync timing index. */
+  const narrationViaIndex = ref(false)
+  /** Fork: the book reads along from a timing index, but its narration did not come this session. */
+  const indexNarrationMissing = ref(false)
   let mediaOverlayFollow: MediaOverlayFollowDecider | null = null
 
   let onAnnotationClick: ((cfi: string, popupPosition: { x: number; y: number; showBelow: boolean }) => void) | null = null
@@ -178,6 +185,9 @@ export function useFoliate(
     error.value = null
     isFixedLayout.value = false
     hasMediaOverlay.value = false
+    narrationViaIndex.value = false
+    indexNarrationMissing.value = false
+    let readsAlongFromIndex = false
 
     let loadTimeoutId: ReturnType<typeof setTimeout> | undefined
     let initialNavigationPending = true
@@ -228,6 +238,8 @@ export function useFoliate(
         setTimeout(() => {
           if (onApplyStyles) onApplyStyles(view.renderer)
         }, 0)
+        // Fork: sentences read along from a timing index are marked before anything reads the page.
+        if (detail?.doc && typeof detail.index === 'number') markIndexSection(view.book, detail.index, detail.doc as Document)
         annotations.reAddAll(view)
         if (detail?.doc) {
           if (!isFixedLayout.value) markBookAlignment(detail.doc as Document)
@@ -299,7 +311,16 @@ export function useFoliate(
       let shouldRestoreByFraction = false
 
       if (format === 'epub') {
-        const { book, info: bookInfo } = await openStreamingEpub(bookId, fileId)
+        const {
+          book,
+          info: bookInfo,
+          indexNarrationMissing: narrationMissing,
+        } = await openStreamingEpub(bookId, fileId, {
+          keepIndexNarration: options.keepIndexNarration,
+        })
+        // Fork: whether a saved narration sentence needs this session's index narration to be found.
+        readsAlongFromIndex = !!bookInfo?.timingIndexNarration
+        indexNarrationMissing.value = narrationMissing
         const rawLang = bookInfo?.metadata?.language
         bookLanguage.value = typeof rawLang === 'string' && rawLang ? (rawLang.split('-')[0] ?? 'en').toLowerCase() : 'en'
         applyEpubOpenOptions(book, options)
@@ -317,6 +338,7 @@ export function useFoliate(
         await view.open(file)
       }
       hasMediaOverlay.value = !!view.mediaOverlay
+      narrationViaIndex.value = hasMediaOverlay.value && hasIndexNarration(view.book)
       if (onApplyStyles) onApplyStyles(view.renderer)
       const navigateTo = async (target: string | number | null | undefined) => {
         if (target === null || target === undefined) return false
@@ -327,6 +349,9 @@ export function useFoliate(
           return false
         }
       }
+      // Fork: a sentence saved from timing-index narration is gone to only where it is marked.
+      const navigateToFragment = (fragment: string) =>
+        readsAlongFromIndex ? goToIndexSentence(view, fragment, narrationViaIndex.value) : navigateTo(fragment)
 
       // Cross-format resume wins over every saved position: when the audiobook is ahead, jump to the exact
       // passage the narration reached (a precise text search), not the reader's own last spot.
@@ -334,7 +359,7 @@ export function useFoliate(
         options.crossFormatResume && !shouldRestoreByFraction ? await resumeCrossFormat(view, options.crossFormatResume) : false
       let didNavigate = crossFormatResumed
       if (!didNavigate && options.preferMediaOverlay && options.mediaOverlayFragment) {
-        didNavigate = await navigateTo(options.mediaOverlayFragment)
+        didNavigate = await navigateToFragment(options.mediaOverlayFragment)
       }
       if (!didNavigate && options.cfi && !shouldRestoreByFraction) {
         didNavigate = await navigateTo(options.cfi)
@@ -353,7 +378,7 @@ export function useFoliate(
         didNavigate = await navigateTo(0)
       }
       if (!didNavigate && options.mediaOverlayFragment) {
-        didNavigate = await navigateTo(options.mediaOverlayFragment)
+        didNavigate = await navigateToFragment(options.mediaOverlayFragment)
       }
       if (!didNavigate && options.mediaOverlaySectionIndex !== null && options.mediaOverlaySectionIndex !== undefined) {
         didNavigate = await navigateTo(options.mediaOverlaySectionIndex)
@@ -451,6 +476,8 @@ export function useFoliate(
     bookLanguage,
     isFixedLayout,
     hasMediaOverlay,
+    narrationViaIndex,
+    indexNarrationMissing,
     getMediaOverlay: (): FoliateMediaOverlay | null => getViewEl()?.mediaOverlay ?? null,
     startMediaOverlay: (): unknown => getViewEl()?.startMediaOverlay?.(),
     getMediaActiveClass: (): string | null => getViewEl()?.book?.media?.activeClass ?? null,

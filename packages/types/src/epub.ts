@@ -29,6 +29,11 @@ export interface EpubBookInfo {
   toc: EpubTocItem | null;
   metadata: Record<string, unknown>;
   coverPath: string | null;
+  /**
+   * Fork: this plain EPUB has no narration of its own, but the book's edition sync timing index
+   * reads it along with the audiobook, so its media-overlay playlist comes from the index.
+   */
+  timingIndexNarration?: boolean;
 }
 
 export interface EpubMediaOverlayCapability {
@@ -65,6 +70,22 @@ export interface EpubMediaOverlayPlaylistResource {
   size: number;
 }
 
+/**
+ * Fork: where a timing index's sentences sit in one chapter of the plain EPUB. The chapter carries
+ * no sentence ids, so the reader finds each sentence by counting the characters before it that
+ * are not whitespace (JS `\s`): the character data of every text and CDATA node under `<body>` in
+ * order, nothing inside `<script>`, `<style>`, `<svg>` or `<math>`, entities decoded as HTML.
+ * `length` and `hash` are the whole chapter's count and a 32-bit hash of those characters, so
+ * text that differs from the index's is left unmarked rather than marked in the wrong place.
+ */
+export interface EpubMediaOverlayTextPositions {
+  length: number;
+  hash: number;
+  ids: string[];
+  starts: number[];
+  ends: number[];
+}
+
 export interface EpubMediaOverlayPlaylist {
   bookId: number;
   fileId: number | null;
@@ -72,4 +93,8 @@ export interface EpubMediaOverlayPlaylist {
   items: EpubMediaOverlayPlaylistItem[];
   sections: EpubMediaOverlayPlaylistSection[];
   resources: EpubMediaOverlayPlaylistResource[];
+  /** Fork: `timing-index` when the narration is the book's audiobook, timed by its timing index. */
+  source?: "epub" | "timing-index";
+  /** Fork: with a timing index, where each sentence sits, by chapter (`textHref`). */
+  textPositions?: Record<string, EpubMediaOverlayTextPositions>;
 }

@@ -410,6 +410,57 @@ describe('Foliate navigation', () => {
     }
   })
 
+  it('narrates a sentence read along from a timing index without jumping to an unmarked chapter start', async () => {
+    document.body.innerHTML =
+      '<p><span data-bo-ra="s1" id="s1">First </span><em><span data-bo-ra="s1">sentence.</span></em> <span data-bo-ra="s2" id="s2">Next.</span></p>'
+    const originalCreateElement = document.createElement.bind(document)
+    const goTo = vi.fn<() => Promise<void>>(() => Promise.resolve())
+    let loaded = [{ index: 0, doc: document }]
+    const renderer = Object.assign(originalCreateElement('div'), { open: vi.fn<() => void>(), goTo, getContents: () => loaded })
+    const overlay = new EventTarget()
+    const createElement = vi
+      .spyOn(document, 'createElement')
+      .mockImplementation((name: string) => (name === 'foliate-paginator' ? renderer : originalCreateElement(name)))
+    const highlight = async (href: string) => {
+      overlay.dispatchEvent(new CustomEvent('highlight', { detail: { text: href } }))
+      await Promise.resolve()
+    }
+    const lit = () => [...document.querySelectorAll('.narrating')].map((el) => el.textContent).join('')
+    try {
+      const view = new View()
+      await view.open({
+        sections: [
+          { id: 'one.xhtml', mediaOverlay: {} },
+          { id: 'two.xhtml', mediaOverlay: {} },
+        ],
+        media: { activeClass: 'narrating' },
+        getMediaOverlay: () => overlay,
+        resolveHref: (href: string) => ({
+          index: href.startsWith('two') ? 1 : 0,
+          anchor: (doc: Document) => doc.getElementById(href.split('#')[1]!),
+        }),
+      } as never)
+
+      await highlight('one.xhtml#s1')
+      expect(goTo).toHaveBeenCalledTimes(1)
+      expect(lit()).toBe('First sentence.')
+      overlay.dispatchEvent(new CustomEvent('unhighlight'))
+      expect(lit()).toBe('')
+
+      goTo.mockClear()
+      await highlight('one.xhtml#unmarked')
+      expect(goTo).not.toHaveBeenCalled()
+      expect(lit()).toBe('')
+
+      loaded = []
+      await highlight('two.xhtml#t1')
+      expect(goTo).toHaveBeenCalledTimes(1)
+    } finally {
+      createElement.mockRestore()
+      document.body.innerHTML = ''
+    }
+  })
+
   it('preserves the source text point inside inline elements', () => {
     const doc = document.implementation.createHTMLDocument('chapter')
     doc.body.innerHTML = '<p>First paragraph</p><p><span>Middle text</span> tail</p>'

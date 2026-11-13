@@ -145,7 +145,7 @@ describe('EpubController', () => {
 
     await controller.getMediaOverlay(11, '12', user);
 
-    expect(epubService.getMediaOverlayPlaylist).toHaveBeenCalledWith(11, 12, user);
+    expect(epubService.getMediaOverlayPlaylist).toHaveBeenCalledWith(11, 12, user, { narrationFallback: true });
   });
 
   it('sets range headers for media-overlay audio files and streams the body', async () => {

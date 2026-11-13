@@ -93,6 +93,7 @@ import EditionSyncCardHeader from '@/features/edition-sync/components/EditionSyn
 import EditionSyncHeaderStatus from '@/features/edition-sync/components/EditionSyncHeaderStatus.vue'
 import { useEditionSyncBookState } from '@/features/edition-sync/composables/useEditionSyncBookState'
 import { useEditionSyncToggle } from '@/features/edition-sync/composables/useEditionSyncToggle'
+import { useTimingIndexReadAlong } from '@/features/edition-sync/composables/useTimingIndexReadAlong'
 import BookEditionsCard, { type EditionProgress } from '@/features/book/components/detail/details/BookEditionsCard.vue'
 import AudiobookshelfSyncRow from '@/features/book/components/detail/details/AudiobookshelfSyncRow.vue'
 import EditionsReadAloudRow from '@/features/book/components/detail/details/EditionsReadAloudRow.vue'
@@ -451,6 +452,8 @@ const editionSyncToggle = useEditionSyncToggle({
   onSaved: (updated) => emit('saved', updated),
 })
 const editionSyncCount = editionSyncToggle.count
+// Fork: the index reads along in the plain EPUB it was aligned to.
+const timingIndexReadAlong = useTimingIndexReadAlong(editionSync, () => formatEntries.value)
 const editionSyncStatusId = useId()
 
 function handleEditionSyncToggle(value: boolean) {
@@ -2352,6 +2355,7 @@ watch(
         <template #extra-rows>
           <EditionsReadAloudRow
             :state="readAloudCreate.slot.value"
+            :via-index="timingIndexReadAlong"
             @create="handleReadAloudCreate"
             @options="handleReadAloudOptions"
             @cancel="handleReadAloudCancel"

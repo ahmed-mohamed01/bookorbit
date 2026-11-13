@@ -149,6 +149,19 @@ describe('ReaderHeader', () => {
     })
   })
 
+  it.each([
+    [{}, 'Listen with TTS'],
+    [{ isMediaOverlay: true }, 'Listen with narration'],
+    [{ isMediaOverlay: true, narrationViaIndex: true }, 'Listen to the audiobook'],
+  ])('names the listen button for %o', (props, label) => {
+    viewport.isCompact = false
+    expect(
+      mountHeader({ isTtsAvailable: true, ...props })
+        .find(`button[aria-label="${label}"]`)
+        .exists(),
+    ).toBe(true)
+  })
+
   it('hides TTS control when unavailable for current format', () => {
     const wrapper = mount(ReaderHeader, {
       props: {

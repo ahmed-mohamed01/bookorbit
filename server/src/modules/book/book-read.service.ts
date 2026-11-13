@@ -19,6 +19,11 @@ export class BookReadService {
     return this.bookRepo.findPrimaryFilesByBookIds(bookIds);
   }
 
+  /** Fork: a book's files as progress sync reads them, for read along from its timing index. */
+  findAudioEbookProgressSyncFiles(bookId: number) {
+    return this.bookRepo.findAudioEbookProgressSyncFiles(bookId);
+  }
+
   findPrimaryReaderFilesByBookIds(bookIds: number[]) {
     return this.bookRepo.findPrimaryReaderFilesByBookIds(bookIds);
   }

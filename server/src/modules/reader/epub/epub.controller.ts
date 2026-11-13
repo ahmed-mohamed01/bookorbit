@@ -18,7 +18,8 @@ export class EpubController {
 
   @Get(':bookId/media-overlay')
   getMediaOverlay(@Param('bookId', ParseIntPipe) bookId: number, @Query('fileId') fileId: string | undefined, @CurrentUser() user: RequestUser) {
-    return this.epubService.getMediaOverlayPlaylist(bookId, this.parseFileId(fileId), user);
+    // Fork: the reader also gets read along from the book's timing index.
+    return this.epubService.getMediaOverlayPlaylist(bookId, this.parseFileId(fileId), user, { narrationFallback: true });
   }
 
   /** The router has already decoded the path once; decoding it again would read a literal `%` in a name as an escape. */

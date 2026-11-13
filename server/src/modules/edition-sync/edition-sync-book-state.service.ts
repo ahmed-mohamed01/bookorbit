@@ -146,6 +146,7 @@ export class EditionSyncBookStateService {
       nextRunAt,
       indexedAt: row?.indexedAt?.toISOString() ?? null,
       indexFileId: row?.indexFileId ?? null,
+      epubFileId: row?.provenance?.epub?.bookFileId ?? null,
       sentences: row?.report?.totals.sentences ?? null,
       matchedSentences: row?.report?.totals.matchedSentences ?? null,
       failedAt: row?.failedAt?.toISOString() ?? null,

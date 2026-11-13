@@ -8685,6 +8685,8 @@
         "progressListened": "{percentage}% listened",
         "readAloud": {
           "chip": "Read-aloud",
+          "viaIndex": "Available via index",
+          "viaIndexHint": "No read-along EPUB, but the timing index reads along: open the ebook and press Listen to hear the audiobook with the text highlighted.",
           "notCreated": "Not created yet",
           "create": "Create",
           "moreOptions": "More create options",
@@ -13756,6 +13758,8 @@
       "listen": "Listen",
       "listenWithNarration": "Listen with narration",
       "listenWithTts": "Listen with TTS",
+      "listenViaTimingIndex": "Listen to the audiobook",
+      "listenViaTimingIndexShort": "Listen (audiobook, read along via index)",
       "footerMode": {
         "pageProgress": "Footer info: page + progress",
         "sessionTimeLeft": "Footer info: reading session + time left",
@@ -18055,7 +18059,7 @@
       },
       "auto": {
         "title": "Convert new MP3 books",
-        "help": "{minutes, plural, one {Fills metadata, fetches chapters, then converts, # minute after the scanner adds a book.} other {Fills metadata, fetches chapters, then converts, # minutes after the scanner adds a book.}}"
+        "help": "{minutes, plural, one {Fills metadata, fetches chapters, then converts. New books filed from the Book Dock start right away; books the scanner finds or that are uploaded straight to a library start # minute after their last file arrives.} other {Fills metadata, fetches chapters, then converts. New books filed from the Book Dock start right away; books the scanner finds or that are uploaded straight to a library start # minutes after their last file arrives.}}"
       },
       "codec": {
         "title": "Default audio",

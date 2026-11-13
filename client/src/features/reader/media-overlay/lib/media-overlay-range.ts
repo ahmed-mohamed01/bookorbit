@@ -1,11 +1,16 @@
+import { narratedPieces } from './index-narration'
+
 type MediaOverlayItem = { text: string }
 
-// The element a SMIL <text> reference narrates, looked up the way foliate's
+// The elements a SMIL <text> reference narrates, looked up the way foliate's
 // resolveHref does, so starting and highlighting agree on the element.
-function narratedElement(doc: Document, text: string): Element | null {
+// Fork: every piece of a sentence read along from a timing index.
+function narratedElements(doc: Document, text: string): Element[] {
   const id = text.split('#')[1]
-  if (!id) return null
-  return doc.getElementById(id) ?? doc.getElementsByName(id)[0] ?? null
+  if (!id) return []
+  const pieces = narratedPieces(doc, id)
+  const named = doc.getElementsByName(id)[0]
+  return pieces.length || !named ? pieces : [named]
 }
 
 // Accepts the SMIL entries whose narrated element overlaps `range`, so
@@ -19,10 +24,8 @@ function narratedElement(doc: Document, text: string): Element | null {
 export function mediaOverlayEntriesOverlapping(range: Range): (item: MediaOverlayItem) => boolean {
   const doc = range.startContainer.ownerDocument ?? (range.startContainer as Document)
   return (item) => {
-    const element = narratedElement(doc, item.text)
-    if (!element) return false
     try {
-      return range.intersectsNode(element)
+      return narratedElements(doc, item.text).some((element) => range.intersectsNode(element))
     } catch {
       return false
     }

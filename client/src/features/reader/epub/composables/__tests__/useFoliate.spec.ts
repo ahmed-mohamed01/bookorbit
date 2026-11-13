@@ -463,4 +463,70 @@ describe('useFoliate.open', () => {
 
     expect(mockGoTo.mock.calls).toEqual([['OPS/ch1.xhtml#missing'], [2]])
   })
+
+  describe('a book read along from a timing index', () => {
+    const playlist = {
+      source: 'timing-index',
+      items: [{ sectionIndex: 0 }],
+      sections: [],
+      textPositions: { 'OPS/ch1.xhtml': { ids: [], starts: [], ends: [], length: 0, hash: 0 } },
+    }
+    let chapter: Document
+
+    function serve(narration: unknown) {
+      vi.mocked(api).mockImplementation((input) => {
+        const body = String(input).includes('/media-overlay') ? narration : { timingIndexNarration: true }
+        return Promise.resolve({ ok: narration !== null || !String(input).includes('/media-overlay'), json: () => Promise.resolve(body) } as Response)
+      })
+      ;(window as unknown as { makeStreamingBook: ReturnType<typeof vi.fn> }).makeStreamingBook.mockResolvedValue({
+        sections: [{ id: 'OPS/ch1.xhtml' }],
+      })
+      mockOpen.mockImplementation((book: { sections: { mediaOverlay?: unknown }[] }) => {
+        Object.assign(viewEl!, { book, mediaOverlay: book.sections.some((s) => s.mediaOverlay) ? {} : null })
+        Object.assign((viewEl as unknown as { renderer: object }).renderer, { getContents: () => [{ index: 0, doc: chapter }] })
+        return Promise.resolve()
+      })
+    }
+
+    beforeEach(() => {
+      chapter = document.implementation.createHTMLDocument('chapter')
+    })
+
+    it('resumes at the narrated sentence its chapter marked', async () => {
+      serve(playlist)
+      chapter.body.innerHTML = '<p><span data-bo-ra="s12" id="s12">Here.</span></p>'
+      const foliate = useFoliate(() => container)
+
+      await foliate.open(1, 1, 'epub', { cfi: 'epubcfi(/6/4!)', mediaOverlayFragment: 'OPS/ch1.xhtml#s12', preferMediaOverlay: true })
+
+      expect(mockGoTo.mock.calls).toEqual([['OPS/ch1.xhtml#s12']])
+      expect(foliate.indexNarrationMissing.value).toBe(false)
+    })
+
+    it('restores the reading CFI when the chapter did not mark the saved sentence', async () => {
+      serve(playlist)
+      chapter.body.innerHTML = '<p>Plain text the index did not match.</p>'
+      const foliate = useFoliate(() => container)
+
+      await foliate.open(1, 1, 'epub', { cfi: 'epubcfi(/6/4!)', mediaOverlayFragment: 'OPS/ch1.xhtml#s12', preferMediaOverlay: true })
+
+      expect(mockGoTo.mock.calls).toEqual([['OPS/ch1.xhtml#s12'], ['epubcfi(/6/4!)']])
+    })
+
+    it('restores the reading CFI, without trying the sentence, when the narration did not come', async () => {
+      serve(null)
+      const foliate = useFoliate(() => container)
+
+      await foliate.open(1, 1, 'epub', {
+        cfi: 'epubcfi(/6/4!)',
+        mediaOverlayFragment: 'OPS/ch1.xhtml#s12',
+        mediaOverlaySectionIndex: 0,
+        preferMediaOverlay: true,
+      })
+
+      expect(mockGoTo.mock.calls).toEqual([['epubcfi(/6/4!)']])
+      expect(foliate.hasMediaOverlay.value).toBe(false)
+      expect(foliate.indexNarrationMissing.value).toBe(true)
+    })
+  })
 })

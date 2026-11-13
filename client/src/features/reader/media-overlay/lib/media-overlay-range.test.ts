@@ -106,6 +106,14 @@ describe('mediaOverlayEntriesOverlapping', () => {
     expect(mediaOverlayEntriesOverlapping(selection(doc, ['older', 'para']))(entry('old-anchor'))).toBe(true)
   })
 
+  it('accepts a sentence read along from a timing index whose first piece is before the range', () => {
+    const doc = chapter(
+      '<p id="p1"><span data-bo-ra="ix-1" id="ix-1">The keeper climbed </span></p><p id="p2"><span data-bo-ra="ix-1">the stairs.</span></p>',
+    )
+
+    expect(mediaOverlayEntriesOverlapping(selection(doc, ['stairs', 'p2']))(entry('ix-1'))).toBe(true)
+  })
+
   it('rejects entries that name no element or no fragment at all', () => {
     const doc = chapter(sentenceBody)
     const matches = mediaOverlayEntriesOverlapping(selection(doc, ['lamp', 'c-s3']))

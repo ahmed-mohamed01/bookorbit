@@ -3,7 +3,8 @@ import { Play } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { NARRATION_ABOVE_FOOTER_CLASS } from '../composables/useNarrationDockPosition'
 
-defineProps<{ visible: boolean }>()
+// Fork: `viaIndex` when the narration is the audiobook, read along from the book's timing index.
+defineProps<{ visible: boolean; viaIndex?: boolean }>()
 const emit = defineEmits<{ start: [] }>()
 
 const { t } = useI18n()
@@ -23,7 +24,7 @@ function handleStart() {
       @click="handleStart"
     >
       <Play class="h-3.5 w-3.5" />
-      {{ t('reader.header.listenWithNarration') }}
+      {{ viaIndex ? t('reader.header.listenViaTimingIndex') : t('reader.header.listenWithNarration') }}
     </button>
   </Transition>
 </template>

@@ -3603,6 +3603,7 @@ describe('BookService', () => {
           const audiobookEbookProgressSync = {
             syncFromEbookProgress: vi.fn().mockResolvedValue(false),
             advanceNarrationToText: vi.fn().mockResolvedValue(false),
+            timingIndexSourceFileId: vi.fn().mockResolvedValue(null),
           };
           const made = makeService({ positionConverter, audiobookEbookProgressSync });
           const user = makeUser({ permissions: [Permission.KoboSync] });
@@ -3634,6 +3635,58 @@ describe('BookService', () => {
           expect(cfi).toBe('epubcfi(/6/40!/4/76/18[s160]/1:0)');
           expect(percentage).toBe(32);
           expect(textUpdatedAt).toEqual(expect.any(Date));
+        });
+
+        // Fork: a plain EPUB read along from its book's timing index names the index's sentences.
+        describe('from the timing index', () => {
+          const indexSetup = () => {
+            const made = sentenceSetup('epubcfi(/6/40!/4/76/1:0)');
+            made.positionConverter.fragmentToPositions.mockImplementation(({ sourceBookFileId }: { sourceBookFileId?: number }) =>
+              Promise.resolve(
+                sourceBookFileId === 40
+                  ? { status: 'exact', cfi: 'epubcfi(/6/40!/4/76/1:0)', chapterIndex: 19 }
+                  : { status: 'failed', reason: 'fragment_not_found' },
+              ),
+            );
+            made.audiobookEbookProgressSync.timingIndexSourceFileId.mockResolvedValue(40);
+            return made;
+          };
+
+          it('moves the page of a plain EPUB to the sentence the index narrates', async () => {
+            const { service, bookRepo, user, positionConverter, audiobookEbookProgressSync } = indexSetup();
+
+            await service.saveProgress(user.id, 8, { ...(narrated(30) as object), positionSeconds: null } as never, user);
+
+            expect(audiobookEbookProgressSync.timingIndexSourceFileId).toHaveBeenCalledWith(user.id, 11, 8);
+            expect(positionConverter.fragmentToPositions).toHaveBeenCalledWith({
+              bookFileId: 8,
+              chapterIndex: 19,
+              fragment: 's160',
+              sourceBookFileId: 40,
+            });
+            const [, , cfi] = bookRepo.upsertProgress.mock.calls[0] as unknown[];
+            expect(cfi).toBe('epubcfi(/6/40!/4/76/1:0)');
+            expect(audiobookEbookProgressSync.syncFromEbookProgress).toHaveBeenCalledWith(
+              expect.objectContaining({ cfi: 'epubcfi(/6/40!/4/76/1:0)', mediaOverlayFragment: 'split_019.html#s160' }),
+            );
+          });
+
+          it('never asks for the index for a file with media overlays of its own', async () => {
+            const { service, bookRepo, user, positionConverter, audiobookEbookProgressSync } = indexSetup();
+            bookRepo.findFileById.mockResolvedValue({
+              id: 8,
+              bookId: 11,
+              libraryId: 2,
+              absolutePath: '/books/b.epub',
+              format: 'epub',
+              mediaOverlayAvailable: true,
+            });
+
+            await service.saveProgress(user.id, 8, narrated(30), user);
+
+            expect(audiobookEbookProgressSync.timingIndexSourceFileId).not.toHaveBeenCalled();
+            expect(positionConverter.fragmentToPositions).toHaveBeenCalledWith({ bookFileId: 8, chapterIndex: 19, fragment: 's160' });
+          });
         });
 
         it('keeps the page when the sentence is behind it, even when the percentage is ahead', async () => {

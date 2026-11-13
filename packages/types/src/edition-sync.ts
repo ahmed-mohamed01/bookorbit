@@ -10,6 +10,9 @@ import type {
 
 /** File extension (no leading dot) of a book's timing index, stored next to the book as a zip. */
 export const EDITION_SYNC_INDEX_EXTENSION = "bookorbit-timings";
+/** Folder inside the index zip that holds the fork's own entries; stripped again on rebuild. */
+export const EDITION_SYNC_INDEX_DIR = "bookorbit-timings";
+export const EDITION_SYNC_PROVENANCE_ENTRY = `${EDITION_SYNC_INDEX_DIR}/provenance.json`;
 /** Daily at 02:00 in the server's time zone. */
 export const EDITION_SYNC_DEFAULT_CRON = "0 2 * * *";
 export const EDITION_SYNC_DEFAULT_RUN_HOURS = 8;
@@ -56,6 +59,11 @@ export interface EditionSyncIndexState {
   nextRunAt: string | null;
   indexedAt: string | null;
   indexFileId: number | null;
+  /**
+   * The EPUB file the index was aligned to (its provenance `epub.bookFileId`). The reader narrates from
+   * the index only when it opens this file. Null or absent for an index without provenance.
+   */
+  epubFileId?: number | null;
   sentences: number | null;
   matchedSentences: number | null;
   failedAt: string | null;

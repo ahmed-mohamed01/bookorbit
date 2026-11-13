@@ -36,6 +36,8 @@ const props = defineProps<{
   isTtsActive?: boolean
   isTtsAvailable?: boolean
   isMediaOverlay?: boolean
+  /** Fork: the narration is the audiobook, read along from the book's timing index. */
+  narrationViaIndex?: boolean
   isPinned?: boolean
   showTapZones?: boolean
 }>()
@@ -63,7 +65,14 @@ const isCompact = useMediaQuery('(max-width: 639px)')
 
 const ttsTooltip = computed(() => {
   if (props.isTtsActive) return props.isMediaOverlay ? t('reader.header.narrationPlaying') : t('reader.header.ttsPlaying')
+  if (props.isMediaOverlay && props.narrationViaIndex) return t('reader.header.listenViaTimingIndexShort')
   return props.isMediaOverlay ? t('reader.header.listenWithNarrationShort') : t('reader.header.listen')
+})
+
+const listenAriaLabel = computed(() => {
+  if (!props.isMediaOverlay) return t('reader.header.listenWithTts')
+  // Fork: the narration is the audiobook, read along from the book's timing index.
+  return props.narrationViaIndex ? t('reader.header.listenViaTimingIndex') : t('reader.header.listenWithNarration')
 })
 
 function onSettingsOpenChange(open: boolean) {
@@ -150,12 +159,7 @@ function getFooterModeTooltip(mode: 0 | 1 | 2): string {
 
       <Tooltip v-if="props.isTtsAvailable !== false">
         <TooltipTrigger as-child>
-          <button
-            class="viewer-btn"
-            :class="props.isTtsActive ? '!text-primary' : ''"
-            :aria-label="props.isMediaOverlay ? t('reader.header.listenWithNarration') : t('reader.header.listenWithTts')"
-            @click="emit('startTts')"
-          >
+          <button class="viewer-btn" :class="props.isTtsActive ? '!text-primary' : ''" :aria-label="listenAriaLabel" @click="emit('startTts')">
             <Headphones :size="18" :class="{ 'animate-pulse': props.isTtsActive }" />
           </button>
         </TooltipTrigger>

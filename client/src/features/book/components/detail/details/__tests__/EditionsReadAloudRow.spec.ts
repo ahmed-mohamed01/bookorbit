@@ -18,8 +18,8 @@ const processing = {
   errorKey: null,
 }
 
-function mountRow(state: ReadAloudCreateSlot) {
-  return mount(EditionsReadAloudRow, { attachTo: document.body, props: { state } })
+function mountRow(state: ReadAloudCreateSlot, viaIndex?: boolean) {
+  return mount(EditionsReadAloudRow, { attachTo: document.body, props: { state, viaIndex } })
 }
 
 function dropdown(): HTMLElement | null {
@@ -83,5 +83,52 @@ describe('EditionsReadAloudRow', () => {
     expect(wrapper.get('[data-testid="editions-read-aloud-status"]').text()).toBe('Ready to review')
     await wrapper.get('[data-testid="editions-read-aloud-review"]').trigger('click')
     expect(wrapper.emitted('review')).toHaveLength(1)
+  })
+
+  describe('read along from the timing index', () => {
+    const viaIndex = '[data-testid="editions-read-aloud-via-index"]'
+    const status = '[data-testid="editions-read-aloud-status"]'
+    const errorKey = 'book.detail.files.readAloud.errors.job.alignment_failed'
+    const unavailable = { kind: 'unavailable' as const, reason: null, reasonKey: 'book.detail.editionLink.readAloud.unavailable' }
+
+    it('says so when upstream hides the generator', () => {
+      const wrapper = mountRow(slot({ entry: { kind: 'hidden' } }), true)
+      expect(wrapper.get(viaIndex).text()).toBe('Available via index')
+      expect(wrapper.get('[data-testid="editions-read-aloud-row"]').attributes('data-variant')).toBe('viaIndex')
+    })
+
+    it('says so beside Create for a book with no read-along yet', () => {
+      const wrapper = mountRow(slot(), true)
+      expect(wrapper.get(viaIndex).text()).toBe('Available via index')
+      expect(wrapper.find('[data-testid="editions-read-aloud-create"]').exists()).toBe(true)
+    })
+
+    it('shows a failed Create instead', () => {
+      const wrapper = mountRow(slot({ errorKey }), true)
+      expect(wrapper.find(viaIndex).exists()).toBe(false)
+      expect(wrapper.get(status).text()).toBe("Couldn't create")
+    })
+
+    it('shows a failed Create on a row the generator cannot run on instead', () => {
+      const wrapper = mountRow(slot({ entry: unavailable, errorKey }), true)
+      expect(wrapper.find(viaIndex).exists()).toBe(false)
+      expect(wrapper.find(status).exists()).toBe(true)
+      expect(wrapper.find('[data-testid="sync-issue-trigger"]').exists()).toBe(true)
+    })
+
+    it('shows a running job instead', () => {
+      const wrapper = mountRow(slot({ job: processing }), true)
+      expect(wrapper.find(viaIndex).exists()).toBe(false)
+      expect(wrapper.get(status).text()).toMatch(/· 42\s?%$/)
+    })
+
+    it('is not mentioned without the index', () => {
+      expect(
+        mountRow(slot({ entry: { kind: 'hidden' } }), false)
+          .find('[data-testid="editions-read-aloud-row"]')
+          .exists(),
+      ).toBe(false)
+      expect(mountRow(slot(), false).find(viaIndex).exists()).toBe(false)
+    })
   })
 })

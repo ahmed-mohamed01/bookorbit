@@ -196,16 +196,23 @@ export const compare = (a, b) => {
 const isTextNode = ({ nodeType }) => nodeType === 3 || nodeType === 4
 const isElementNode = ({ nodeType }) => nodeType === 1
 
-const getChildNodes = (node, filter) => {
+// BookOrbit fork: the sentence spans read along adds to a plain EPUB from its timing index
+// (`data-bo-ra`) are not the book's own, so every CFI looks through them, as if they were absent.
+const isReadAlongSpan = (node) => isElementNode(node) && node.hasAttribute?.('data-bo-ra')
+const skipReadAlongSpans = (filter) => (node) =>
+  isReadAlongSpan(node) ? NodeFilter.FILTER_SKIP : filter ? filter(node) : NodeFilter.FILTER_ACCEPT
+
+const getChildNodes = (node, outerFilter) => {
+  const filter = skipReadAlongSpans(outerFilter)
   const nodes = Array.from(node.childNodes)
     // "content other than element and character data is ignored"
     .filter((node) => isTextNode(node) || isElementNode(node))
-  return filter
+  return nodes.some(isReadAlongSpan) || outerFilter
     ? nodes
         .map((node) => {
           const accept = filter(node)
           if (accept === NodeFilter.FILTER_REJECT) return null
-          else if (accept === NodeFilter.FILTER_SKIP) return getChildNodes(node, filter)
+          else if (accept === NodeFilter.FILTER_SKIP) return getChildNodes(node, outerFilter)
           else return node
         })
         .flat()
@@ -270,7 +277,16 @@ const partsToNode = (node, parts, filter) => {
 }
 
 const nodeToParts = (node, offset, filter) => {
-  const { parentNode, id } = node
+  // BookOrbit fork: a point inside a read-along sentence span is a point in the text it wraps.
+  if (isReadAlongSpan(node)) {
+    const child = offset != null ? node.childNodes[offset] : null
+    if (child) return nodeToParts(child, isTextNode(child) ? 0 : null, filter)
+    const last = node.lastChild
+    if (last) return nodeToParts(last, isTextNode(last) ? last.nodeValue.length : null, filter)
+  }
+  let { parentNode } = node
+  while (parentNode && isReadAlongSpan(parentNode)) parentNode = parentNode.parentNode
+  const { id } = node
   const indexed = indexChildNodes(parentNode, filter)
   const index = indexed.findIndex((x) => (Array.isArray(x) ? x.some((x) => x === node) : x === node))
   // adjust offset as if merging the text nodes in the chunk

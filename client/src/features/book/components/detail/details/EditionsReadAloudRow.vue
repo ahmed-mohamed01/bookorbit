@@ -8,7 +8,8 @@ import { buildReadAloudRow, type ReadAloudCreateSlot, type ReadAloudRowActionId 
 import SyncIssueMenu from '@/components/sync/SyncIssueMenu.vue'
 import { SYNC_STATUS_TEXT_CLASS } from '@/lib/sync-issue'
 
-const props = defineProps<{ state: ReadAloudCreateSlot }>()
+// Fork: `viaIndex` when the book has no read-along EPUB but its timing index reads along anyway.
+const props = defineProps<{ state: ReadAloudCreateSlot; viaIndex?: boolean }>()
 /** `create` starts with the default settings; `options` opens the dialog to change them first. */
 const emit = defineEmits<{ create: []; options: []; cancel: []; retry: []; review: [] }>()
 
@@ -16,8 +17,16 @@ const { t } = useI18n()
 
 const row = computed(() => buildReadAloudRow(props.state, t))
 const locked = computed(() => row.value?.pending != null)
+// Fork: says the read-along works from the index, unless a job or an error has more to say.
+const indexStatus = computed(() => {
+  const current = row.value
+  if (!props.viaIndex) return false
+  if (!current) return true
+  if (current.variant !== 'notCreated' && current.variant !== 'unavailable') return false
+  return current.status.tone !== 'destructive' && current.status.issue?.tone !== 'destructive'
+})
 // The chip already says what is missing, so an untouched row shows only its Create link.
-const showStatus = computed(() => row.value !== null && (row.value.variant !== 'notCreated' || row.value.status.issue !== null))
+const showStatus = computed(() => !indexStatus.value && row.value !== null && (row.value.variant !== 'notCreated' || row.value.status.issue !== null))
 
 function handleCreate() {
   emit('create')
@@ -39,15 +48,30 @@ function handleMenuAction(id: ReadAloudRowActionId) {
 </script>
 
 <template>
-  <li v-if="row" class="flex min-h-7 items-center gap-2.5" :data-variant="row.variant" data-testid="editions-read-aloud-row">
+  <li
+    v-if="row || indexStatus"
+    class="flex min-h-7 items-center gap-2.5"
+    :data-variant="indexStatus ? 'viaIndex' : row?.variant"
+    data-testid="editions-read-aloud-row"
+  >
     <span
-      class="inline-flex h-5 min-w-13 shrink-0 items-center justify-center rounded-md border border-dashed border-primary bg-transparent px-1.5 text-[10px] leading-none font-bold tracking-wider text-primary uppercase"
+      class="inline-flex h-5 min-w-13 shrink-0 items-center justify-center rounded-md border border-dashed border-primary px-1.5 text-[10px] leading-none font-bold tracking-wider text-primary uppercase"
+      :class="indexStatus ? 'bg-primary/15' : 'bg-transparent'"
+      data-testid="editions-read-aloud-chip"
     >
       {{ t('book.detail.editionLink.readAloud.chip') }}
     </span>
 
     <span class="flex min-w-0 flex-1 items-center gap-1.5">
-      <template v-if="showStatus">
+      <span
+        v-if="indexStatus"
+        class="min-w-0 truncate text-[11px] text-muted-foreground"
+        :title="t('book.detail.editionLink.readAloud.viaIndexHint')"
+        data-testid="editions-read-aloud-via-index"
+      >
+        {{ t('book.detail.editionLink.readAloud.viaIndex') }}
+      </span>
+      <template v-if="row && showStatus">
         <Loader2 v-if="row.status.spinner" class="size-3 shrink-0 animate-spin" :class="SYNC_STATUS_TEXT_CLASS[row.status.tone]" aria-hidden="true" />
         <span
           class="min-w-0 truncate text-[11px]"
@@ -71,7 +95,7 @@ function handleMenuAction(id: ReadAloudRowActionId) {
     </span>
 
     <div
-      v-if="row.create"
+      v-if="row?.create"
       class="inline-flex h-6 shrink-0 items-stretch rounded-md border border-border text-[11px] font-medium text-muted-foreground"
     >
       <button
@@ -81,7 +105,7 @@ function handleMenuAction(id: ReadAloudRowActionId) {
         data-testid="editions-read-aloud-create"
         @click="handleCreate"
       >
-        <Loader2 v-if="row.pending === 'create'" class="size-3 animate-spin" aria-hidden="true" />
+        <Loader2 v-if="row?.pending === 'create'" class="size-3 animate-spin" aria-hidden="true" />
         <Sparkles v-else class="size-3 text-primary" aria-hidden="true" />
         {{ t('book.detail.editionLink.readAloud.create') }}
       </button>
@@ -106,7 +130,7 @@ function handleMenuAction(id: ReadAloudRowActionId) {
       </DropdownMenu>
     </div>
     <Button
-      v-if="row.review"
+      v-if="row?.review"
       type="button"
       variant="outline"
       size="sm"

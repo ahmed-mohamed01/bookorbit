@@ -1,3 +1,5 @@
+import { INDEX_SENTENCE_ATTRIBUTE, narratedPieces } from './index-narration'
+
 export interface NarrationFollowDecision {
   // Navigate to the narrated element, which in scrolled flow pins it to the top of the viewport.
   follow: boolean
@@ -7,11 +9,14 @@ export interface NarrationFollowDecision {
   inView: boolean
 }
 
+// A sentence read along from a timing index is in view when any of its pieces is.
 export function isNarrationInView(el: Element | null, visibleRange: Range | null): boolean {
   if (!el || !visibleRange) return false
   try {
     if (visibleRange.startContainer.ownerDocument !== el.ownerDocument) return false
-    return visibleRange.intersectsNode(el)
+    const id = el.getAttribute(INDEX_SENTENCE_ATTRIBUTE)
+    const pieces = id ? narratedPieces(el.ownerDocument, id) : [el]
+    return pieces.some((piece) => visibleRange.intersectsNode(piece))
   } catch {
     return false
   }

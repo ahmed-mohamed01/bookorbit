@@ -29,7 +29,8 @@ export async function openHeadlessNarration(
   trackingEnabled: boolean,
 ): Promise<HeadlessNarration> {
   await loadFoliate()
-  const { book: epub } = await openStreamingEpub(book.bookId, book.bookFileId)
+  // No reader is waiting to open, so a timing index's playlist is waited for however long it takes.
+  const { book: epub } = await openStreamingEpub(book.bookId, book.bookFileId, { waitForIndexNarration: true })
   const opened = epub as HeadlessEpub
   const mediaOverlay = opened.getMediaOverlay?.()
   if (!mediaOverlay) {

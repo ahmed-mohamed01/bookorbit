@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { stat } from 'fs/promises';
 
 import type { EpubMediaOverlayPlaylist, EpubMediaOverlayPlaylistItem } from '@bookorbit/types';
-import { isAudioFormat } from '@bookorbit/types';
+import { EDITION_SYNC_INDEX_EXTENSION, isAudioFormat } from '@bookorbit/types';
 
 import { buildAudioTimeline, filePositionToAbsoluteSeconds } from '../../common/utils/audio-timeline.utils';
 import { AudioPlayOrderService } from '../audiobook-chapters/audio-play-order.service';
@@ -378,7 +378,13 @@ export class AudiobookEbookProgressSyncService {
     const playlist = await this.getPlaylist(overlaySourceFile, params.bookId);
     if (playlist.items.length === 0 || playlist.durationSeconds == null || playlist.durationSeconds <= 0) return null;
 
-    const overlaySeconds = await this.resolveOverlaySecondsFromEbookPosition(ebookFile, overlaySourceFile.id, playlist, params);
+    const overlaySeconds = await this.resolveOverlaySecondsFromEbookPosition(
+      ebookFile,
+      overlaySourceFile.id,
+      playlist,
+      params,
+      this.isTimingIndex(overlaySourceFile), // Fork: a plain EPUB narrated from the book's timing index
+    );
     if (overlaySeconds === null) return null;
 
     return {
@@ -476,6 +482,25 @@ export class AudiobookEbookProgressSyncService {
     );
   }
 
+  /**
+   * Fork: the book's timing index, when it is what a plain EPUB is read along from. That narration
+   * names the index's sentences, which only the index can place in the EPUB. Null for an EPUB with
+   * media overlays of its own, a book with a read-along EPUB, and with no resolver registered.
+   */
+  async timingIndexSourceFileId(userId: number, bookId: number, bookFileId: number): Promise<number | null> {
+    if (!this.overlaySource) return null;
+    const syncFiles = await this.bookRepo.findAudioEbookProgressSyncFiles(bookId);
+    const ebookFile = syncFiles?.files.find((file) => file.id === bookFileId && file.format?.toLowerCase() === 'epub');
+    if (!syncFiles || !ebookFile || ebookFile.mediaOverlayAvailable === true) return null;
+    const source = await this.selectOverlaySourceFile(userId, bookId, syncFiles.files, syncFiles.primaryFileId);
+    return source && this.isTimingIndex(source) ? source.id : null;
+  }
+
+  /** Fork: only the overlay source resolver offers a timing index. */
+  private isTimingIndex(file: SyncFile): boolean {
+    return file.format?.toLowerCase() === EDITION_SYNC_INDEX_EXTENSION;
+  }
+
   private selectTargetFile(files: SyncFile[], primaryFileId: number | null, overlaySourceFile: SyncFile): SyncFile {
     const primaryFile = files.find((file) => file.id === primaryFileId && file.format?.toLowerCase() === 'epub');
     return primaryFile ?? overlaySourceFile;
@@ -530,6 +555,7 @@ export class AudiobookEbookProgressSyncService {
       mediaOverlayFragment?: string | null;
       mediaOverlaySectionIndex?: number | null;
     },
+    timingIndexNarration = false,
   ): Promise<number | null> {
     // A copy without media overlays has no narration of its own. A marker it sends back is one an
     // earlier sync left on it, and its text position is the only one it can speak for.
@@ -543,7 +569,9 @@ export class AudiobookEbookProgressSyncService {
       return Math.max(0, Math.min(playlist.durationSeconds, params.positionSeconds));
     }
 
-    if (hasNarration && params.mediaOverlayFragment) {
+    // Fork: a plain EPUB read along from the timing index sends that index's sentence. Its seconds
+    // run on the client's playlist, which keeps fewer sentences than the index, so only the sentence is used.
+    if ((hasNarration || timingIndexNarration) && params.mediaOverlayFragment) {
       const match = this.findItemStartByFragment(playlist, params.mediaOverlayFragment, params.mediaOverlaySectionIndex ?? null);
       if (match) return match.startSeconds;
     }

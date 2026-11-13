@@ -2526,6 +2526,7 @@ export class BookService {
     fileId: number,
     dto: SaveProgressDto,
     previous: { percentage: number; cfi: string | null; pageNumber: number | null } | null,
+    plainEpub?: { userId: number; bookId: number }, // Fork: a file with no media overlays of its own
   ) {
     if (dto.source !== 'narration') {
       return { percentage: dto.percentage, cfi: dto.cfi ?? null, pageNumber: dto.pageNumber ?? null, moved: true };
@@ -2534,7 +2535,7 @@ export class BookService {
     // The sentence being narrated is where a listener is, to the sentence. A narration percentage is
     // too coarse to tell (it can hold still across a page or more) and the page a client reports is
     // its own page start, so a phone, a Kobo or KOReader opened pages behind what was heard.
-    const sentence = await this.narratedSentenceCfi(fileId, dto);
+    const sentence = await this.narratedSentenceCfi(fileId, dto, plainEpub);
     const order = sentence && previous?.cfi ? compareCfi(sentence, previous.cfi) : sentence ? 1 : null;
     if (sentence && order !== null) {
       return order > 0
@@ -2547,11 +2548,18 @@ export class BookService {
     return { percentage: stored, cfi: previous?.cfi ?? null, pageNumber: previous?.pageNumber ?? null, moved: false };
   }
 
-  private async narratedSentenceCfi(fileId: number, dto: SaveProgressDto): Promise<string | null> {
+  private async narratedSentenceCfi(fileId: number, dto: SaveProgressDto, plainEpub?: { userId: number; bookId: number }): Promise<string | null> {
     const fragment = dto.mediaOverlayFragment?.slice(dto.mediaOverlayFragment.lastIndexOf('#') + 1);
     if (!this.positionConverter || !fragment || typeof dto.mediaOverlaySectionIndex !== 'number') return null;
     try {
-      const outcome = await this.positionConverter.fragmentToPositions({ bookFileId: fileId, chapterIndex: dto.mediaOverlaySectionIndex, fragment });
+      // Fork: a plain EPUB read along from its book's timing index names the index's sentences.
+      const indexFileId = plainEpub && (await this.audiobookEbookProgressSync?.timingIndexSourceFileId(plainEpub.userId, plainEpub.bookId, fileId));
+      const outcome = await this.positionConverter.fragmentToPositions({
+        bookFileId: fileId,
+        chapterIndex: dto.mediaOverlaySectionIndex,
+        fragment,
+        ...(indexFileId != null ? { sourceBookFileId: indexFileId } : {}),
+      });
       return outcome.status === 'failed' ? null : (outcome.cfi ?? null);
     } catch {
       return null;
@@ -2581,7 +2589,12 @@ export class BookService {
     const dto = this.withNarrationPercentage(file, request);
     const previous = await this.bookRepo.findProgress(userId, fileId);
     const now = new Date();
-    const text = await this.resolveTextPosition(fileId, dto, previous ?? null);
+    const text = await this.resolveTextPosition(
+      fileId,
+      dto,
+      previous ?? null,
+      file.mediaOverlayAvailable === true ? undefined : { userId, bookId: file.bookId }, // Fork: index narration
+    );
     await this.bookRepo.upsertProgress(
       userId,
       fileId,

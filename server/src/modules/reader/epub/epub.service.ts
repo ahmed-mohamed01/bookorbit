@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { stat } from 'fs/promises';
 import { Readable } from 'stream';
 import * as unzipper from 'unzipper';
@@ -13,6 +13,7 @@ import { parseEpubPackage } from './epub-package';
 import { openEpubZipEntryRange } from './epub-zip-entry-stream';
 import type { ByteRange } from './epub-zip-range';
 import { EpubMediaStreamService } from './epub-media-stream.service';
+import { EpubIndexNarrationService } from './epub-index-narration.service';
 
 const CONTENT_TYPES: Record<string, string> = {
   '.xhtml': 'application/xhtml+xml',
@@ -383,11 +384,17 @@ export class EpubService {
     private readonly bookReadService: BookReadService,
     private readonly libraryService: LibraryService,
     private readonly mediaStream: EpubMediaStreamService,
+    // Fork: read along for a plain EPUB from its book's timing index.
+    @Optional() private readonly indexNarration?: EpubIndexNarrationService,
   ) {}
 
   async getBookInfo(bookId: number, fileId: number | undefined, user: RequestUser): Promise<EpubBookInfo> {
-    const epubPath = await this.resolveEpubPath(bookId, fileId, user);
-    return (await this.getCachedEntry(epubPath)).info;
+    const resolved = await this.resolveEpubFile(bookId, fileId, user);
+    const cached = await this.getCachedEntry(resolved.readerPath);
+    // Fork: a plain EPUB the book's timing index reads along says so, without touching the shared copy.
+    if (await this.indexNarration?.readsAlong({ bookId, fileId: resolved.fileId, epub: cached, user }))
+      return { ...cached.info, timingIndexNarration: true };
+    return cached.info;
   }
 
   async extractSpineText(bookId: number, fileId: number | undefined, user: RequestUser): Promise<Array<{ spineIndex: number; text: string }>> {
@@ -422,10 +429,18 @@ export class EpubService {
     }
   }
 
-  async getMediaOverlayPlaylist(bookId: number, fileId: number | undefined, user: RequestUser): Promise<EpubMediaOverlayPlaylist> {
+  async getMediaOverlayPlaylist(
+    bookId: number,
+    fileId: number | undefined,
+    user: RequestUser,
+    options: { narrationFallback?: boolean } = {},
+  ): Promise<EpubMediaOverlayPlaylist> {
     const resolved = await this.resolveEpubFile(bookId, fileId, user);
     const cached = await this.getCachedEntry(resolved.absolutePath);
-    return this.cachedPlaylist(cached, resolved.absolutePath, bookId, resolved.fileId);
+    const own = await this.cachedPlaylist(cached, resolved.absolutePath, bookId, resolved.fileId);
+    if (own.items.length > 0 || !options.narrationFallback) return own;
+    // Fork: for the reader, a plain EPUB with no narration of its own reads along from the book's timing index.
+    return (await this.indexNarration?.playlist({ bookId, fileId: resolved.fileId, epub: cached, user })) ?? own;
   }
 
   /**
@@ -466,6 +481,12 @@ export class EpubService {
     const resolved = await this.resolveEpubFile(bookId, fileId, user);
     const cached = await this.getCachedEntry(resolved.absolutePath);
     const playlist = await this.cachedPlaylist(cached, resolved.absolutePath, bookId, resolved.fileId);
+    // Fork: a timing index's narration plays the book's audiobook files.
+    if (playlist.items.length === 0 && this.indexNarration) {
+      const request = { bookId, fileId: resolved.fileId, epub: cached, user };
+      const indexAudio = await this.indexNarration.streamMediaOverlayFile(request, requestedPath, rangeHeader, (h, size) => this.parseRange(h, size));
+      if (indexAudio) return indexAudio;
+    }
     const resource = playlist.resources.find((item) => item.href === requestedPath);
     if (!resource) throw new NotFoundException(`Media-overlay resource not in playlist: ${requestedPath}`);
 
@@ -509,9 +530,14 @@ export class EpubService {
     const normalizedPath = normalizeZipPath(filePath);
     if (!normalizedPath) throw new ForbiddenException('Invalid path');
 
-    const epubPath = await this.resolveEpubPath(bookId, fileId, user);
+    const resolved = await this.resolveEpubFile(bookId, fileId, user);
+    const epubPath = resolved.readerPath;
     const cached = await this.getCachedEntry(epubPath);
     if (!cached.validPaths.has(normalizedPath)) {
+      // Fork: narration streams its audio through this route, and a timing index's is the audiobook.
+      const request = { bookId, fileId: resolved.fileId, epub: cached, user };
+      const indexAudio = await this.indexNarration?.streamFile(request, normalizedPath, conditions, (h, size) => this.parseRange(h, size));
+      if (indexAudio) return indexAudio;
       throw new NotFoundException(`Entry not in archive: ${normalizedPath}`);
     }
     const manifestItem = cached.info.manifest.find((m) => m.href === normalizedPath);

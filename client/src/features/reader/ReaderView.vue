@@ -38,6 +38,8 @@ import { injectMediaOverlayHighlightCss, MEDIA_OVERLAY_DEFAULT_ACTIVE_CLASS } fr
 import { startMediaOverlayWithFallback } from './media-overlay/lib/media-overlay-start'
 import { mediaOverlayEntriesOverlapping } from './media-overlay/lib/media-overlay-range'
 import { loadMediaOverlayPlaylist } from './media-overlay/lib/media-overlay-playlist'
+import { narratedPieces } from './media-overlay/lib/index-narration'
+import { awaitIndexNarration } from './epub/foliate-loader'
 import { decideNarrationFollow, isNarrationInView } from './media-overlay/lib/media-overlay-follow'
 import { useMediaOverlayFollow } from './media-overlay/composables/useMediaOverlayFollow'
 import MediaOverlayStartButton from './media-overlay/components/MediaOverlayStartButton.vue'
@@ -337,7 +339,42 @@ watch(mediaOverlay.isPlaying, (playing) => {
   if (playing && isNarratingHere.value) relocationSource = 'narration'
 })
 
+// Fork: the playlist of a timing index that did not come in time to open with the book.
+let indexNarrationWait: Promise<void> | null = null
+let indexNarrationGaveUp = false
+
+/** Fork: waits for the index's playlist, then reopens the book where it is and listens; TTS if it never comes. */
+function listenOnceIndexNarrationLoads(): Promise<void> {
+  if (indexNarrationWait) return indexNarrationWait
+  toast.info(t('reader.narration.buffering'))
+  indexNarrationWait = (async () => {
+    try {
+      if (await awaitIndexNarration(bookId, fileId)) {
+        await open(bookId, fileId, fileFormat, {
+          cfi: cfi.value,
+          fallbackFraction: fraction.value > 0 ? fraction.value : undefined,
+          fixedLayoutSpread: state.value.fixedLayoutSpread,
+          keepIndexNarration: true,
+        })
+        setChapters(getChapters())
+        sectionFractions.value = getSectionFractions()
+      } else {
+        indexNarrationGaveUp = true
+      }
+      handleStartListen()
+    } finally {
+      indexNarrationWait = null
+    }
+  })()
+  return indexNarrationWait
+}
+
 function ensureTtsAvailable(): boolean {
+  // Fork: a book read along from a timing index never falls back to TTS while its narration loads.
+  if (indexNarrationMissing.value && !indexNarrationGaveUp) {
+    void listenOnceIndexNarrationLoads()
+    return false
+  }
   if (isTtsAvailable) return true
   toast.error('TTS currently supports EPUB files only')
   return false
@@ -367,11 +404,11 @@ let currentChapterDoc: Document | null = null
 
 // The sentence statically highlighted to show where narration will resume from.
 // Tracked so it can be cleared once foliate takes over highlighting on play.
-let resumeNarrationHighlight: { el: Element; cls: string } | null = null
+let resumeNarrationHighlight: { els: Element[]; cls: string } | null = null
 
 function clearResumeNarrationHighlight() {
   if (resumeNarrationHighlight) {
-    resumeNarrationHighlight.el.classList.remove(resumeNarrationHighlight.cls)
+    for (const el of resumeNarrationHighlight.els) el.classList.remove(resumeNarrationHighlight.cls)
     resumeNarrationHighlight = null
   }
 }
@@ -385,11 +422,12 @@ function showResumeNarrationHighlight(doc: Document) {
   const saved = getCurrentNarrationPos()
   const id = saved?.fragment.split('#')[1]
   if (!id) return
-  const el = doc.getElementById(id)
-  if (!el) return
+  // Fork: every piece of a sentence read along from a timing index.
+  const els = narratedPieces(doc, id)
+  if (!els.length) return
   const cls = getMediaActiveClass() ?? MEDIA_OVERLAY_DEFAULT_ACTIVE_CLASS
-  el.classList.add(cls)
-  resumeNarrationHighlight = { el, cls }
+  for (const el of els) el.classList.add(cls)
+  resumeNarrationHighlight = { els, cls }
 }
 
 function onChapterLoadHandler(doc: Document, viewEl: HTMLElement) {
@@ -1027,6 +1065,8 @@ const {
   bookLanguage,
   isFixedLayout,
   hasMediaOverlay,
+  narrationViaIndex,
+  indexNarrationMissing,
   getMediaOverlay,
   getMediaActiveClass,
   setMediaOverlayFollow,
@@ -1552,6 +1592,7 @@ onUnmounted(() => {
       :isTtsActive="isTtsActive || (isNarratingHere && mediaOverlay.isPlaying.value)"
       :isTtsAvailable="isTtsAvailable"
       :isMediaOverlay="isMediaOverlayAvailable"
+      :narration-via-index="narrationViaIndex"
       :isPinned="isPinned"
       :showTapZones="showTapZones"
       class="transition-all duration-300"
@@ -1873,7 +1914,7 @@ onUnmounted(() => {
       @seek="navigateToFraction($event)"
     />
 
-    <MediaOverlayStartButton :visible="showNarrationStart" @start="handleStartMediaOverlay" />
+    <MediaOverlayStartButton :visible="showNarrationStart" :via-index="narrationViaIndex" @start="handleStartMediaOverlay" />
 
     <ReaderSidebar
       v-if="showSidebar"

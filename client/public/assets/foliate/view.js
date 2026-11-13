@@ -399,6 +399,12 @@ export class View extends HTMLElement {
       this.#mediaOverlayListeners = new AbortController()
       const { signal } = this.#mediaOverlayListeners
       let lastActive
+      // BookOrbit fork: a sentence read along in a plain EPUB from its timing index can be split
+      // over several spans sharing its `data-bo-ra`; all of them light up.
+      const narrationPieces = (el) => {
+        const id = el.getAttribute?.('data-bo-ra')
+        return id ? el.ownerDocument.querySelectorAll(`[data-bo-ra="${CSS.escape(id)}"]`) : [el]
+      }
       this.mediaOverlay.addEventListener('highlight', (e) => {
         const resolved = this.resolveNavigation(e.detail.text)
         if (!resolved) return
@@ -406,10 +412,14 @@ export class View extends HTMLElement {
           const doc = this.renderer.getContents().find((x) => x.index === resolved.index)?.doc
           return doc ? resolved.anchor(doc) : null
         }
+        // BookOrbit fork: a sentence with no element in its loaded chapter (one read along from a
+        // timing index whose text differed) is neither followed nor marked, since going to it
+        // would land on the chapter's first page.
+        if (this.renderer.getContents().some((x) => x.index === resolved.index) && findActive() == null) return
         const mark = () => {
           const el = findActive()
           if (!el) return
-          el.classList.add(activeClass)
+          for (const piece of narrationPieces(el)) piece.classList.add(activeClass)
           if (playbackActiveClass) el.ownerDocument.documentElement.classList.add(playbackActiveClass)
           lastActive = new WeakRef(el)
         }
@@ -425,7 +435,7 @@ export class View extends HTMLElement {
       this.mediaOverlay.addEventListener('unhighlight', () => {
         const el = lastActive?.deref()
         if (el) {
-          el.classList.remove(activeClass)
+          for (const piece of narrationPieces(el)) piece.classList.remove(activeClass)
           if (playbackActiveClass) el.ownerDocument.documentElement.classList.remove(playbackActiveClass)
         }
       }, { signal })

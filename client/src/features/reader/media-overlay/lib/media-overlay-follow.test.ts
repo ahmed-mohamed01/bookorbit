@@ -36,6 +36,21 @@ describe('isNarrationInView', () => {
     expect(isNarrationInView(first, rangeOver(p))).toBe(false)
     container.remove()
   })
+
+  it('counts a sentence read along from a timing index as in view when a later piece is', () => {
+    const { container, first, second } = paragraphs()
+    const head = document.createElement('span')
+    head.id = 'ix-1'
+    head.setAttribute('data-bo-ra', 'ix-1')
+    head.append(first.firstChild!)
+    first.append(head)
+    const tail = document.createElement('span')
+    tail.setAttribute('data-bo-ra', 'ix-1')
+    tail.append(second.firstChild!)
+    second.append(tail)
+    expect(isNarrationInView(head, rangeOver(second))).toBe(true)
+    container.remove()
+  })
 })
 
 describe('decideNarrationFollow', () => {

@@ -1,10 +1,9 @@
-import { EDITION_SYNC_INDEX_EXTENSION } from '@bookorbit/types';
+import { EDITION_SYNC_INDEX_DIR, EDITION_SYNC_INDEX_EXTENSION, EDITION_SYNC_PROVENANCE_ENTRY } from '@bookorbit/types';
+
+export { EDITION_SYNC_INDEX_DIR, EDITION_SYNC_PROVENANCE_ENTRY };
 
 /** `book_files.format` the scanner gives the index file (its extension), so it lands under Extras. */
 export const EDITION_SYNC_INDEX_FORMAT = EDITION_SYNC_INDEX_EXTENSION;
-/** Folder inside the index zip that holds the fork's own entries; stripped again on rebuild. */
-export const EDITION_SYNC_INDEX_DIR = 'bookorbit-timings';
-export const EDITION_SYNC_PROVENANCE_ENTRY = `${EDITION_SYNC_INDEX_DIR}/provenance.json`;
 export const EDITION_SYNC_REPORT_ENTRY = `${EDITION_SYNC_INDEX_DIR}/report.json`;
 /** Name the rebuild copies the index to inside the worker job folder. */
 export const EDITION_SYNC_REBUILD_INDEX_ENTRY = 'index.epub';

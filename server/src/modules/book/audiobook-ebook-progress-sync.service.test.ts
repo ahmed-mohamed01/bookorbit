@@ -962,3 +962,100 @@ describe('AudiobookEbookProgressSyncService external audio timeline', () => {
     await expect(fixture.service.resolveAudioBookPosition(5, files.files[0]!.id, 10)).resolves.toBeNull();
   });
 });
+
+describe('AudiobookEbookProgressSyncService plain EPUB narrated from the timing index', () => {
+  const INDEX = {
+    id: 40,
+    absolutePath: '/library/book.bookorbit-timings',
+    format: 'bookorbit-timings',
+    role: 'supplement',
+    sortOrder: 3,
+    durationSeconds: null,
+    mediaOverlayAvailable: false,
+    mediaOverlayDurationSeconds: null,
+  };
+  const indexFiles = () => {
+    const files = makeFiles();
+    return { ...files, files: [...files.files.filter((file) => file.id !== 30), INDEX] };
+  };
+  const resolver = () => ({ resolveOverlaySource: vi.fn().mockResolvedValue({ ...INDEX, mediaOverlayAvailable: true }) });
+  const setup = (withResolver: boolean) => {
+    const fixture = makeFixture(100, indexFiles());
+    const overlaySource = withResolver ? resolver() : undefined;
+    const service = new AudiobookEbookProgressSyncService(
+      fixture.bookRepo as never,
+      fixture.positionConverter as never,
+      new AudioPlayOrderService(fixture.chapterRepo as never),
+      overlaySource,
+    );
+    // The CFI the player loaded with is still on the first sentence.
+    fixture.positionConverter.nearestFragmentForPosition.mockResolvedValue({ status: 'exact', fragment: 'first', chapterIndex: 0 });
+    return { ...fixture, service, overlaySource };
+  };
+  const narration = {
+    userId: 7,
+    bookId: 5,
+    bookFileId: 20,
+    percentage: 60,
+    cfi: 'epubcfi(/6/2!/4/2/1:0)',
+    positionSeconds: null,
+    mediaOverlayFragment: 'OPS/chapter.xhtml#second',
+    mediaOverlaySectionIndex: 0,
+    sourceUpdatedAt: SOURCE_TIME,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockStat.mockResolvedValue({ mtimeMs: 1234 } as never);
+    mockBuildPlaylist.mockResolvedValue(makePlaylist());
+  });
+
+  it('places the audiobook at the narrated sentence, not the stale text position', async () => {
+    const { service, bookRepo } = setup(true);
+
+    await expect(service.syncFromEbookProgress(narration)).resolves.toBe(true);
+
+    expect(mockBuildPlaylist).toHaveBeenCalledWith(INDEX.absolutePath, 5, INDEX.id);
+    expect(bookRepo.upsertAudioProgress).toHaveBeenCalledWith(7, 5, 10, 50, 50, SOURCE_TIME);
+  });
+
+  it('ignores the seconds of an index narration, which run on the client playlist', async () => {
+    const { service, bookRepo } = setup(true);
+
+    await expect(service.syncFromEbookProgress({ ...narration, positionSeconds: 5 })).resolves.toBe(true);
+
+    expect(bookRepo.upsertAudioProgress).toHaveBeenCalledWith(7, 5, 10, 50, 50, SOURCE_TIME);
+  });
+
+  it('does not sync at all with no resolver registered', async () => {
+    const { service, bookRepo } = setup(false);
+
+    await expect(service.syncFromEbookProgress(narration)).resolves.toBe(false);
+
+    expect(mockBuildPlaylist).not.toHaveBeenCalled();
+    expect(bookRepo.upsertAudioProgress).not.toHaveBeenCalled();
+  });
+
+  it('names the timing index as the source of a plain EPUB narration', async () => {
+    const { service, overlaySource } = setup(true);
+
+    await expect(service.timingIndexSourceFileId(7, 5, 20)).resolves.toBe(INDEX.id);
+    expect(overlaySource?.resolveOverlaySource).toHaveBeenCalledWith(7, 5, indexFiles().files);
+  });
+
+  it('names no source for an EPUB with media overlays or a book with a read-along EPUB', async () => {
+    const { service, bookRepo, overlaySource } = setup(true);
+    bookRepo.findAudioEbookProgressSyncFiles.mockResolvedValue({ ...makeFiles(), files: [...makeFiles().files, INDEX] });
+
+    await expect(service.timingIndexSourceFileId(7, 5, 30)).resolves.toBeNull();
+    await expect(service.timingIndexSourceFileId(7, 5, 20)).resolves.toBeNull();
+    expect(overlaySource?.resolveOverlaySource).not.toHaveBeenCalled();
+  });
+
+  it('names no source and reads nothing with no resolver registered', async () => {
+    const { service, bookRepo } = setup(false);
+
+    await expect(service.timingIndexSourceFileId(7, 5, 20)).resolves.toBeNull();
+    expect(bookRepo.findAudioEbookProgressSyncFiles).not.toHaveBeenCalled();
+  });
+});
