@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Permission } from '@bookorbit/types'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
+import CoverThumbnailBackfillSettings from '@/features/cover-thumbnails/components/CoverThumbnailBackfillSettings.vue'
 import EditionSyncAdminSettings from '@/features/edition-sync/components/EditionSyncAdminSettings.vue'
 import EditionSyncBooksList from '@/features/edition-sync/components/EditionSyncBooksList.vue'
 import EditionSyncIndexingCard from '@/features/edition-sync/components/EditionSyncIndexingCard.vue'
@@ -56,5 +57,7 @@ function handleSettingsSaved() {
     <EditionSyncIndexingCard v-if="canAdminEditionSync" />
 
     <EditionSyncBooksList v-if="showBooks" ref="booksList" :run-active="runActive" />
+
+    <CoverThumbnailBackfillSettings v-if="canAdminEditionSync" />
   </div>
 </template>

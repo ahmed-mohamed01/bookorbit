@@ -22,7 +22,8 @@ export const forkAccountSettingsNav: SettingsNavItem[] = [
     labelKey: 'editionSync.fork.title',
     descriptionKey: 'editionSync.fork.description',
     icon: GitFork,
-    keywords: 'fork edition sync read aloud timing index whisper audiobook ebook position schedule worker queue failed retry',
+    keywords:
+      'fork edition sync read aloud timing index whisper audiobook ebook position schedule worker queue failed retry cover thumbnails backfill',
     isVisible: (context) =>
       context.isSuperuser || [Permission.EditionSync, Permission.ManageAppSettings].some((permission) => context.permissions.includes(permission)),
   },

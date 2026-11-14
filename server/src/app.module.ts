@@ -113,6 +113,7 @@ import { AppAttestModule } from './modules/app-attest/app-attest.module';
 import { ReadAloudModule } from './modules/read-aloud/read-aloud.module';
 import { EditionSyncModule } from './modules/edition-sync/edition-sync.module';
 import { AudioConvertModule } from './modules/audio-convert/audio-convert.module';
+import { CoverThumbnailsModule } from './modules/cover-thumbnails/cover-thumbnails.module';
 import { PageLocatorModule } from './modules/page-locator/page-locator.module';
 import { YearReviewModule } from './modules/year-review/year-review.module';
 import { VisualMatchModule } from './modules/visual-match/visual-match.module';
@@ -239,6 +240,7 @@ import { StoryEditsModule } from './modules/story-edits/story-edits.module';
     ReadAloudModule,
     EditionSyncModule,
     AudioConvertModule,
+    CoverThumbnailsModule,
     PageLocatorModule,
     YearReviewModule,
     VisualMatchModule,

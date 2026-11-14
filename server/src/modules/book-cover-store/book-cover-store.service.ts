@@ -834,6 +834,11 @@ export class BookCoverStore {
     };
   }
 
+  /** Makes a slot's missing thumbnail through the same de-duplicated repair a request would use. */
+  async ensureSlotThumbnail(bookId: number, medium: CoverMedium): Promise<string | null> {
+    return this.resolveSlotArtifact(bookId, medium, 'thumbnail');
+  }
+
   private async resolveSlotArtifact(bookId: number, medium: CoverMedium, variant: CoverVariant): Promise<string | null> {
     const dir = bookCoverSlotDirPath(this.appDataPath, bookId, medium);
     if (variant === 'thumbnail') {

@@ -12,6 +12,9 @@ import { extractPdfCover } from './pdf-cover';
 
 const THUMBNAIL_WIDTH = 400;
 const THUMBNAIL_HEIGHT = 600;
+// mozjpeg's trellis tuning without sharp's `mozjpeg: true`, which also turns on progressive output
+// that some OPDS clients cannot decode (#782).
+const THUMBNAIL_JPEG_OPTIONS = { quality: 80, trellisQuantisation: true, overshootDeringing: true, quantisationTable: 3 } as const;
 
 /** Returns extension based on magic bytes, defaulting to 'jpg'. */
 export function imageExt(bytes: Buffer): string {
@@ -36,7 +39,7 @@ export function imageExt(bytes: Buffer): string {
 }
 
 export async function generateThumbnail(bytes: Buffer): Promise<Buffer> {
-  return sharp(bytes).resize(THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 90 }).toBuffer();
+  return sharp(bytes).resize(THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT, { fit: 'inside', withoutEnlargement: true }).jpeg(THUMBNAIL_JPEG_OPTIONS).toBuffer();
 }
 
 export async function normalizeProgressiveJpeg(bytes: Buffer): Promise<Buffer> {

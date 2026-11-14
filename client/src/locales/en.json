@@ -18306,5 +18306,31 @@
         "failed": "Couldn't save the audio conversion settings."
       }
     }
+  },
+  "coverThumbnails": {
+    "heading": "Cover thumbnails",
+    "auto": {
+      "title": "Make missing thumbnails automatically",
+      "help": "Runs two minutes after the server starts and every day at 04:30, one cover at a time, so grids never wait for a cover to be resized. Turning it off also stops a run that is going."
+    },
+    "runNow": "Run now",
+    "running": "Checking covers: {scanned, plural, one {# checked} other {# checked}}, {made, plural, one {# thumbnail made} other {# thumbnails made}} so far.",
+    "never": "Not run yet.",
+    "lastRun": {
+      "completed": "Last run {when}: {scanned, plural, one {# cover checked} other {# covers checked}}, {missing} missing, {made} made.",
+      "stopped": "Last run {when} was stopped: {scanned, plural, one {# cover checked} other {# covers checked}}, {made} made.",
+      "failed": "Last run {when} failed after {scanned, plural, one {# cover} other {# covers}}. The server log has the error.",
+      "unresolved": "{count, plural, one {# cover could not be read.} other {# covers could not be read.}}"
+    },
+    "trigger": {
+      "startup": "after start-up",
+      "schedule": "on schedule",
+      "manual": "by hand"
+    },
+    "loadFailed": "Couldn't load the cover thumbnail settings.",
+    "toast": {
+      "saveFailed": "Couldn't save the cover thumbnail setting.",
+      "runFailed": "Couldn't start the thumbnail run."
+    }
   }
 }

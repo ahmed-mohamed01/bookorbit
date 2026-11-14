@@ -1177,6 +1177,39 @@ the filed event), delete the owned files, revert the seams above, and drop the t
 `DROP TRIGGER IF EXISTS audio_convert_book_files_added ON book_files` (otherwise every new MP3 row
 writes to `audio_convert_watch`); the tables can then be dropped or left alone.
 
+## Cover thumbnail backfill
+
+Upstream makes a slot's missing `thumbnail.jpg` on the first request for it (`repairThumbnail`,
+four at a time). A library grid that scrolls past many such books waited seconds per cover while
+large originals were resized. `CoverThumbnailBackfillService` walks every served slot (not
+dormant, not a placeholder) in primary-key pages of 500, two minutes after boot and daily at 04:30,
+and makes each missing thumbnail one at a time through `BookCoverStore.ensureSlotThumbnail`, the
+same de-duplicated repair a request uses. It logs `[cover.thumbnail_backfill]` start and end with
+`scanned`, `missing`, `made` and `unresolved` (a slot with no readable cover).
+
+**Settings › Fork › Cover thumbnails** (`manage_app_settings`): a switch for the start-up and daily
+runs (on by default; turning it off stops a run that is going) and Run now, which works with the
+switch off. The page shows the running counts, polled every 2 s, and the last run. Both live in
+`app_settings` under `fork_cover_thumbnail_backfill_enabled` and `fork_cover_thumbnail_backfill_last_run`
+(JSON), so no schema. API: `GET` / `PATCH {enabled}` `/api/v1/cover-thumbnails/backfill`, `POST .../run`.
+
+New thumbnails are encoded at quality 80 with mozjpeg's trellis quantisation, overshoot deringing
+and quantisation table 3, about 38% smaller than the old quality 90 output on real covers. sharp's
+`mozjpeg: true` is not used because it also turns on progressive output, which some OPDS clients
+cannot decode (upstream #782). Existing thumbnails are left as they are.
+
+**Owned (fork-only) files:** `server/src/modules/cover-thumbnails/` (module, service, repository,
+controller, DTO, tests), `server/src/modules/book-cover-store/book-cover-store-ensure-thumbnail.test.ts`,
+`server/src/modules/metadata/lib/cover-thumbnail-encoding.test.ts`, `packages/types/src/cover-thumbnails.ts`,
+`client/src/features/cover-thumbnails/`. The repository reads the fork's own
+`book_cover_placeholders` schema from `book-cover-store/schema/`.
+
+**Hooks in upstream files:** `book-cover-store.service.ts` (public `ensureSlotThumbnail`, a
+pass-through to `resolveSlotArtifact`), `metadata/lib/cover.ts` (`THUMBNAIL_JPEG_OPTIONS`),
+`app.module.ts` (module registration), `packages/types/src/index.ts` (one export). Fork-owned files
+touched: `ForkSettings.vue` (the section), `fork-settings-nav.ts` (search keywords), `en.json`
+(`coverThumbnails.*`). The first two hooks are generic and good candidates to propose upstream.
+
 ## Remote read-aloud worker: local work folders
 
 A native worker on another machine (an Apple Silicon Mac for MLX) shares the job folder with the server
