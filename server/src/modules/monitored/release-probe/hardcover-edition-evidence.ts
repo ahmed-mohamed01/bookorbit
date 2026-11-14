@@ -2,7 +2,7 @@ import type { MonitoredFormat } from '@bookorbit/types';
 
 import { isbn10FromIsbn13 } from '../../../common/text-match/isbn-normalize';
 import { isPublishedDateKey } from '../../../common/utils/published-date.utils';
-import type { HardcoverEditionsProbeBook } from '../../metadata-fetch/providers/hardcover/hardcover.types';
+import type { HardcoverEditionsProbeBook } from '../providers/hardcover-catalog.types';
 import type { EditionEvidence, HardcoverEvidence, HardcoverProbeBook, HardcoverProbeEdition } from './release-probe.types';
 
 export type EditionFormat = MonitoredFormat | 'physical';

@@ -1,16 +1,15 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, NotFoundException, OnApplicationBootstrap, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuditAction, AuditResource, UNSETTLED_BOOK_REQUEST_DOWNLOAD_STATUSES, WORKER_WRITABLE_BOOK_REQUEST_STATUSES } from '@bookorbit/types';
 import type { ReleaseUnitChoice } from '@bookorbit/types';
 import { randomUUID } from 'crypto';
 import { constants } from 'fs';
-import { copyFile, link, mkdir, opendir, readdir, realpath, rmdir, stat, unlink } from 'fs/promises';
-import { basename, dirname, extname, isAbsolute, join, relative, sep } from 'path';
+import { copyFile, link, mkdir, readdir, realpath, rmdir, stat, unlink } from 'fs/promises';
+import { basename, dirname, extname, join, relative, sep } from 'path';
 
 import { isUniqueViolation } from '../../../common/utils/db-error.utils';
 import { sanitizeLogValue } from '../../../common/utils/log-sanitize.utils';
 import type { BookRequestDownloadRow, BookRequestRow } from '../../../db/schema';
-import type { BatchUnitRow } from '../schema/book-request-batch.schema';
 import type { FileRole } from '../../scanner/lib/classify';
 import { AuditService } from '../../audit/audit.service';
 import { BookDockRepository } from '../../book-dock/book-dock.repository';
@@ -32,7 +31,7 @@ import {
   type ReleaseUnit,
 } from '../../scanner/lib/release-plan';
 import { UploadValidatorService } from '../../upload/upload-validator.service';
-import { BookRequestBatchRepository } from '../batch/book-request-batch.repository';
+import { REQUEST_IMPORT_HOOK, type RequestImportHook } from '../batch/request-import-hook';
 import { BookRequestRepository } from '../book-request.repository';
 import { BookRequestGateway } from '../book-request.gateway';
 import { DownloadClientConfigService } from '../download-clients/download-client-config.service';
@@ -44,13 +43,10 @@ import { DownloadRemovalService } from './download-removal.service';
 import { RequestFulfillmentService } from './request-fulfillment.service';
 
 /** A release folder is books plus artwork, not a filesystem. Depth and count stay bounded. */
-/** How long a finished download may keep reporting chosen files that are not all there. */
-const BATCH_FILES_GRACE_MS = 30 * 60 * 1000;
-const BATCH_FILES_NEVER_ARRIVED = 'The download client reported the download finished, but some selected files never arrived.';
 const MAX_SCAN_DEPTH = 4;
 const MAX_SCAN_ENTRIES = 2_000;
 /** Enough attempts to get past a same-named retry without turning a collision into a loop. */
-const MAX_UNIQUE_SUFFIX_ATTEMPTS = 100;
+export const MAX_UNIQUE_SUFFIX_ATTEMPTS = 100;
 /**
  * Scene ebook packaging is a zip holding a rar holding the book, so one pass never reaches it.
  * Two does. Anything deeper is not packaging, it is a nested-archive bomb.
@@ -99,7 +95,7 @@ export class RequestImportService implements OnApplicationBootstrap {
     private readonly fulfillment: RequestFulfillmentService,
     private readonly removal: DownloadRemovalService,
     private readonly audit: AuditService,
-    private readonly batches: BookRequestBatchRepository,
+    @Optional() @Inject(REQUEST_IMPORT_HOOK) private readonly importHook?: RequestImportHook,
   ) {
     this.bookDockPath = this.config.getOrThrow<string>('storage.bookDockPath');
     this.stagingPath = join(this.config.getOrThrow<string>('storage.appDataPath'), 'tmp', 'release-extract');
@@ -212,18 +208,14 @@ export class RequestImportService implements OnApplicationBootstrap {
     if (!download.contentPath) throw new Error('The download did not report where the finished files are');
 
     const resolved = await this.resolveLocalPath(download, download.contentPath);
-    const localPath = await this.spannedContentPath(download, request, resolved.localPath);
+    const localPath = this.importHook ? await this.importHook.contentPath(download, request, resolved.localPath) : resolved.localPath;
     if (localPath === null) return;
     const {
       root,
       plan,
       containmentRoot: contentContainmentRoot,
     } = await this.resolveReleasePlan(localPath, download.contentPath, resolved.containmentRoot, extractionDirectory);
-
-    if ((await this.batches.findKinds([request.id])).get(request.id) === 'batch') {
-      await this.runBatchImportFromDisk(download, request, root, plan, contentContainmentRoot);
-      return;
-    }
+    if (await this.importHook?.importBatch(this, download, request, root, plan, contentContainmentRoot)) return;
 
     // The directory walk swallows read errors, so an unreadable folder would otherwise surface as "no supported book file".
     await readdir(root).catch((error: NodeJS.ErrnoException) => {
@@ -361,271 +353,6 @@ export class RequestImportService implements OnApplicationBootstrap {
   }
 
   /**
-   * Every ticked unit is placed on its own, so one missing or unplaceable file fails only its row.
-   * The download's own book_dock_file_id stays null: verification follows that column, and a batch
-   * has no single dock row for it to follow. Rows already in the dock or failed are skipped, which
-   * makes a re-run after a crash place only what is left.
-   */
-  private async runBatchImportFromDisk(
-    download: BookRequestDownloadRow,
-    request: BookRequestRow,
-    root: string,
-    plan: ReleasePlan,
-    containmentRoot: string,
-  ): Promise<void> {
-    const started = Date.now();
-    const rows = await this.batches.findUnits(request.id);
-
-    const unreadable = await batchSourceProblem(root, download.contentPath ?? root, plan);
-    if (unreadable && unreadable.errorClass !== 'EmptyDownload') {
-      await this.failUnreadableBatch(download, request, unreadable, started);
-      return;
-    }
-
-    const missing = await incompleteBatchFiles(root, rows);
-    if (missing > 0) {
-      await this.holdIncompleteBatch(download, request, missing, started);
-      return;
-    }
-
-    await this.downloads.setFilesPendingSince(download.id, null);
-
-    if (unreadable) {
-      await this.failUnreadableBatch(download, request, unreadable, started);
-      return;
-    }
-
-    // 'importing' is accepted so a run resumed after a crash can pick the request up again.
-    const claimed = await this.requests.updateIf(request.id, [...WORKER_WRITABLE_BOOK_REQUEST_STATUSES, 'importing'], { status: 'importing' });
-    if (!claimed) {
-      await this.downloads.updateIf(download.id, UNSETTLED_BOOK_REQUEST_DOWNLOAD_STATUSES, {
-        status: 'failed',
-        errorMessage: 'The request was settled while this download was finishing, so nothing was imported',
-      });
-      this.gateway.emitChanged();
-      return;
-    }
-    this.gateway.emitChanged();
-
-    this.logger.log(
-      `[book_request.batch_import] [start] requestId=${request.id} downloadId=${download.id} units=${rows.length} - placing batch units`,
-    );
-
-    const diskUnits = new Map(plan.units.map((unit) => [unit.primaryPath, unit]));
-    let placed = rows.filter((row) => row.status === 'in_dock' || row.status === 'filed').length;
-    let failed = 0;
-
-    for (const row of rows) {
-      if (row.status !== 'waiting' && row.status !== 'placing') continue;
-      if ((await this.requests.findById(request.id))?.request.status !== 'importing') {
-        this.logger.warn(
-          `[book_request.batch_import] [end] requestId=${request.id} downloadId=${download.id} placed=${placed} failed=${failed} durationMs=${Date.now() - started} - the request was settled mid-import, stopping`,
-        );
-        await this.downloads.updateIf(download.id, UNSETTLED_BOOK_REQUEST_DOWNLOAD_STATUSES, {
-          status: 'failed',
-          errorMessage: 'The request was settled while this download was finishing, so the remaining books were not imported',
-        });
-        this.gateway.emitChanged();
-        return;
-      }
-      const unit = diskUnits.get(row.primaryPath);
-      try {
-        if (!unit) {
-          await this.batches.updateUnit(row.id, { status: 'failed', errorMessage: 'This file was not found in the finished download.' });
-          this.logBatchUnitFailure(request.id, row.unitIndex, 'This file was not found in the finished download.');
-          failed++;
-        } else {
-          let dockFileId =
-            row.status === 'placing' && row.bookDockFileId !== null ? await this.adoptPlacedUnit(request.id, row.bookDockFileId) : null;
-          if (dockFileId === null) {
-            await this.batches.updateUnit(row.id, { status: 'placing', errorMessage: null });
-            dockFileId = await this.placeBatchUnit(download, request, root, unit, containmentRoot, row.id);
-          }
-          await this.batches.updateUnit(row.id, { status: 'in_dock', bookDockFileId: dockFileId });
-          placed++;
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        await this.batches.updateUnit(row.id, { status: 'failed', errorMessage: message.slice(0, 500) });
-        this.logBatchUnitFailure(request.id, row.unitIndex, message);
-        failed++;
-      }
-      this.gateway.emitChanged();
-    }
-
-    // The request first: a crash between the two leaves a completed download that the resume sweep
-    // settles, where the other order would leave the request at 'importing' for good.
-    await this.requests.updateIf(
-      request.id,
-      ['importing'],
-      placed > 0 ? { status: 'available' } : { status: 'failed', statusReason: 'None of the ticked books could be placed in Book Dock.' },
-    );
-    await this.downloads.updateIf(download.id, ['completed'], { status: 'imported' });
-    this.logger.log(
-      `[book_request.batch_import] [end] requestId=${request.id} downloadId=${download.id} placed=${placed} failed=${failed} durationMs=${Date.now() - started} - batch import finished`,
-    );
-    this.gateway.emitChanged();
-    await this.removal.cleanupStagedDirectDownload(download);
-  }
-
-  /**
-   * A torrent extended with more files can be reported as finished for a moment before the new
-   * files arrive. Nothing is wrong with the units, so the download goes back to being polled; only
-   * a client that still disagrees long after the grab fails the batch.
-   */
-  private async holdIncompleteBatch(download: BookRequestDownloadRow, request: BookRequestRow, missing: number, started: number): Promise<void> {
-    const { filesPendingSince } = await this.downloads.findExtension(download.id);
-    if (filesPendingSince === null) await this.downloads.setFilesPendingSince(download.id, new Date(started));
-    if (filesPendingSince !== null && started - filesPendingSince.getTime() >= BATCH_FILES_GRACE_MS) {
-      await this.requests.updateIf(request.id, [...WORKER_WRITABLE_BOOK_REQUEST_STATUSES, 'importing'], {
-        status: 'failed',
-        statusReason: BATCH_FILES_NEVER_ARRIVED,
-      });
-      await this.downloads.updateIf(download.id, UNSETTLED_BOOK_REQUEST_DOWNLOAD_STATUSES, {
-        status: 'failed',
-        errorMessage: BATCH_FILES_NEVER_ARRIVED,
-      });
-      this.logger.warn(
-        `[book_request.batch_import] [fail] requestId=${request.id} downloadId=${download.id} missingUnits=${missing} durationMs=${Date.now() - started} errorClass=FilesNeverArrived error="${sanitizeLogValue(BATCH_FILES_NEVER_ARRIVED)}" - the selected files never arrived`,
-      );
-      this.gateway.emitChanged();
-      return;
-    }
-
-    await this.downloads.updateIf(download.id, ['completed', 'importing'], {
-      status: 'downloading',
-      completedAt: null,
-      lastProgressAt: new Date(),
-    });
-    await this.requests.updateIf(request.id, ['importing'], { status: 'downloading' });
-    this.logger.log(
-      `[book_request.batch_import] [end] requestId=${request.id} downloadId=${download.id} missingUnits=${missing} durationMs=${Date.now() - started} - selected files are not complete yet, polling the client again`,
-    );
-    this.gateway.emitChanged();
-  }
-
-  /**
-   * Units stay 'waiting': nothing was wrong with them, so a later re-run can still place them once
-   * the download is readable again.
-   */
-  private async failUnreadableBatch(
-    download: BookRequestDownloadRow,
-    request: BookRequestRow,
-    problem: { errorClass: string; message: string },
-    started: number,
-  ): Promise<void> {
-    const message = problem.message;
-    await this.requests.updateIf(request.id, [...WORKER_WRITABLE_BOOK_REQUEST_STATUSES, 'importing'], {
-      status: 'failed',
-      statusReason: message,
-    });
-    await this.downloads.updateIf(download.id, UNSETTLED_BOOK_REQUEST_DOWNLOAD_STATUSES, { status: 'failed', errorMessage: message });
-    this.logger.warn(
-      `[book_request.batch_import] [fail] requestId=${request.id} downloadId=${download.id} durationMs=${Date.now() - started} errorClass=${problem.errorClass} error="${sanitizeLogValue(message)}" - the finished download could not be read`,
-    );
-    this.gateway.emitChanged();
-    await this.removal.cleanupStagedDirectDownload(download);
-  }
-
-  private logBatchUnitFailure(requestId: number, unitIndex: number, message: string): void {
-    this.logger.warn(
-      `[book_request.batch_import] [fail] requestId=${requestId} unitIndex=${unitIndex} error="${sanitizeLogValue(message)}" - could not place this unit`,
-    );
-  }
-
-  private async placeBatchUnit(
-    download: BookRequestDownloadRow,
-    request: BookRequestRow,
-    root: string,
-    unit: ReleaseUnit,
-    containmentRoot: string,
-    unitRowId: number,
-  ): Promise<number> {
-    let { placement, dockRow, suffix } = await this.claimDestination(request, root, unit);
-    await this.batches.updateUnit(unitRowId, { status: 'placing', bookDockFileId: dockRow.id });
-    for (;;) {
-      try {
-        await this.placeUnit(placement, containmentRoot, download);
-        break;
-      } catch (error) {
-        await this.dockRepo.deleteById(dockRow.id).catch(() => {});
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || suffix >= MAX_UNIQUE_SUFFIX_ATTEMPTS - 1) {
-          await this.batches.updateUnit(unitRowId, { bookDockFileId: null }).catch(() => {});
-          throw error;
-        }
-        ({ placement, dockRow, suffix } = await this.claimDestination(request, root, unit, suffix + 1));
-        await this.batches.updateUnit(unitRowId, { status: 'placing', bookDockFileId: dockRow.id });
-      }
-    }
-
-    await this.queueBatchDockRow(request.id, dockRow.id, placement.primaryDestPath);
-    return dockRow.id;
-  }
-
-  /**
-   * A unit left at 'placing' with a dock row id was interrupted after its destination was claimed.
-   * If that row's file landed, the unit is done; otherwise the stale claim is dropped so placing
-   * again cannot leave a second row behind.
-   */
-  private async adoptPlacedUnit(requestId: number, dockFileId: number): Promise<number | null> {
-    const dockRow = await this.dockRepo.findById(dockFileId);
-    if (dockRow) {
-      const expected = !dockRow.unitDirectory
-        ? [{ absolutePath: dockRow.absolutePath, fileSize: dockRow.fileSize }]
-        : await this.dockRepo.findUnitFiles(dockFileId);
-      const landed =
-        expected.length > 0 && (await Promise.all(expected.map((file) => this.hasLanded(file.absolutePath, file.fileSize)))).every(Boolean);
-      if (landed) {
-        await this.queueBatchDockRow(requestId, dockRow.id, dockRow.absolutePath);
-        return dockRow.id;
-      }
-      await this.removeLeftovers(dockRow, !dockRow.unitDirectory ? [] : expected.map((file) => file.absolutePath));
-    }
-    await this.dockRepo.deleteById(dockFileId).catch(() => {});
-    return null;
-  }
-
-  private hasLanded(path: string, size: number | null): Promise<boolean> {
-    return stat(path).then(
-      (info) => info.isFile() && info.size === size,
-      () => false,
-    );
-  }
-
-  /**
-   * A stale claim's files that did land would otherwise be ingested by the Book Dock watcher as a
-   * partial second row once the claim is gone. Only paths inside the dock are touched, and the
-   * directories are removed with a plain rmdir so anything unexpected inside survives.
-   */
-  private async removeLeftovers(dockRow: { absolutePath: string; unitDirectory: string | null }, unitFilePaths: string[]): Promise<void> {
-    const files = !dockRow.unitDirectory ? [dockRow.absolutePath] : unitFilePaths;
-    for (const path of files) {
-      if (this.isInsideBookDock(path)) await unlink(path).catch(() => {});
-    }
-    const directory = dockRow.unitDirectory;
-    if (!directory || !this.isInsideBookDock(directory)) return;
-    const nested = new Set<string>();
-    for (const path of files) {
-      for (let dir = dirname(path); dir.startsWith(directory + sep) && this.isInsideBookDock(dir); dir = dirname(dir)) nested.add(dir);
-    }
-    for (const dir of [...nested].sort((left, right) => right.length - left.length)) await rmdir(dir).catch(() => {});
-    await rmdir(directory).catch(() => {});
-  }
-
-  private isInsideBookDock(path: string): boolean {
-    const rel = relative(this.bookDockPath, path);
-    return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
-  }
-
-  private async queueBatchDockRow(requestId: number, dockFileId: number, primaryDestPath: string): Promise<void> {
-    await this.dockIngest.ingestFromWatchedFolder(primaryDestPath).catch((err: unknown) => {
-      this.logger.warn(
-        `[book_request.batch_import] [fail] requestId=${requestId} dockFileId=${dockFileId} error="${sanitizeLogValue(err instanceof Error ? err.message : String(err))}" - could not queue the dock row, leaving it to the watcher`,
-      );
-    });
-  }
-
-  /**
    * What the finished download actually is, read by the same interpreter that ran on the
    * `.torrent` manifest before the grab, so a release accepted at grab time cannot be refused here
    * for a different reason. A magnet reaches this point never having been inspected at all, and an
@@ -706,39 +433,6 @@ export class RequestImportService implements OnApplicationBootstrap {
     });
   }
 
-  /**
-   * A client that wrote several files but named only the first, as Shelfmark does, leaves the rest
-   * to be found beside it. Its folder is only taken when it holds exactly those files: in most of
-   * Shelfmark's layouts the files land in a folder shared with other books, where nothing says
-   * which belong to this one. An ebook then falls back to the file it was named, which is a whole
-   * book on its own; an audiobook missing its other parts is not, so it is held. Null when held.
-   */
-  private async spannedContentPath(download: BookRequestDownloadRow, request: BookRequestRow, localPath: string): Promise<string | null> {
-    const expected = (await this.downloads.findContentFileCount(download.id)) ?? 1;
-    if (expected <= 1) return localPath;
-    const info = await stat(localPath).catch(() => null);
-    if (info?.isDirectory()) return localPath;
-
-    const folder = dirname(localPath);
-    if (await holdsExactlyFiles(folder, expected)) return folder;
-    if (request.mediaKind !== 'audiobook') {
-      this.logger.log(
-        `[book_request.import] [end] requestId=${request.id} downloadId=${download.id} expectedFiles=${expected} - the files share a folder with others, importing the named file alone`,
-      );
-      return localPath;
-    }
-
-    this.logger.warn(
-      `[book_request.import] [end] requestId=${request.id} downloadId=${download.id} expectedFiles=${expected} - the files of a multi-file audiobook share a folder with others, holding rather than guessing`,
-    );
-    await this.fulfillment.holdForReview(
-      download,
-      request,
-      `the download client wrote ${expected} files for this audiobook into a folder that holds other files too, so BookOrbit cannot tell which ones belong to it. In Shelfmark, setting the audiobook file organization to "Rename and group" gives each such download its own folder`,
-    );
-    return null;
-  }
-
   private async holdForTruncatedRelease(download: BookRequestDownloadRow, request: BookRequestRow): Promise<void> {
     this.logger.warn(
       `[book_request.import] [end] requestId=${request.id} downloadId=${download.id} maxDepth=${MAX_SCAN_DEPTH} maxEntries=${MAX_SCAN_ENTRIES} - the release is larger than BookOrbit reads, holding rather than importing part of it`,
@@ -800,7 +494,7 @@ export class RequestImportService implements OnApplicationBootstrap {
    * insert is the only atomic claim there is, so a lost race retries from the next suffix instead
    * of failing an import that a different file name would have satisfied.
    */
-  private async claimDestination(
+  async claimDestination(
     request: BookRequestRow,
     root: string,
     unit: ReleaseUnit,
@@ -900,7 +594,7 @@ export class RequestImportService implements OnApplicationBootstrap {
    * the race. Unlinking every planned destination during cleanup would delete that winner's file,
    * turning a harmless name collision into data loss.
    */
-  private async placeUnit(placement: UnitPlacement, containmentRoot: string, download: BookRequestDownloadRow): Promise<void> {
+  async placeUnit(placement: UnitPlacement, containmentRoot: string, download: BookRequestDownloadRow): Promise<void> {
     const placed: string[] = [];
     const createdDirectories: string[] = [];
 
@@ -1007,76 +701,22 @@ function isContinuationVolume(path: string): boolean {
   return /\.(?:r\d{2,3}|\d{3})$/i.test(path) && !/\.(?:rar|7z|zip)$/i.test(path);
 }
 
-/**
- * Every file, not only the ones with a book extension: the interpreter needs the artwork and the
- * padding files too, because what a release *is* depends on what is beside the content as much as
- * on the content itself.
- */
-/**
- * Whether `folder` holds `expected` files and nothing else. Stops at the first subfolder or the
- * first file past the count, so a shared download folder costs a few entries rather than a walk.
- */
-async function holdsExactlyFiles(folder: string, expected: number): Promise<boolean> {
-  const dir = await opendir(folder).catch(() => null);
-  if (!dir) return false;
-  let files = 0;
-  for await (const entry of dir) {
-    if (!entry.isFile() || ++files > expected) return false;
-  }
-  return files === expected;
-}
-
 const UNREADABLE_REASONS: Record<string, string> = {
   EPERM: 'permission denied',
   EACCES: 'permission denied',
   ENOENT: 'not found',
 };
 
-function unreadableDownloadMessage(localPath: string, clientPath: string, code: string | undefined): string {
+export function unreadableDownloadMessage(localPath: string, clientPath: string, code: string | undefined): string {
   const reason = (code && UNREADABLE_REASONS[code]) ?? code ?? 'unknown error';
   return `BookOrbit could not read the finished download at ${localPath} (${reason}). The download client reported ${clientPath}; check the path mapping for this client.`;
 }
 
 /**
- * The directory walk swallows read errors, so an unreadable download looks exactly like one that
- * holds nothing. A batch has to tell the two apart: marking every unit "not found" would blame
- * the files for a problem with the folder.
+ * Every file, not only the ones with a book extension: the interpreter needs the artwork and the
+ * padding files too, because what a release *is* depends on what is beside the content as much as
+ * on the content itself.
  */
-async function batchSourceProblem(root: string, clientPath: string, plan: ReleasePlan): Promise<{ errorClass: string; message: string } | null> {
-  try {
-    await readdir(root);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    return { errorClass: code ?? 'Error', message: unreadableDownloadMessage(root, clientPath, code) };
-  }
-  if (plan.units.length === 0) {
-    return { errorClass: 'EmptyDownload', message: 'BookOrbit could not read the finished download: the download folder is empty' };
-  }
-  return null;
-}
-
-/**
- * How many waiting units have a file that is missing or smaller than when the batch was created.
- * Rows from before sizes were recorded carry none and are never held back.
- */
-async function incompleteBatchFiles(root: string, rows: BatchUnitRow[]): Promise<number> {
-  let incomplete = 0;
-  for (const row of rows) {
-    if ((row.status !== 'waiting' && row.status !== 'placing') || !row.fileSizes || row.fileSizes.length !== row.filePaths.length) continue;
-    for (let index = 0; index < row.filePaths.length; index++) {
-      const size = await stat(join(root, row.filePaths[index])).then(
-        (info) => info.size,
-        () => null,
-      );
-      if (size === null || size < row.fileSizes[index]) {
-        incomplete++;
-        break;
-      }
-    }
-  }
-  return incomplete;
-}
-
 async function collectReleaseFiles(root: string): Promise<ReleaseWalk> {
   const found: ReleaseFileInput[] = [];
   let visited = 0;

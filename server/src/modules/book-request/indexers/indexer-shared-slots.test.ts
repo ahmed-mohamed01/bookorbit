@@ -1,6 +1,6 @@
-import { IndexerOperationLock, SlotWaitAbortedError } from './indexer-operation-lock';
+import { IndexerSharedSlots, SlotWaitAbortedError } from './indexer-shared-slots';
 
-describe('IndexerOperationLock.runShared', () => {
+describe('IndexerSharedSlots.runShared', () => {
   const hold = () => {
     let release!: () => void;
     const held = new Promise<void>((resolve) => (release = resolve));
@@ -8,7 +8,7 @@ describe('IndexerOperationLock.runShared', () => {
   };
 
   it('runs up to the limit at once and hands a freed slot to the next waiter', async () => {
-    const lock = new IndexerOperationLock();
+    const lock = new IndexerSharedSlots();
     const first = hold();
     const order: string[] = [];
 
@@ -29,14 +29,14 @@ describe('IndexerOperationLock.runShared', () => {
   });
 
   it('releases the slot when the operation throws', async () => {
-    const lock = new IndexerOperationLock();
+    const lock = new IndexerSharedSlots();
 
     await expect(lock.runShared(1, 1, () => Promise.reject(new Error('boom')))).rejects.toThrow('boom');
     await expect(lock.runShared(1, 1, () => Promise.resolve('next'))).resolves.toBe('next');
   });
 
   it('lets a waiter give up without the slot later passing to it', async () => {
-    const lock = new IndexerOperationLock();
+    const lock = new IndexerSharedSlots();
     const first = hold();
     const controller = new AbortController();
     const running = lock.runShared(1, 1, () => first.held);

@@ -1,4 +1,12 @@
 import {
+  forkIntegrationRoutes,
+  forkAudiobookshelfRoutes,
+  forkMonitoredSettingsRoutes,
+  forkWebSerialSettingsRoutes,
+  forkLibraryRoutes,
+  forkToolRoutes,
+} from './fork-routes'
+import {
   createRouter,
   createWebHistory,
   type LocationQuery,
@@ -418,19 +426,7 @@ export const routes: RouteRecordRaw[] = [
             props: { embedded: true },
             meta: { maxWidth: 'max-w-3xl', title: () => t('settings.integrations.tabs.hardcover') },
           },
-          // Fork: Convert to M4B.
-          {
-            path: 'audio-conversion',
-            name: 'settings-audio-convert',
-            component: () => import('@/features/audio-convert/components/AudioConvertSettingsSection.vue'),
-            meta: { maxWidth: 'max-w-3xl', title: () => t('audioConvert.settings.heading'), requiredPermission: Permission.ManageAppSettings },
-          },
-          {
-            path: 'fork',
-            name: 'settings-fork',
-            component: () => import('@/features/settings/ForkSettings.vue'),
-            meta: { maxWidth: 'max-w-3xl', title: () => t('editionSync.fork.title') },
-          },
+          ...forkIntegrationRoutes,
           {
             path: 'readwise',
             name: 'settings-readwise',
@@ -445,13 +441,7 @@ export const routes: RouteRecordRaw[] = [
             props: { embedded: true },
             meta: { maxWidth: 'max-w-3xl', title: () => t('settings.integrations.tabs.storygraph') },
           },
-          {
-            path: 'audiobookshelf',
-            name: 'settings-audiobookshelf',
-            component: () => import('@/features/audiobookshelf/components/AudiobookshelfSettings.vue'),
-            props: { embedded: true },
-            meta: { maxWidth: 'max-w-3xl', title: () => t('settings.integrations.tabs.audiobookshelf') },
-          },
+          ...forkAudiobookshelfRoutes,
           {
             path: 'tts',
             name: 'settings-tts',
@@ -524,13 +514,7 @@ export const routes: RouteRecordRaw[] = [
             props: { embedded: true },
             meta: { maxWidth: 'max-w-3xl', title: () => t('titles.system.book-dock') },
           },
-          {
-            path: 'admin/monitored',
-            name: 'settings-admin-monitored',
-            component: () => import('@/features/settings/MonitoredSettings.vue'),
-            props: { embedded: true },
-            meta: { maxWidth: 'max-w-3xl', title: () => t('titles.system.monitored') },
-          },
+          ...forkMonitoredSettingsRoutes,
           {
             path: 'admin/requests',
             name: 'settings-admin-requests',
@@ -538,18 +522,7 @@ export const routes: RouteRecordRaw[] = [
             props: { embedded: true },
             meta: { maxWidth: 'max-w-5xl', title: () => t('titles.system.requests') },
           },
-          {
-            path: 'admin/web-serials',
-            name: 'settings-admin-web-serials',
-            component: () => import('@/features/web-serials/components/WebSerialsSettings.vue'),
-            props: { embedded: true },
-            meta: {
-              maxWidth: 'max-w-3xl',
-              requiredPermission: Permission.ManageAppSettings,
-              permissionFallback: 'settings-account-profile',
-              title: () => t('webSerials.admin.title'),
-            },
-          },
+          ...forkWebSerialSettingsRoutes,
           {
             path: 'admin/audit-log',
             name: 'settings-admin-audit-log',
@@ -699,37 +672,7 @@ export const routes: RouteRecordRaw[] = [
           title: (to) => fallbackById('titles.author', numericParam(to, 'id')),
         },
       },
-      {
-        path: '/monitored',
-        redirect: (to) => ({ path: '/watchlist', query: to.query, hash: to.hash }),
-      },
-      {
-        path: '/monitored/authors/:id',
-        redirect: (to) => ({ path: `/watchlist/authors/${String(to.params.id)}`, query: to.query, hash: to.hash }),
-      },
-      {
-        path: '/watchlist',
-        name: 'monitored',
-        component: () => import('@/features/monitored/views/MonitoredView.vue'),
-        meta: { title: () => t('titles.monitored') },
-      },
-      {
-        path: '/watchlist/authors/:id',
-        name: 'monitored-author',
-        component: () => import('@/features/monitored/views/MonitoredAuthorDetailView.vue'),
-        meta: { title: () => t('titles.monitoredAuthor') },
-      },
-      {
-        path: '/web-serials',
-        name: 'web-serials',
-        component: () => import('@/features/web-serials/WebSerialsPage.vue'),
-        meta: { requiredPermission: Permission.WebSerialAccess, title: () => t('titles.webSerials') },
-      },
-      {
-        path: '/web-serials/queue',
-        name: 'web-serials-queue',
-        redirect: { name: 'web-serials', query: { tab: 'queue' } },
-      },
+      ...forkLibraryRoutes,
       {
         path: '/series',
         name: 'series',
@@ -761,13 +704,7 @@ export const routes: RouteRecordRaw[] = [
             component: () => import('@/features/tools/bulk-rename/views/BulkRenameView.vue'),
             meta: { title: () => t('titles.bulkRename') },
           },
-          // Fork: Convert to M4B.
-          {
-            path: 'convert-m4b',
-            name: 'tools-convert-m4b',
-            component: () => import('@/features/audio-convert/views/AudioConvertView.vue'),
-            meta: { title: () => t('audioConvert.tool.title') },
-          },
+          ...forkToolRoutes,
           {
             path: 'duplicate-books',
             name: 'tools-duplicate-books',

@@ -1,4 +1,3 @@
-import { AudioPlayOrderService } from '../audiobook-chapters/audio-play-order.service';
 import { stat } from 'node:fs/promises';
 
 import { buildEpubMediaOverlayPlaylistFromFile } from '../reader/epub/epub-media-overlay';
@@ -179,15 +178,10 @@ function makeFixture(audioDuration = 100, syncFiles: ReturnType<typeof makeFiles
     ),
     nearestFragmentForPosition: vi.fn().mockResolvedValue({ status: 'exact', fragment: 'second', chapterIndex: 0 }),
   };
-  const chapterRepo = {
-    findTrackRows: vi.fn(async (bookId: number) => (await bookRepo.findAudioEbookProgressSyncFiles(bookId))?.files ?? []),
-    findChapterState: vi.fn().mockResolvedValue(null),
-  };
   return {
-    chapterRepo,
     bookRepo,
     positionConverter,
-    service: new AudiobookEbookProgressSyncService(bookRepo as never, positionConverter as never, new AudioPlayOrderService(chapterRepo as never)),
+    service: new AudiobookEbookProgressSyncService(bookRepo as never, positionConverter as never),
   };
 }
 
@@ -929,40 +923,6 @@ describe('AudiobookEbookProgressSyncService narration after a reset', () => {
   });
 });
 
-describe('AudiobookEbookProgressSyncService external audio timeline', () => {
-  it('uses player order and chapter boundaries for rounded file durations', async () => {
-    const fixture = makeFixture();
-    const base = makeFiles().files[0]!;
-    fixture.bookRepo.findAudioEbookProgressSyncFiles.mockResolvedValue({
-      primaryFileId: 11,
-      files: [
-        { ...base, id: 12, sortOrder: 2, durationSeconds: 100 },
-        { ...base, id: 11, sortOrder: 1, durationSeconds: 20 },
-      ],
-    });
-    fixture.chapterRepo.findChapterState.mockResolvedValue({
-      chapters: [
-        { startMs: 0, title: '' },
-        { startMs: 20500, title: '' },
-      ],
-    });
-
-    await expect(fixture.service.resolveAudioBookPosition(5, 12, 75)).resolves.toEqual({ audioSeconds: 95.5, audioTotalSeconds: 120.5 });
-    await expect(fixture.service.resolveAudioBookPosition(5, 12, -5)).resolves.toEqual({ audioSeconds: 20.5, audioTotalSeconds: 120.5 });
-    await expect(fixture.service.resolveAudioBookPosition(5, 12, 200)).resolves.toEqual({ audioSeconds: 120.5, audioTotalSeconds: 120.5 });
-    await expect(fixture.service.resolveAudioBookPosition(5, 99, 75)).resolves.toBeNull();
-  });
-
-  it('returns no position when an audio duration is missing', async () => {
-    const fixture = makeFixture();
-    const files = makeFiles();
-    files.files[0]!.durationSeconds = null;
-    fixture.bookRepo.findAudioEbookProgressSyncFiles.mockResolvedValue(files);
-
-    await expect(fixture.service.resolveAudioBookPosition(5, files.files[0]!.id, 10)).resolves.toBeNull();
-  });
-});
-
 describe('AudiobookEbookProgressSyncService plain EPUB narrated from the timing index', () => {
   const INDEX = {
     id: 40,
@@ -982,12 +942,7 @@ describe('AudiobookEbookProgressSyncService plain EPUB narrated from the timing 
   const setup = (withResolver: boolean) => {
     const fixture = makeFixture(100, indexFiles());
     const overlaySource = withResolver ? resolver() : undefined;
-    const service = new AudiobookEbookProgressSyncService(
-      fixture.bookRepo as never,
-      fixture.positionConverter as never,
-      new AudioPlayOrderService(fixture.chapterRepo as never),
-      overlaySource,
-    );
+    const service = new AudiobookEbookProgressSyncService(fixture.bookRepo as never, fixture.positionConverter as never, overlaySource);
     // The CFI the player loaded with is still on the first sentence.
     fixture.positionConverter.nearestFragmentForPosition.mockResolvedValue({ status: 'exact', fragment: 'first', chapterIndex: 0 });
     return { ...fixture, service, overlaySource };

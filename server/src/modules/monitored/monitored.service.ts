@@ -74,8 +74,8 @@ import { BookRequestSourcesService } from '../book-request/book-request-sources.
 import { RequestFulfillmentService } from '../book-request/fulfillment/request-fulfillment.service';
 import { IndexerSearchService } from '../book-request/indexers/indexer-search.service';
 import type { IndexerSearchRequest } from '../book-request/indexers/indexer-search.service';
-import { HardcoverClient } from '../metadata-fetch/providers/hardcover/hardcover.client';
-import type { HardcoverAuthorSearchDocument } from '../metadata-fetch/providers/hardcover/hardcover.types';
+import { HardcoverCatalogClient } from './providers/hardcover-catalog.client';
+import type { HardcoverAuthorSearchDocument } from './providers/hardcover-catalog.types';
 import { LibraryService } from '../library/library.service';
 import { MonitoredCatalogService, normalizeMonitoredName, type WorkAvailabilityGroup } from './monitored-catalog.service';
 import { MonitoredAutoRequestService, submitThrottled } from './monitored-autorequest.service';
@@ -200,7 +200,7 @@ export class MonitoredService {
     private readonly store: MonitoredStoreService,
     private readonly catalog: MonitoredCatalogService,
     private readonly autoRequests: MonitoredAutoRequestService,
-    private readonly hardcover: HardcoverClient,
+    private readonly hardcover: HardcoverCatalogClient,
     private readonly providerConfigs: MonitoredProviderConfigService,
     private readonly authorsRepository: AuthorsRepository,
     private readonly monitoredAuthorStore: MonitoredAuthorStoreService,

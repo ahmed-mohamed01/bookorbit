@@ -1,6 +1,5 @@
 import { stat } from 'node:fs/promises';
 
-import { AudioPlayOrderService } from '../audiobook-chapters/audio-play-order.service';
 import { buildEpubMediaOverlayPlaylistFromFile } from '../reader/epub/epub-media-overlay';
 import { AudiobookEbookProgressSyncService } from './audiobook-ebook-progress-sync.service';
 import type { OverlaySourceCandidate, OverlaySourceResolver } from './overlay-source-provider';
@@ -76,13 +75,7 @@ function setup(files: OverlaySourceCandidate[], resolver?: OverlaySourceResolver
     ),
     nearestFragmentForPosition: vi.fn().mockResolvedValue({ status: 'exact', fragment: 'second', chapterIndex: 0 }),
   };
-  const chapterRepo = { findTrackRows: vi.fn().mockResolvedValue(files), findChapterState: vi.fn().mockResolvedValue(null) };
-  const service = new AudiobookEbookProgressSyncService(
-    bookRepo as never,
-    positionConverter as never,
-    new AudioPlayOrderService(chapterRepo as never),
-    resolver,
-  );
+  const service = new AudiobookEbookProgressSyncService(bookRepo as never, positionConverter as never, resolver);
   return { service, bookRepo, positionConverter };
 }
 

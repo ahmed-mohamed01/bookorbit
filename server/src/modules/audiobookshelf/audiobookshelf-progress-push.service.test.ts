@@ -18,6 +18,8 @@ import {
 } from './audiobookshelf-progress-push.service';
 import { AudiobookshelfSyncCoordinatorService } from './audiobookshelf-sync-coordinator.service';
 
+const mockAudioPosition = { resolveAudioBookPosition: vi.fn() };
+
 const USER_ID = 7;
 const BOOK_ID = 11;
 const ITEM_ID = 'abs/item 1';
@@ -54,10 +56,6 @@ function syncUser(overrides: Record<string, unknown> = {}) {
 const mockClient = {
   getMediaProgress: vi.fn(),
   updateMediaProgress: vi.fn(),
-};
-
-const mockBookService = {
-  resolveAudiobookPositionForExternalSync: vi.fn(),
 };
 
 function settings(overrides: Record<string, unknown> = {}) {
@@ -107,7 +105,7 @@ function makeService(events = new AchievementEventsService(), coordinator = new 
     events,
     mockRepo as any,
     mockClient as any,
-    mockBookService as any,
+    mockAudioPosition as any,
     coordinator,
     mockUserService as any,
     mockLibraryService as any,
@@ -138,7 +136,7 @@ describe('AudiobookshelfProgressPushService', () => {
     mockRepo.completePositionPush.mockResolvedValue(undefined);
     mockClient.getMediaProgress.mockResolvedValue({ duration: 100, lastUpdate: 1000 });
     mockClient.updateMediaProgress.mockResolvedValue(undefined);
-    mockBookService.resolveAudiobookPositionForExternalSync.mockResolvedValue({ audioSeconds: 40, audioTotalSeconds: 100 });
+    mockAudioPosition.resolveAudioBookPosition.mockResolvedValue({ audioSeconds: 40, audioTotalSeconds: 100 });
     vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
   });
@@ -293,7 +291,7 @@ describe('AudiobookshelfProgressPushService', () => {
   });
 
   it('skips positions within ten seconds of the end', async () => {
-    mockBookService.resolveAudiobookPositionForExternalSync.mockResolvedValue({ audioSeconds: 95, audioTotalSeconds: 100 });
+    mockAudioPosition.resolveAudioBookPosition.mockResolvedValue({ audioSeconds: 95, audioTotalSeconds: 100 });
 
     await makeService().service.sweepPending(USER_ID);
 
@@ -302,7 +300,7 @@ describe('AudiobookshelfProgressPushService', () => {
   });
 
   it('clears pending when no ABS-compatible audiobook timeline is available', async () => {
-    mockBookService.resolveAudiobookPositionForExternalSync.mockResolvedValue(null);
+    mockAudioPosition.resolveAudioBookPosition.mockResolvedValue(null);
 
     await makeService().service.sweepPending(USER_ID);
 
@@ -499,7 +497,7 @@ describe('AudiobookshelfProgressPushService', () => {
   });
 
   it('does not push when the local and ABS durations differ beyond the pull tolerance', async () => {
-    mockBookService.resolveAudiobookPositionForExternalSync.mockResolvedValue({ audioSeconds: 40, audioTotalSeconds: 200 });
+    mockAudioPosition.resolveAudioBookPosition.mockResolvedValue({ audioSeconds: 40, audioTotalSeconds: 200 });
 
     await makeService().service.sweepPending(USER_ID);
 
@@ -509,7 +507,7 @@ describe('AudiobookshelfProgressPushService', () => {
   });
 
   it('pushes when the durations differ within the tolerance', async () => {
-    mockBookService.resolveAudiobookPositionForExternalSync.mockResolvedValue({ audioSeconds: 40, audioTotalSeconds: 103 });
+    mockAudioPosition.resolveAudioBookPosition.mockResolvedValue({ audioSeconds: 40, audioTotalSeconds: 103 });
 
     await makeService().service.sweepPending(USER_ID);
 
@@ -556,12 +554,9 @@ describe('AudiobookshelfProgressPushService', () => {
     });
 
     it.each([
-      ['near_end', () => mockBookService.resolveAudiobookPositionForExternalSync.mockResolvedValue({ audioSeconds: 95, audioTotalSeconds: 100 })],
-      [
-        'duration_mismatch',
-        () => mockBookService.resolveAudiobookPositionForExternalSync.mockResolvedValue({ audioSeconds: 40, audioTotalSeconds: 200 }),
-      ],
-      ['no_timeline', () => mockBookService.resolveAudiobookPositionForExternalSync.mockResolvedValue(null)],
+      ['near_end', () => mockAudioPosition.resolveAudioBookPosition.mockResolvedValue({ audioSeconds: 95, audioTotalSeconds: 100 })],
+      ['duration_mismatch', () => mockAudioPosition.resolveAudioBookPosition.mockResolvedValue({ audioSeconds: 40, audioTotalSeconds: 200 })],
+      ['no_timeline', () => mockAudioPosition.resolveAudioBookPosition.mockResolvedValue(null)],
       ['no_local_change', () => mockRepo.findAudioProgress.mockResolvedValue(undefined)],
     ])('keeps the %s guard', async (reason, arrange) => {
       arrange();

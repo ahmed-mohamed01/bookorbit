@@ -16,7 +16,7 @@ import { isPublishedDateKey, parsePublishedDateKey } from '../../common/utils/pu
 import { ProviderRegistry } from '../metadata-fetch/provider-registry';
 import { ProviderThrottleError } from '../metadata-fetch/provider-throttle.error';
 import type { MetadataProvider } from '../metadata-fetch/providers/metadata-provider';
-import { HardcoverClient } from '../metadata-fetch/providers/hardcover/hardcover.client';
+import { HardcoverCatalogClient } from './providers/hardcover-catalog.client';
 import { normalizeAudibleDomain } from '../metadata-fetch/providers/audible/normalize-audible-domain';
 import { MonitoredProviderConfigService } from './monitored-provider-config.service';
 import { isAudibleConfigured } from './providers/audible-bibliography.provider';
@@ -105,7 +105,7 @@ export class MonitoredReleaseDateLookupService {
   private readonly cache = new StatsCache({ ttlMs: LOOKUP_CACHE_TTL_MS, maxEntries: LOOKUP_CACHE_MAX_ENTRIES });
 
   constructor(
-    private readonly hardcover: HardcoverClient,
+    private readonly hardcover: HardcoverCatalogClient,
     private readonly apple: AppleBooksClient,
     private readonly audible: AudibleCatalogClient,
     private readonly amazon: AmazonProductPageClient,

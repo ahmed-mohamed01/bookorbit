@@ -20,6 +20,7 @@ import { AudibleBibliographyProvider } from '../modules/monitored/providers/audi
 import type { AuthorBibliographyProvider } from '../modules/monitored/providers/author-bibliography-provider';
 import { GoodreadsBibliographyProvider } from '../modules/monitored/providers/goodreads-bibliography.provider';
 import { HardcoverBibliographyProvider } from '../modules/monitored/providers/hardcover-bibliography.provider';
+import { HardcoverCatalogClient } from '../modules/monitored/providers/hardcover-catalog.client';
 import type { Observation, ObservationSource } from '../modules/monitored/reconcile/observation.types';
 
 // Run from the server workspace root, matching the other scripts here.
@@ -48,7 +49,7 @@ async function main(): Promise<void> {
   const providerConfig = new ProviderConfigService(drizzle(pool, { schema }));
   const config = await providerConfig.getConfig();
   const providers: AuthorBibliographyProvider[] = [
-    new HardcoverBibliographyProvider(new HardcoverClient()),
+    new HardcoverBibliographyProvider(new HardcoverCatalogClient(new HardcoverClient())),
     new GoodreadsBibliographyProvider(new GoodreadsProvider(providerConfig)),
     new AudibleBibliographyProvider(),
   ];

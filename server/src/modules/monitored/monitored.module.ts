@@ -1,3 +1,4 @@
+import { HardcoverCatalogClient } from './providers/hardcover-catalog.client';
 import { Module } from '@nestjs/common';
 
 import { AuthModule } from '../auth/auth.module';
@@ -67,6 +68,7 @@ import { AmazonProductPageClient } from './release-probe/amazon-product-page.cli
     MonitoredAuthorStoreService,
     MonitoredSchemaBootstrapService,
     MonitoredSettingsService,
+    HardcoverCatalogClient,
     HardcoverBibliographyProvider,
     GoodreadsBibliographyProvider,
     AudibleBibliographyProvider,

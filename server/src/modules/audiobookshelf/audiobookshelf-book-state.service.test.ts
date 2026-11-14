@@ -6,6 +6,8 @@ import { AudiobookshelfApiError } from './audiobookshelf-client.service';
 import type { AbsBookStateView } from './audiobookshelf.repository';
 import type { RequestUser } from '../../common/types/request-user';
 
+const mockAudioPosition = { resolveAudioBookPosition: vi.fn() };
+
 const mockRepo = {
   listBookStates: vi.fn(),
   findBookStateView: vi.fn(),
@@ -23,7 +25,6 @@ const mockClient = {
 
 const mockBookService = {
   verifyBookAccess: vi.fn(),
-  resolveAudiobookPositionForExternalSync: vi.fn(),
 };
 
 const mockSyncService = {
@@ -97,6 +98,7 @@ function makeService() {
     mockSyncService as never,
     mockProgressPush as never,
     mockCoordinator as never,
+    mockAudioPosition as never,
   );
 }
 
@@ -699,7 +701,7 @@ describe('AudiobookshelfBookStateService.getLiveSyncStatus', () => {
     });
     const remote = (currentTime: number, lastUpdate: number) => ({ progress: 0.25, isFinished: false, currentTime, lastUpdate });
     const localAt = (audioSeconds: number) =>
-      mockBookService.resolveAudiobookPositionForExternalSync.mockResolvedValue({ audioSeconds, audioTotalSeconds: 36_000 });
+      mockAudioPosition.resolveAudioBookPosition.mockResolvedValue({ audioSeconds, audioTotalSeconds: 36_000 });
 
     it('reports the local position and stays synced when both sides agree within a minute on the book clock', async () => {
       mockRepo.findAudioProgress.mockResolvedValue(localRow(4000));
@@ -712,7 +714,7 @@ describe('AudiobookshelfBookStateService.getLiveSyncStatus', () => {
         local: { percentage: 40, capturedAt: new Date(4000).toISOString() },
         divergedReason: null,
       });
-      expect(mockBookService.resolveAudiobookPositionForExternalSync).toHaveBeenCalledWith(218, 11, 100);
+      expect(mockAudioPosition.resolveAudioBookPosition).toHaveBeenCalledWith(218, 11, 100);
     });
 
     it('reports push_off when the newer local position has nowhere to go', async () => {
@@ -768,7 +770,7 @@ describe('AudiobookshelfBookStateService.getLiveSyncStatus', () => {
     it('stays synced when the local position cannot be placed on the book clock', async () => {
       mockRepo.findAudioProgress.mockResolvedValue(localRow(5000));
       mockClient.getMediaProgress.mockResolvedValue(remote(9_000, 5000));
-      mockBookService.resolveAudiobookPositionForExternalSync.mockResolvedValue(null);
+      mockAudioPosition.resolveAudioBookPosition.mockResolvedValue(null);
 
       await expect(makeService().getLiveSyncStatus(baseUser, 'abs-1')).resolves.toMatchObject({ status: 'synced', divergedReason: null });
     });
@@ -783,7 +785,7 @@ describe('AudiobookshelfBookStateService.getLiveSyncStatus', () => {
         local: { percentage: 40, capturedAt: new Date(5000).toISOString() },
         divergedReason: null,
       });
-      expect(mockBookService.resolveAudiobookPositionForExternalSync).not.toHaveBeenCalled();
+      expect(mockAudioPosition.resolveAudioBookPosition).not.toHaveBeenCalled();
     });
   });
 

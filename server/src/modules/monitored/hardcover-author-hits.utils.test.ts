@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { HardcoverAuthorSearchDocument } from '../metadata-fetch/providers/hardcover/hardcover.types';
+import type { HardcoverAuthorSearchDocument } from './providers/hardcover-catalog.types';
 import { strongestHitPerName } from './hardcover-author-hits.utils';
 
 function hit(patch: Partial<HardcoverAuthorSearchDocument> = {}): HardcoverAuthorSearchDocument {

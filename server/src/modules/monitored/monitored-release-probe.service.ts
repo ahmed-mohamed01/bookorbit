@@ -5,7 +5,7 @@ import type { MonitoredAuthorConfig, MonitoredDatePrecision, MonitoredFormat, Pr
 
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { ProviderThrottleError } from '../metadata-fetch/provider-throttle.error';
-import { HardcoverClient } from '../metadata-fetch/providers/hardcover/hardcover.client';
+import { HardcoverCatalogClient } from './providers/hardcover-catalog.client';
 import { MonitoredProviderConfigService } from './monitored-provider-config.service';
 import {
   MonitoredReleaseProbeStore,
@@ -170,7 +170,7 @@ export class MonitoredReleaseProbeService {
 
   constructor(
     private readonly store: MonitoredReleaseProbeStore,
-    private readonly hardcover: HardcoverClient,
+    private readonly hardcover: HardcoverCatalogClient,
     private readonly apple: AppleBooksClient,
     private readonly amazon: AmazonProductPageClient,
     private readonly providerConfigs: MonitoredProviderConfigService,

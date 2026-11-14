@@ -7135,16 +7135,6 @@ describe('BookService', () => {
 });
 
 describe('BookService external audio sync', () => {
-  it('exposes the audiobook timeline through the BookService boundary', async () => {
-    const audiobookEbookProgressSync = {
-      resolveAudioBookPosition: vi.fn().mockResolvedValue({ audioSeconds: 95, audioTotalSeconds: 120 }),
-    };
-    const { service } = makeService({ audiobookEbookProgressSync });
-
-    await expect(service.resolveAudiobookPositionForExternalSync(5, 12, 75)).resolves.toEqual({ audioSeconds: 95, audioTotalSeconds: 120 });
-    expect(audiobookEbookProgressSync.resolveAudioBookPosition).toHaveBeenCalledWith(5, 12, 75);
-  });
-
   it('announces a legacy audio save for outbound sync only when the write succeeds', async () => {
     const { service, bookRepo, achievementEvents } = makeService();
     bookRepo.findLibraryIdByBookId.mockResolvedValue(3);

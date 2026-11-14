@@ -1,3 +1,4 @@
+import { AudiobookshelfAudioPositionService } from './audiobookshelf-audio-position.service';
 import { BadGatewayException, BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type {
   AudiobookshelfBookState,
@@ -54,6 +55,7 @@ export class AudiobookshelfBookStateService {
     private readonly syncService: AudiobookshelfSyncService,
     private readonly progressPush: AudiobookshelfProgressPushService,
     private readonly coordinator: AudiobookshelfSyncCoordinatorService,
+    private readonly audioPosition: AudiobookshelfAudioPositionService,
   ) {}
 
   /** A small cover for an item matched to one of the user's books, fetched with the user's ABS token. */
@@ -249,7 +251,7 @@ export class AudiobookshelfBookStateService {
   /** Compares both positions on the audiobook's own clock; no comparison is possible without a resolvable local position. */
   private async positionsDiverge(bookId: number, remote: AbsMediaProgress, local: AbsAudioProgressSnapshot): Promise<boolean> {
     if (!Number.isFinite(remote.currentTime)) return false;
-    const position = await this.bookService.resolveAudiobookPositionForExternalSync(bookId, local.currentFileId, local.positionSeconds);
+    const position = await this.audioPosition.resolveAudioBookPosition(bookId, local.currentFileId, local.positionSeconds);
     if (!position) return false;
     return Math.abs(position.audioSeconds - remote.currentTime) > AUDIOBOOKSHELF_DIVERGED_THRESHOLD_SECONDS;
   }

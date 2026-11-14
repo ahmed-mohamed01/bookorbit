@@ -4,8 +4,6 @@ import { stat } from 'fs/promises';
 import type { EpubMediaOverlayPlaylist, EpubMediaOverlayPlaylistItem } from '@bookorbit/types';
 import { EDITION_SYNC_INDEX_EXTENSION, isAudioFormat } from '@bookorbit/types';
 
-import { buildAudioTimeline, filePositionToAbsoluteSeconds } from '../../common/utils/audio-timeline.utils';
-import { AudioPlayOrderService } from '../audiobook-chapters/audio-play-order.service';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { PositionConverterService } from '../position-converter/position-converter.service';
 import { buildEpubMediaOverlayPlaylistFromFile } from '../reader/epub/epub-media-overlay';
@@ -72,7 +70,6 @@ export class AudiobookEbookProgressSyncService {
   constructor(
     private readonly bookRepo: BookRepository,
     private readonly positionConverter: PositionConverterService,
-    private readonly chapters: AudioPlayOrderService,
     @Optional() @Inject(OVERLAY_SOURCE_RESOLVER) private readonly overlaySource?: OverlaySourceResolver,
   ) {}
 
@@ -456,19 +453,6 @@ export class AudiobookEbookProgressSyncService {
       positionSeconds: narration ? overlaySeconds : null,
       mediaOverlayFragment: narration ? this.itemFragment(item) : null,
       mediaOverlaySectionIndex: narration ? item.sectionIndex : null,
-    };
-  }
-
-  async resolveAudioBookPosition(
-    audioBookId: number,
-    currentFileId: number,
-    positionSeconds: number,
-  ): Promise<{ audioSeconds: number; audioTotalSeconds: number } | null> {
-    const timeline = buildAudioTimeline(await this.chapters.resolveAudioPlayOrder(audioBookId));
-    if (timeline.incomplete || !timeline.entries.some((file) => file.fileId === currentFileId)) return null;
-    return {
-      audioSeconds: filePositionToAbsoluteSeconds(timeline, currentFileId, positionSeconds),
-      audioTotalSeconds: timeline.totalSeconds,
     };
   }
 

@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { StatsCache } from '../../common/cache/stats-cache';
 import type { RequestUser } from '../../common/types/request-user';
-import type { HardcoverAuthorSearchDocument, HardcoverSearchDocument } from '../metadata-fetch/providers/hardcover/hardcover.types';
+import type { HardcoverSearchDocument } from '../metadata-fetch/providers/hardcover/hardcover.types';
+import type { HardcoverAuthorSearchDocument } from './providers/hardcover-catalog.types';
 import { MonitoredUniversalSearchService } from './monitored-universal-search.service';
 
 /** Only the hardcover half is read here, and its key is nullable so an unset config can be expressed. */
@@ -51,7 +52,7 @@ function makeService() {
     findLocalAuthorNameKeys: vi.fn().mockResolvedValue(new Set<string>()),
   };
   const providerConfigs = { forUser: vi.fn().mockResolvedValue(CONFIGURED) };
-  const service = new MonitoredUniversalSearchService(store as never, hardcover as never, providerConfigs as never);
+  const service = new MonitoredUniversalSearchService(store as never, hardcover as never, providerConfigs as never, hardcover as never);
   const cache = (service as unknown as { hardcoverCache: StatsCache }).hardcoverCache;
   const logger = (service as unknown as { logger: Logger }).logger;
   const startEndLog = vi.spyOn(logger, 'log').mockImplementation(() => undefined);

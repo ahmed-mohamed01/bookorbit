@@ -1,3 +1,4 @@
+import { AudiobookshelfAudioPositionService } from './audiobookshelf-audio-position.service';
 import { BadGatewayException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { isAudioFormat } from '@bookorbit/types';
 
@@ -9,7 +10,6 @@ import {
   type AudioPositionDerivedPayload,
   type BookProgressChangedPayload,
 } from '../achievement/achievement-events.service';
-import { BookService } from '../book/book.service';
 import { LibraryService } from '../library/library.service';
 import { UserService } from '../user/user.service';
 import { AudiobookshelfApiError, AudiobookshelfClientService } from './audiobookshelf-client.service';
@@ -81,7 +81,7 @@ export class AudiobookshelfProgressPushService implements OnModuleInit {
     private readonly achievementEvents: AchievementEventsService,
     private readonly repo: AudiobookshelfRepository,
     private readonly client: AudiobookshelfClientService,
-    private readonly bookService: BookService,
+    private readonly audioPosition: AudiobookshelfAudioPositionService,
     private readonly coordinator: AudiobookshelfSyncCoordinatorService,
     private readonly userService: UserService,
     private readonly libraryService: LibraryService,
@@ -318,7 +318,7 @@ export class AudiobookshelfProgressPushService implements OnModuleInit {
         return this.logEnd(userId, bookId, safeAbsItemId, startedAt, 'skipped', 'abs_newer');
       }
 
-      const position = await this.bookService.resolveAudiobookPositionForExternalSync(bookId, local.currentFileId, local.positionSeconds);
+      const position = await this.audioPosition.resolveAudioBookPosition(bookId, local.currentFileId, local.positionSeconds);
       if (!position) {
         await this.repo.clearPositionPushPendingIfUnchanged(userId, absItemId, bookId, local.updatedAt);
         return this.logEnd(userId, bookId, safeAbsItemId, startedAt, 'skipped', 'no_timeline');

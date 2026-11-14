@@ -1,3 +1,10 @@
+import {
+  forkLibrarySettingsNav,
+  forkAccountSettingsNav,
+  forkIntegrationSettingsNav,
+  forkMonitoredSettingsNav,
+  forkWebSerialSettingsNav,
+} from './fork-settings-nav'
 import type { Component } from 'vue'
 import {
   Activity,
@@ -7,10 +14,8 @@ import {
   BookOpen,
   Database,
   DownloadCloud,
-  FileAudio,
   FileText,
   Filter,
-  GitFork,
   Folder,
   Globe,
   Headphones,
@@ -28,7 +33,6 @@ import {
   Palette,
   PanelBottom,
   Rss,
-  RefreshCw,
   ScrollText,
   Server,
   Shield,
@@ -375,16 +379,7 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         keywords: 'file naming pattern template rename folder structure',
         isVisible: anyPermission(Permission.ManageAppSettings),
       },
-      // Fork: Convert to M4B.
-      {
-        id: 'audio-conversion',
-        routeName: 'settings-audio-convert',
-        labelKey: 'audioConvert.settings.heading',
-        descriptionKey: 'audioConvert.settings.navDescription',
-        icon: FileAudio,
-        keywords: 'audio conversion convert m4b mp3 merge chapters encode aac backup',
-        isVisible: anyPermission(Permission.ManageAppSettings),
-      },
+      ...forkLibrarySettingsNav,
       {
         id: 'maintenance',
         routeName: 'settings-maintenance',
@@ -444,15 +439,7 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
     labelKey: 'settings.nav.groups.accounts',
     icon: Link2,
     items: [
-      {
-        id: 'fork-settings',
-        routeName: 'settings-fork',
-        labelKey: 'editionSync.fork.title',
-        descriptionKey: 'editionSync.fork.description',
-        icon: GitFork,
-        keywords: 'fork edition sync read aloud timing index whisper audiobook ebook position schedule worker queue failed retry',
-        isVisible: anyPermission(Permission.EditionSync, Permission.ManageAppSettings),
-      },
+      ...forkAccountSettingsNav,
       {
         id: 'hardcover',
         routeName: 'settings-hardcover',
@@ -480,15 +467,7 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         keywords: 'storygraph shelves progress mirror',
         isVisible: anyPermission(Permission.StorygraphSync),
       },
-      {
-        id: 'audiobookshelf',
-        routeName: 'settings-audiobookshelf',
-        labelKey: 'settings.integrations.tabs.audiobookshelf',
-        descriptionKey: 'settings.integrations.providerSubtitles.audiobookshelf',
-        icon: Headphones,
-        keywords: 'audiobookshelf audiobook sync listening progress sessions',
-        isVisible: anyPermission(Permission.AudiobookshelfSync),
-      },
+      ...forkIntegrationSettingsNav,
     ],
   },
   {
@@ -550,15 +529,7 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
           },
         ],
       },
-      {
-        id: 'monitored',
-        routeName: 'settings-admin-monitored',
-        labelKey: 'settings.system.tabs.monitored',
-        descriptionKey: 'settings.nav.descriptions.monitored',
-        icon: RefreshCw,
-        keywords: 'monitored watchlist authors refresh cooldown provider throttle',
-        isVisible: anyPermission(Permission.ManageAppSettings),
-      },
+      ...forkMonitoredSettingsNav,
       {
         id: 'requests',
         routeName: 'settings-admin-requests',
@@ -568,15 +539,7 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         keywords: 'request download client qbittorrent torrent magnet path mapping hardlink',
         isVisible: (context) => context.showBookRequests !== false && anyPermission(Permission.ManageAppSettings)(context),
       },
-      {
-        id: 'web-serials',
-        routeName: 'settings-admin-web-serials',
-        labelKey: 'webSerials.admin.title',
-        descriptionKey: 'settings.nav.descriptions.webSerials',
-        icon: Globe,
-        keywords: 'web serials manga novel suwayomi lightnovel crawler lncrawl chapters volumes download',
-        isVisible: anyPermission(Permission.ManageAppSettings),
-      },
+      ...forkWebSerialSettingsNav,
       {
         id: 'admin-tts',
         routeName: 'settings-admin-tts',

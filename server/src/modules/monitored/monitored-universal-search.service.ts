@@ -1,3 +1,4 @@
+import { HardcoverCatalogClient } from './providers/hardcover-catalog.client';
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import type { HardcoverSearchBook, HardcoverUniversalSearchResult, MonitoredAuthorSearchResult, MonitoredCatalogSearchHit } from '@bookorbit/types';
 
@@ -5,7 +6,8 @@ import { StatsCache } from '../../common/cache/stats-cache';
 import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { HardcoverClient } from '../metadata-fetch/providers/hardcover/hardcover.client';
-import type { HardcoverAuthorSearchDocument, HardcoverSearchDocument } from '../metadata-fetch/providers/hardcover/hardcover.types';
+import type { HardcoverSearchDocument } from '../metadata-fetch/providers/hardcover/hardcover.types';
+import type { HardcoverAuthorSearchDocument } from './providers/hardcover-catalog.types';
 import { foldedQueryWords, normalizeMonitoredName, titleAuthorKey } from './monitored-text.utils';
 import { strongestHitPerName } from './hardcover-author-hits.utils';
 import { MonitoredProviderConfigService } from './monitored-provider-config.service';
@@ -81,6 +83,7 @@ export class MonitoredUniversalSearchService {
     private readonly store: MonitoredStoreService,
     private readonly hardcover: HardcoverClient,
     private readonly providerConfigs: MonitoredProviderConfigService,
+    private readonly hardcoverCatalog: HardcoverCatalogClient,
   ) {}
 
   searchCatalogWorks(user: RequestUser, q: string, limit: number): Promise<MonitoredCatalogSearchHit[]> {
@@ -130,7 +133,7 @@ export class MonitoredUniversalSearchService {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), HARDCOVER_SEARCH_TIMEOUT_MS);
       // surfaceFailures makes an HTTP or GraphQL failure throw, so only a real answer reaches the cache.
-      const { books, authors } = await this.hardcover
+      const { books, authors } = await this.hardcoverCatalog
         .searchBooksAndAuthors(q, apiKey, controller.signal, { surfaceFailures: true })
         .finally(() => clearTimeout(timeout));
       this.logger.log(

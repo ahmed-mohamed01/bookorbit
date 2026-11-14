@@ -2,10 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { ProviderConfigurations } from '@bookorbit/types';
 
 import { sanitizeLogValue } from '../../../common/utils/log-sanitize.utils';
-import { HardcoverClient } from '../../metadata-fetch/providers/hardcover/hardcover.client';
+import { HardcoverCatalogClient } from './hardcover-catalog.client';
 import { PROVIDER_TIMEOUT_MS } from '../../metadata-fetch/providers/provider-constants';
 import { HardcoverAuthorGoneError, HardcoverRequestError } from '../../metadata-fetch/providers/hardcover/hardcover.errors';
-import type { HardcoverAuthorContribution, HardcoverContributionBook } from '../../metadata-fetch/providers/hardcover/hardcover.types';
+import type { HardcoverAuthorContribution, HardcoverContributionBook } from './hardcover-catalog.types';
 import { normalizeText } from '../reconcile/observation-matcher';
 import { toObservationRating } from '../reconcile/observation-rating';
 import type { Observation, SeriesMembership } from '../reconcile/observation.types';
@@ -121,7 +121,7 @@ export class HardcoverBibliographyProvider implements AuthorBibliographyProvider
   readonly curated = false;
   private readonly logger = new Logger(HardcoverBibliographyProvider.name);
 
-  constructor(private readonly hardcover: HardcoverClient) {}
+  constructor(private readonly hardcover: HardcoverCatalogClient) {}
 
   isEnabled(config: ProviderConfigurations): boolean {
     return isHardcoverConfigured(config);

@@ -1,3 +1,4 @@
+import { HardcoverCatalogClient } from './providers/hardcover-catalog.client';
 import { CatalogFetchError } from './monitored-fetch-error';
 import { HardcoverRequestError } from '../metadata-fetch/providers/hardcover/hardcover.errors';
 import { ServiceUnavailableException } from '@nestjs/common';
@@ -364,7 +365,7 @@ describe('fetchCatalog provider failure guards', () => {
     vi.mocked(fetchWithThrottleModule.fetchWithThrottle).mockResolvedValue({ ok: false, status: 503 } as Response);
     return catalogService(
       {
-        hardcover: new HardcoverBibliographyProvider(new HardcoverClient()),
+        hardcover: new HardcoverBibliographyProvider(new HardcoverCatalogClient(new HardcoverClient())),
         goodreads: fakeProvider('goodreads', { enabled: false }),
         audible: fakeProvider('audible', { enabled: false }),
       },

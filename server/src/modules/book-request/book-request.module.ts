@@ -17,9 +17,12 @@ import { BookRequestBatchBootstrapService } from './book-request-batch-bootstrap
 import { BookRequestBatchRepository } from './batch/book-request-batch.repository';
 import { BatchUnitFilingService } from './batch/batch-unit-filing.service';
 import { BookRequestBatchService } from './batch/book-request-batch.service';
+import { RequestBatchImportService } from './batch/request-batch-import.service';
+import { REQUEST_IMPORT_HOOK } from './batch/request-import-hook';
 import { BookRequestAutoGrabBootstrapService } from './book-request-auto-grab-bootstrap.service';
 import { BookRequestController } from './book-request.controller';
 import { BookRequestSelfFulfilController } from './book-request-self-fulfil.controller';
+import { BookRequestSelfFulfilForkController } from './book-request-self-fulfil-fork.controller';
 import { BookRequestSourcesController } from './book-request-sources.controller';
 import { BookRequestSourcesService } from './book-request-sources.service';
 import { BookRequestDedupeService } from './book-request-dedupe.service';
@@ -99,6 +102,7 @@ import { ShelfmarkSchemaBootstrapService } from './shelfmark/shelfmark-schema-bo
   controllers: [
     BookRequestController,
     BookRequestSelfFulfilController,
+    BookRequestSelfFulfilForkController,
     BookRequestSourcesController,
     BookRequestAdminController,
     BookRequestAutomationController,
@@ -117,6 +121,7 @@ import { ShelfmarkSchemaBootstrapService } from './shelfmark/shelfmark-schema-bo
     BookRequestBatchBootstrapService,
     BookRequestBatchService,
     BatchUnitFilingService,
+    { provide: REQUEST_IMPORT_HOOK, useClass: RequestBatchImportService },
     ShelfmarkSchemaBootstrapService,
     BookRequestAttributionService,
     BookRequestDedupeService,

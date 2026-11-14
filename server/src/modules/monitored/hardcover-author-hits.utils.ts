@@ -1,4 +1,4 @@
-import type { HardcoverAuthorSearchDocument } from '../metadata-fetch/providers/hardcover/hardcover.types';
+import type { HardcoverAuthorSearchDocument } from './providers/hardcover-catalog.types';
 import { normalizeMonitoredName } from './monitored-text.utils';
 
 /**

@@ -2421,10 +2421,6 @@ export class BookService {
     return this.bookRepo.findAudioProgress(userId, bookId);
   }
 
-  async resolveAudiobookPositionForExternalSync(audioBookId: number, currentFileId: number, positionSeconds: number) {
-    return this.audiobookEbookProgressSync?.resolveAudioBookPosition(audioBookId, currentFileId, positionSeconds) ?? null;
-  }
-
   async saveAudioProgress(userId: number, bookId: number, dto: UpsertAudioProgressDto, user: RequestUser) {
     const libraryId = await this.bookRepo.findLibraryIdByBookId(bookId);
     if (libraryId === null) throw new NotFoundException(`Book ${bookId} not found`);

@@ -577,6 +577,48 @@ book-move and scanner paths the slot and flag cascade together.
 
 ## Current conflict surface (semantic, `-w`)
 
+### 2026-11-14 surface shrink after the v3.8.0 merge
+
+Measured on the v3.8.0 merge tree (`70c6a7cb0`, upstream `c77966cc5`) with
+`git diff -w --numstat --diff-filter=M upstream/main`, excluding locales, `*.md`, `*.json`, tests and
+`server/test`: **271 modified upstream source files, 11,544 semantic lines before and 10,603 after
+(-941).** With tests and locales included, the total fell from 25,939 to 24,169 lines (-1,770). The
+2026-11-14 merge review's figure of 257 files and 9,995 lines used a different filter, so compare
+against the numbers here.
+
+| Upstream file                                                  | Before | After | Where the fork code went                                                                      |
+| -------------------------------------------------------------- | ------ | ----- | --------------------------------------------------------------------------------------------- |
+| `metadata-fetch/providers/hardcover/hardcover.client.ts`       | 231    | 51    | `monitored/providers/hardcover-catalog.client.ts` calls upstream `post` (now public)          |
+| `metadata-fetch/providers/hardcover/hardcover.types.ts`        | 126    | 5     | `monitored/providers/hardcover-catalog.types.ts`                                              |
+| `book-request/fulfillment/request-import.service.ts`           | 402    | 46    | `batch/request-batch-import.service.ts` behind `@Optional() REQUEST_IMPORT_HOOK`              |
+| `book-request/fulfillment/book-request-download.repository.ts` | 81     | 7     | `book-request-download-fork.repository.ts` (base class)                                       |
+| `book-request/indexers/indexer-operation-lock.ts`              | 47     | 4     | `indexer-shared-slots.ts` (base class, own `runShared` state)                                 |
+| `book-request/book-request-self-fulfil.controller.ts`          | 57     | 2     | `book-request-self-fulfil-fork.controller.ts` (same prefix, guards and decorators)            |
+| `book-request/book-request.module.ts`                          | 51     | 56    | registers the fork controller and the import hook                                             |
+| client `router/index.ts`                                       | 79     | 16    | `router/fork-routes.ts`, spread in place                                                      |
+| client `settings/lib/settings-nav.ts`                          | 49     | 12    | `settings/lib/fork-settings-nav.ts`, spread in place                                          |
+| `book/audiobook-ebook-progress-sync.service.ts`                | 114    | 98    | `resolveAudioBookPosition` moved to `audiobookshelf/audiobookshelf-audio-position.service.ts` |
+| `book/book.service.ts`                                         | 41     | 37    | `resolveAudiobookPositionForExternalSync` pass-through deleted                                |
+
+What stays in upstream files, and why:
+
+- `hardcover.client.ts` keeps the `surfaceFailures` / `timeoutMs` options inside `post` (they
+  change how the request itself fails), `queueDelayMs`, the `book_series` line in `BOOK_FIELDS`, and
+  exports of `BOOK_FIELDS` and `releasedBy` for the fork queries. `post` takes `op: string`.
+- `request-import.service.ts` keeps one optional hook argument and two call lines (`contentPath`, then
+  `importBatch`), `claimDestination` / `placeUnit` made public, the `MAX_UNIQUE_SUFFIX_ATTEMPTS`
+  export, and the fork's single-download changes that were never batch code (`clientPath`, the
+  `readdir` check, `unreadableDownloadMessage`). With the hook absent the import path is upstream's.
+- `BookRequestDownloadRepository` and `IndexerOperationLock` now `extend` fork base classes. Their
+  fork methods are called from upstream files (`download-monitor`, `download-removal`,
+  `request-fulfillment`, `indexer-search`) that already depended on them, so injecting separate fork
+  classes would keep the same dependency for about two more lines per caller. This is a deliberate
+  exception to the `@Optional()` seam pattern, not a new coupling: removing the fork still means
+  editing those callers, exactly as before.
+
+Not attempted in this pass (ask the owner first): `useMediaOverlay.ts` as a fork copy (~430) and
+the release inspection extras in `request-fulfillment.service.ts` (~150).
+
 > **2026-10-28: the Storyteller overlay was removed** (see its section). Its 2026-09-24 note on 38
 > semantic lines across 6 upstream files is history: the `packages/types` export, the `.env.example`
 > Storyteller block and the route, nav and tab entries are gone.

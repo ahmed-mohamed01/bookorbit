@@ -1,10 +1,11 @@
+import { HardcoverCatalogClient } from './hardcover-catalog.client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { HardcoverRequestError } from './hardcover.errors';
-import { HardcoverBibliographyProvider } from '../../../monitored/providers/hardcover-bibliography.provider';
-import { classifyCatalogFetchError } from '../../../monitored/monitored-fetch-error';
+import { HardcoverRequestError } from '../../metadata-fetch/providers/hardcover/hardcover.errors';
+import { HardcoverBibliographyProvider } from './hardcover-bibliography.provider';
+import { classifyCatalogFetchError } from '../monitored-fetch-error';
 import type { ProviderConfigurations } from '@bookorbit/types';
-import { HardcoverClient } from './hardcover.client';
-import { ProviderThrottleError } from '../../provider-throttle.error';
+import { HardcoverClient } from '../../metadata-fetch/providers/hardcover/hardcover.client';
+import { ProviderThrottleError } from '../../metadata-fetch/provider-throttle.error';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -19,7 +20,7 @@ describe('Hardcover background request errors', () => {
           }),
       ),
     );
-    const client = new HardcoverClient();
+    const client = new HardcoverCatalogClient(new HardcoverClient());
     await expect(client.fetchAuthorContributions(1, 0, 'key', undefined, { surfaceFailures: true, timeoutMs: 5 })).rejects.toMatchObject({
       cause: { name: 'TimeoutError' },
     });
@@ -27,7 +28,7 @@ describe('Hardcover background request errors', () => {
 
   it('preserves Retry-After through the real HTTP wrapper', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 429, headers: { 'Retry-After': '120' } })));
-    const client = new HardcoverClient();
+    const client = new HardcoverCatalogClient(new HardcoverClient());
     const result = client.fetchAuthorContributions(1, 0, 'key', undefined, { surfaceFailures: true });
     await expect(result).rejects.toBeInstanceOf(ProviderThrottleError);
     await expect(result).rejects.toMatchObject({ retryAfterSeconds: 120 });
@@ -42,7 +43,7 @@ it.each([
     'fetch',
     vi.fn().mockImplementation(() => Promise.resolve(Response.json(body))),
   );
-  const client = new HardcoverClient();
+  const client = new HardcoverCatalogClient(new HardcoverClient());
   const request = client.fetchAuthorContributions(1, 0, 'key', undefined, { surfaceFailures: true });
   if (kind === 'unavailable') {
     await expect(request).rejects.toBeInstanceOf(HardcoverRequestError);
