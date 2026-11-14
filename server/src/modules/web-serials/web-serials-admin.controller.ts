@@ -14,6 +14,7 @@ import type {
 } from '@bookorbit/types';
 import { Permission } from '@bookorbit/types';
 
+import { InteractiveOnly } from '../../common/decorators/api-key-policy.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import type { RequestUser } from '../../common/types/request-user';
@@ -49,6 +50,7 @@ export class WebSerialsAdminController {
   }
 
   @Put('settings')
+  @InteractiveOnly()
   @RequirePermission(Permission.ManageAppSettings)
   updateSettings(@Body() dto: UpdateWebSerialSettingsDto, @CurrentUser() user: RequestUser): Promise<WebSerialSettings> {
     return this.settingsService.updateSettings(dto, user);

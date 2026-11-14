@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { monitoredDateTime, monitoredReleaseWindowStarted, parseMonitoredDate } from './release-date'
+import { monitoredReleaseWindowStarted, parseMonitoredDate } from './release-date'
 
 describe('parseMonitoredDate', () => {
   it('parses year, month and day precision without naive Date parsing', () => {
@@ -20,11 +20,6 @@ describe('parseMonitoredDate', () => {
     expect(parseMonitoredDate('not a date')).toBeNull()
     expect(parseMonitoredDate('2026-13')).toBeNull()
     expect(parseMonitoredDate('2026-02-31')).toBeNull()
-  })
-
-  it('reports the start of the period as a timestamp', () => {
-    expect(monitoredDateTime('2026')).toBe(new Date(2026, 0, 1).getTime())
-    expect(monitoredDateTime('nope')).toBeNull()
   })
 })
 

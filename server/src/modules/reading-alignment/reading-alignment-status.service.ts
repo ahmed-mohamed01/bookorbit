@@ -35,7 +35,7 @@ export class ReadingAlignmentStatusService {
   // should show right now: the existing row's status when one exists, or 'building' for a fresh kickoff.
   // The build service owns an in-flight guard, so a repeated request never starts a duplicate build.
   async requestBuild(bookId: number, user: RequestUser, force = false): Promise<AlignmentBuildResponse> {
-    await this.assertAccess(bookId, user);
+    await this.bookService.verifyBookAccess(bookId, user, 'editor');
     const pair = await this.pairService.resolveAlignmentPair(bookId, user.id);
     if (!pair) return { status: 'none' };
 
@@ -72,7 +72,7 @@ export class ReadingAlignmentStatusService {
    * half-alignment the next time the alignment is requested.
    */
   async cancelBuild(bookId: number, user: RequestUser): Promise<void> {
-    await this.assertAccess(bookId, user);
+    await this.bookService.verifyBookAccess(bookId, user, 'editor');
     const pair = await this.pairService.resolveAlignmentPair(bookId, user.id);
     if (!pair) throw new NotFoundException('This book has no alignment pair');
 

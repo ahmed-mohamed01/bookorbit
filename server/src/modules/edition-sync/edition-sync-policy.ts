@@ -34,10 +34,6 @@ export function resolveEditionSyncSettings(input: {
   return { effectiveEnabled: disabledReason === null, disabledReason, bookSyncMode: input.bookSyncMode };
 }
 
-export function normalizeEditionSyncOverride(value: string | null | undefined): EditionSyncOverride {
-  return value === 'included' || value === 'excluded' ? value : null;
-}
-
 /** Same rule as Hardcover: the toggle stores only the deviation from the user's book sync mode. */
 export function resolveEditionSyncOverrideForToggle(bookSyncMode: EditionSyncBookSyncMode, syncEnabled: boolean): EditionSyncOverride {
   if (bookSyncMode === 'selected_only') return syncEnabled ? 'included' : null;

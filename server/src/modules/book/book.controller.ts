@@ -23,6 +23,7 @@ import { createReadStream } from 'fs';
 import { stat } from 'fs/promises';
 import type { FastifyReply } from 'fastify';
 import { RouteConfig } from '@nestjs/platform-fastify';
+import { KeyReadSafe } from '../../common/decorators/api-key-policy.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { contentDispositionHeader } from '../../common/utils/content-disposition.utils';
@@ -33,7 +34,6 @@ import { ForbidPermission } from '../../common/decorators/forbid-permission.deco
 import { ResolvesMergedBook } from '../../common/decorators/resolves-merged-book.decorator';
 import { imageContentTypeFromPath } from '../../common/image-content-type';
 import type { RequestUser } from '../../common/types/request-user';
-import { RequireAppAttest } from '../app-attest/app-attest.guard';
 import { FileWriteService } from '../file-write/file-write.service';
 import { BookService } from './book.service';
 import { openDeliveryStream } from './delivery-stream';
@@ -62,7 +62,7 @@ import { UpdateBookFileDto } from './dto/update-book-file.dto';
 import { SetStatusDto } from '../user-book-status/dto/set-status.dto';
 import { Permission, AuditAction, AuditResource } from '@bookorbit/types';
 import type { BookDeletionAuditMeta } from '@bookorbit/types';
-import type { BookQuery } from '@bookorbit/types';
+import type { BookIsbnCandidates, BookQuery } from '@bookorbit/types';
 import { UpdateBookMetadataLocksDto } from '../book-metadata-lock/dto/update-book-metadata-locks.dto';
 import { BULK_COVER_REFRESHER, type BulkCoverRefresher } from './bulk-cover-refresher';
 import { UpdateReadAloudSyncSettingsDto } from './dto/update-read-aloud-sync-settings.dto';
@@ -157,6 +157,7 @@ export class BookController {
   }
 
   @Post('query')
+  @KeyReadSafe()
   globalQuery(@Body(BookQueryPipe) query: BookQuery, @CurrentUser() user: RequestUser) {
     return this.bookService.globalQuery(user, query);
   }
@@ -230,6 +231,7 @@ export class BookController {
   }
 
   @Post('export')
+  @KeyReadSafe()
   @RequirePermission(Permission.LibraryDownload)
   @ForbidPermission(Permission.DemoRestricted, 'Demo-restricted account cannot perform bulk downloads')
   async exportBooks(@Body() dto: ExportBooksDto, @CurrentUser() user: RequestUser, @Res() reply: FastifyReply) {
@@ -252,6 +254,7 @@ export class BookController {
   }
 
   @Post('metadata-export/preflight')
+  @KeyReadSafe()
   @RequirePermission(Permission.LibraryDownload)
   @ForbidPermission(Permission.DemoRestricted, 'Demo-restricted account cannot perform bulk downloads')
   metadataExportPreflight(@Body() dto: MetadataExportDto, @CurrentUser() user: RequestUser) {
@@ -259,6 +262,7 @@ export class BookController {
   }
 
   @Post('metadata-export/download')
+  @KeyReadSafe()
   @RequirePermission(Permission.LibraryDownload)
   @ForbidPermission(Permission.DemoRestricted, 'Demo-restricted account cannot perform bulk downloads')
   async downloadMetadataExport(@Body() dto: MetadataExportDto, @CurrentUser() user: RequestUser, @Res() reply: FastifyReply) {
@@ -526,7 +530,6 @@ export class BookController {
   }
 
   @Get('files/:fileId/progress')
-  @RequireAppAttest()
   async getFileProgress(@Param('fileId', ParseIntPipe) fileId: number, @CurrentUser() user: RequestUser) {
     return (
       (await this.bookService.getProgress(user.id, fileId, user)) ?? {
@@ -549,13 +552,11 @@ export class BookController {
   }
 
   @Post('files/:fileId/progress')
-  @RequireAppAttest()
   async saveFileProgress(@Param('fileId', ParseIntPipe) fileId: number, @Body() dto: SaveProgressDto, @CurrentUser() user: RequestUser) {
     await this.bookService.saveProgress(user.id, fileId, dto, user);
   }
 
   @Delete('files/:fileId/progress')
-  @RequireAppAttest()
   @HttpCode(HttpStatus.NO_CONTENT)
   async clearFileProgress(@Param('fileId', ParseIntPipe) fileId: number, @CurrentUser() user: RequestUser) {
     await this.bookService.clearFileProgress(user.id, fileId, user);
@@ -681,6 +682,12 @@ export class BookController {
   @RequirePermission(Permission.LibraryEditMetadata)
   getMetadataFromFile(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: RequestUser) {
     return this.bookService.getMetadataFromFile(id, user);
+  }
+
+  @Get(':id/isbn-candidates')
+  @RequirePermission(Permission.LibraryEditMetadata)
+  getIsbnCandidates(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: RequestUser): Promise<BookIsbnCandidates> {
+    return this.bookService.getIsbnCandidates(id, user);
   }
 
   @Post(':id/write-and-rename')

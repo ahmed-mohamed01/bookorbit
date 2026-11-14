@@ -988,6 +988,34 @@
       "when": 1794068460741,
       "tag": "0140_add_merge_job_library_ids",
       "breakpoints": true
+    },
+    {
+      "idx": 141,
+      "version": "7",
+      "when": 1794108034255,
+      "tag": "0141_add_api_keys",
+      "breakpoints": true
+    },
+    {
+      "idx": 142,
+      "version": "7",
+      "when": 1794325724032,
+      "tag": "0142_torbox_download_client",
+      "breakpoints": true
+    },
+    {
+      "idx": 143,
+      "version": "7",
+      "when": 1794455449850,
+      "tag": "0143_add_koreader_device_names",
+      "breakpoints": true
+    },
+    {
+      "idx": 144,
+      "version": "7",
+      "when": 1794461433776,
+      "tag": "0144_add_download_client_remove_completed",
+      "breakpoints": true
     }
   ]
 }

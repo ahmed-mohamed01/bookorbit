@@ -2,7 +2,8 @@ import { execFile as execFileCb, spawn } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { promisify } from 'node:util';
 
-import { mapWithConcurrency, type AudioProbe } from './audio-convert.utils';
+import { mapWithConcurrency } from '../../common/utils/batch.utils';
+import type { AudioProbe } from './audio-convert.utils';
 
 const execFile = promisify(execFileCb);
 const STDERR_MAX_CHARS = 16 * 1024;

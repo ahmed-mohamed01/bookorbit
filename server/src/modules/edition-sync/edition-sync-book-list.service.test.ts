@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 
+import { LibraryScopeService } from '../../common/library-scope/library-scope.service';
 import { BookCoverStore } from '../book-cover-store/book-cover-store.service';
 import { EditionSyncBookListService } from './edition-sync-book-list.service';
 import { resolveEditionSyncDecision } from './edition-sync-policy';
@@ -39,15 +40,17 @@ async function setup(disabledReason: string | null = null, bookSyncMode = 'all_e
   const repo = { listBooks: vi.fn().mockResolvedValue({ items: [], counts: COUNTS }) };
   const settings = { getSettings: vi.fn().mockResolvedValue({ disabledReason, bookSyncMode, effectiveEnabled: disabledReason === null }) };
   const coverStore = { facesFor: vi.fn().mockResolvedValue(new Map()) };
+  const libraryScope = { visibleIdsOrAll: vi.fn().mockResolvedValue(null) };
   const module = await Test.createTestingModule({
     providers: [
       EditionSyncBookListService,
       { provide: EditionSyncRepository, useValue: repo },
       { provide: EditionSyncSettingsService, useValue: settings },
       { provide: BookCoverStore, useValue: coverStore },
+      { provide: LibraryScopeService, useValue: libraryScope },
     ],
   }).compile();
-  return { service: module.get(EditionSyncBookListService), repo, coverStore };
+  return { service: module.get(EditionSyncBookListService), repo, coverStore, libraryScope };
 }
 
 it('short circuits when the server is disabled', async () => {
@@ -60,7 +63,23 @@ it.each(['all_eligible', 'selected_only'])('lists while user disabled with mode 
   const { service, repo } = await setup('user_disabled', mode);
   const user = { id: 1 } as never;
   expect(await service.list(user, { filter: 'queued', page: 2 })).toMatchObject({ total: 2, disabledReason: 'user_disabled' });
-  expect(repo.listBooks).toHaveBeenCalledWith(user, expect.objectContaining({ effectiveEnabled: false, bookSyncMode: mode }), 'queued', undefined, 2);
+  expect(repo.listBooks).toHaveBeenCalledWith(
+    user,
+    null,
+    expect.objectContaining({ effectiveEnabled: false, bookSyncMode: mode }),
+    'queued',
+    undefined,
+    2,
+  );
+});
+
+it('lists only the libraries the requester scope allows', async () => {
+  const { service, repo, libraryScope } = await setup();
+  libraryScope.visibleIdsOrAll.mockResolvedValue([3, 8]);
+  const user = { id: 1, isSuperuser: false } as never;
+  await service.list(user, {});
+  expect(libraryScope.visibleIdsOrAll).toHaveBeenCalledWith(user);
+  expect(repo.listBooks).toHaveBeenCalledWith(user, [3, 8], expect.anything(), 'all', undefined, 1);
 });
 
 it.each(['included', 'excluded', null])('passes an off row through while the user sync is off, keeping override %s', async (override) => {

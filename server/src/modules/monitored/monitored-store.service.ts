@@ -38,7 +38,7 @@ import type {
 } from '@bookorbit/types';
 import { countWorkClasses, isDefaultClassSelection, MONITORED_ACQUISITION_STATE_BY_REQUEST_STATUS } from '@bookorbit/types';
 
-import type { RequestUser } from '../../common/types/request-user';
+import { principalCacheKey, type RequestUser } from '../../common/types/request-user';
 import { accentInsensitiveIlike, buildSearchPattern, escapeLikePattern } from '../../common/utils/accent-insensitive-search.utils';
 import { chunk } from '../../common/utils/batch.utils';
 import { normalizeMetadataText } from '../../common/utils/metadata-text-normalize.utils';
@@ -2055,7 +2055,7 @@ export class MonitoredStoreService {
   }
 
   async countSummary(viewer: RequestUser, earliest: string, latest: string, today: string): Promise<MonitoredCounts> {
-    return this.summaryCache.get(String(viewer.id), JSON.stringify([viewer.isSuperuser, earliest, latest, today]), () =>
+    return this.summaryCache.get(String(viewer.id), principalCacheKey(viewer, JSON.stringify([viewer.isSuperuser, earliest, latest, today])), () =>
       this.loadSummary(viewer, earliest, latest, today),
     );
   }

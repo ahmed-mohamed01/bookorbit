@@ -1,9 +1,6 @@
 import { ReleaseInspectionFactsBootstrapService } from './release-inspection-facts-bootstrap.service';
 import { ReleaseInspectionFactsRepository } from './indexers/release-inspection-facts.repository';
 import { Module, forwardRef } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { JwtModule } from '@nestjs/jwt';
-import type { StringValue } from 'ms';
 
 import { AppSettingsModule } from '../app-settings/app-settings.module';
 import { AuditModule } from '../audit/audit.module';
@@ -47,6 +44,8 @@ import { DownloadContentRemovalService } from './download-clients/download-conte
 import { NzbgetAdapter } from './download-clients/adapters/nzbget.adapter';
 import { SabnzbdAdapter } from './download-clients/adapters/sabnzbd.adapter';
 import { ShelfmarkDownloadClientAdapter } from './download-clients/adapters/shelfmark.adapter';
+import { TorboxAdapter } from './download-clients/adapters/torbox.adapter';
+import { TorboxApiClient } from './download-clients/adapters/torbox.api';
 import { INDEXER_ADAPTERS } from './indexers/indexer-adapter';
 import { IndexerConfigService } from './indexers/indexer-config.service';
 import { IndexerController } from './indexers/indexer.controller';
@@ -96,13 +95,6 @@ import { ShelfmarkSchemaBootstrapService } from './shelfmark/shelfmark-schema-bo
     AuthModule,
     UserModule,
     forwardRef(() => NotificationModule),
-    JwtModule.registerAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        secret: config.getOrThrow<string>('auth.jwtSecret'),
-        signOptions: { expiresIn: config.getOrThrow<StringValue | number>('auth.jwtExpiresIn') },
-      }),
-    }),
   ],
   controllers: [
     BookRequestController,
@@ -145,6 +137,8 @@ import { ShelfmarkSchemaBootstrapService } from './shelfmark/shelfmark-schema-bo
     RtorrentAdapter,
     NzbgetAdapter,
     SabnzbdAdapter,
+    TorboxApiClient,
+    TorboxAdapter,
     ShelfmarkDownloadClientAdapter,
     {
       provide: DOWNLOAD_CLIENT_ADAPTERS,
@@ -155,8 +149,9 @@ import { ShelfmarkSchemaBootstrapService } from './shelfmark/shelfmark-schema-bo
         rtorrent: RtorrentAdapter,
         nzbget: NzbgetAdapter,
         sabnzbd: SabnzbdAdapter,
+        torbox: TorboxAdapter,
         shelfmark: ShelfmarkDownloadClientAdapter,
-      ) => [qbittorrent, transmission, deluge, rtorrent, nzbget, sabnzbd, shelfmark],
+      ) => [qbittorrent, transmission, deluge, rtorrent, nzbget, sabnzbd, torbox, shelfmark],
       inject: [
         QbittorrentAdapter,
         TransmissionAdapter,
@@ -164,6 +159,7 @@ import { ShelfmarkSchemaBootstrapService } from './shelfmark/shelfmark-schema-bo
         RtorrentAdapter,
         NzbgetAdapter,
         SabnzbdAdapter,
+        TorboxAdapter,
         ShelfmarkDownloadClientAdapter,
       ],
     },

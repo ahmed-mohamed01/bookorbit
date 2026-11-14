@@ -1,16 +1,20 @@
+import { randomBytes } from 'node:crypto';
+
 import { GUARDS_METADATA, METHOD_METADATA } from '@nestjs/common/constants';
 import { ModulesContainer } from '@nestjs/core';
 
 import { AppAttestGuard } from '../src/modules/app-attest/app-attest.guard';
+import { androidAttestClientData, appAttestBodySha256 } from '../src/modules/app-attest/app-attest.service';
+import { androidAssertion, androidChain } from '../src/modules/app-attest/test-fixtures/android-attestation-test-helpers';
 import { closeE2EContext, createE2EContext, type E2EContext } from './e2e/app-harness';
 
 const TIMEOUT = 120_000;
 const ID = '0b6c1f0e-8d3a-4c43-9f0f-2a5f2f1d7c11';
 
 /**
- * Every route only the iOS app calls. Adding or removing one means changing `AppAttestPolicy` in the
- * iOS app in the same release: a route the app does not sign is refused, and a signed route the
- * server does not guard gains nothing.
+ * Every route only the mobile apps call. Adding or removing one means changing `AppAttestPolicy` in
+ * the iOS app and `AttestedRoutes` in the Android app in the same release: a route an app does not
+ * sign is refused, and a signed route the server does not guard gains nothing.
  */
 const GUARDED_ROUTES: Array<[method: string, path: string]> = [
   ['GET', '/notebook/entries'],
@@ -41,9 +45,6 @@ const GUARDED_ROUTES: Array<[method: string, path: string]> = [
   ['DELETE', `/books/1/journal/${ID}`],
   ['POST', `/books/1/journal/${ID}/restore`],
   ['DELETE', `/books/1/journal/${ID}/permanent`],
-  ['GET', '/books/files/1/progress'],
-  ['POST', '/books/files/1/progress'],
-  ['DELETE', '/books/files/1/progress'],
   ['GET', '/user-preferences/annotation-colors'],
   ['PUT', '/user-preferences/annotation-colors'],
   ['GET', '/uploads/capabilities'],
@@ -69,6 +70,12 @@ const UNGUARDED_ROUTES: Array<[method: string, path: string]> = [
   ['GET', '/search?q=dune'],
   ['GET', '/notebook/trash'],
   ['GET', '/reading-history/summary'],
+];
+
+const THIRD_PARTY_PROGRESS_ROUTES: Array<[method: string, path: string]> = [
+  ['GET', '/books/files/1/progress'],
+  ['POST', '/books/files/1/progress'],
+  ['DELETE', '/books/files/1/progress'],
 ];
 
 describe('App Attest enforcement (e2e)', { timeout: TIMEOUT }, () => {
@@ -125,6 +132,12 @@ describe('App Attest enforcement (e2e)', { timeout: TIMEOUT }, () => {
     }
   });
 
+  it('leaves per-file progress routes open to third-party clients', async () => {
+    for (const [method, path] of THIRD_PARTY_PROGRESS_ROUTES) {
+      expect((await send(method, path)).statusCode, `${method} ${path}`).not.toBe(403);
+    }
+  });
+
   it('guards exactly the routes listed here', () => {
     let guarded = 0;
     for (const module of ctx.app.get(ModulesContainer).values()) {
@@ -140,6 +153,45 @@ describe('App Attest enforcement (e2e)', { timeout: TIMEOUT }, () => {
       }
     }
     expect(guarded).toBe(GUARDED_ROUTES.length);
+  });
+
+  it('accepts a registered Android key on a guarded route, once per nonce', async () => {
+    const challenge = (
+      await ctx.app.inject({ method: 'POST', url: '/api/v1/app-attest/challenges', headers: { authorization: `Bearer ${ctx.adminToken}` } })
+    ).json() as {
+      challenge: string;
+    };
+    // A server outside production takes the debug build's software attestation, as the emulator makes it.
+    const chain = androidChain({
+      challenge: Buffer.from(challenge.challenge),
+      packageName: 'app.bookorbit.reader.debug',
+      securityLevel: 0,
+      softwareOnly: true,
+    });
+    const registration = await ctx.app.inject({
+      method: 'POST',
+      url: '/api/v1/app-attest/android-keys',
+      headers: { authorization: `Bearer ${ctx.adminToken}`, 'content-type': 'application/json' },
+      payload: { keyId: chain.keyId, certificateChain: chain.chain.map((der) => der.toString('base64')), challenge: challenge.challenge },
+    });
+    expect(registration.statusCode).toBe(201);
+    expect(registration.json()).toEqual({ keyId: chain.keyId, environment: 'development' });
+
+    const path = '/notebook/overview';
+    const timestamp = String(Date.now());
+    const nonce = randomBytes(16).toString('base64url');
+    const clientData = androidAttestClientData('GET', `/api/v1${path}`, timestamp, appAttestBodySha256(Buffer.alloc(0)), nonce);
+    const headers = {
+      'x-bookorbit-attest-key': chain.keyId,
+      'x-bookorbit-attest-assertion': androidAssertion(clientData, chain.leafKey).toString('base64'),
+      'x-bookorbit-attest-time': timestamp,
+      'x-bookorbit-attest-nonce': nonce,
+    };
+
+    expect((await send('GET', path, headers)).statusCode).toBe(200);
+    const replay = await send('GET', path, headers);
+    expect(replay.statusCode).toBe(403);
+    expect((replay.json() as { errorCode?: string }).errorCode).toBe('APP_ATTEST_INVALID');
   });
 });
 

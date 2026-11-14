@@ -523,7 +523,7 @@ export class WebSerialsSettingsService {
   }
 
   private async assertUsableTargetLibrary(kind: WebSerialKind, libraryId: number, folderId: number | null, user: RequestUser): Promise<void> {
-    await this.libraryService.verifyUserAccess(user.id, libraryId, user.isSuperuser);
+    await this.libraryService.verifyAccess(user, libraryId);
     let library: { allowedFormats: string[] };
     try {
       library = await this.libraryService.findOne(libraryId);

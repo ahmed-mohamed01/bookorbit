@@ -79,6 +79,17 @@ describe('BookRequestDownloadRepository.existsOtherForClientKey', () => {
     expect(sql).toContain('"book_request_downloads"."status" <> \'failed\'');
     expect(queries.at(-1)?.params).toEqual(expect.arrayContaining([7, 11, 4, 'abc']));
   });
+
+  it('narrows live attempts to the given statuses', async () => {
+    const { db, queries } = createCapturingDb();
+
+    await new BookRequestDownloadRepository(db as never).existsOtherForClientKey(11, 7, 4, 'abc', ['importing', 'needs_review']);
+
+    const sql = queries.at(-1)?.sql ?? '';
+    expect(sql).toContain('"book_request_downloads"."status" in ($');
+    expect(sql).not.toContain("<> 'failed'");
+    expect(queries.at(-1)?.params).toEqual(expect.arrayContaining(['importing', 'needs_review']));
+  });
 });
 
 describe('BookRequestDownloadRepository.findTriedReleaseKeys', () => {

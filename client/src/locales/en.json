@@ -595,7 +595,8 @@
         "profile": "Profile",
         "privacy": "Privacy & Sharing",
         "notifications": "Notifications",
-        "restrictions": "Restrictions"
+        "restrictions": "Restrictions",
+        "apiKeys": "API keys"
       },
       "demoRestricted": {
         "cannotEdit": "Demo-restricted account cannot edit account settings",
@@ -1526,7 +1527,8 @@
         "magic-links": "Magic Links",
         "oidc": "OIDC / SSO",
         "tts": "Text-to-Speech",
-        "server-fonts": "Server Fonts"
+        "server-fonts": "Server Fonts",
+        "api-keys": "API keys"
       },
       "tts": {
         "title": "Providers",
@@ -3725,7 +3727,18 @@
         "retireDeviceFailed": "Failed to retire device",
         "restoreDeviceFailed": "Failed to restore device",
         "retiredDevices": "{count, plural, one {# retired device} other {# retired devices}}",
-        "retiredOnLabel": "Retired"
+        "retiredOnLabel": "Retired",
+        "renameDevice": {
+          "action": "Rename",
+          "actionLabel": "Rename {device}",
+          "title": "Rename device",
+          "description": "BookOrbit shows this name in place of the model the device reports, here and in the BookOrbit plugin on your other devices. Leave it empty to show the model again.",
+          "nameLabel": "Name",
+          "modelHint": "Reported model: {model}",
+          "saved": "Device renamed",
+          "cleared": "Device name removed",
+          "failed": "Failed to rename device"
+        }
       },
       "opds": {
         "title": "OPDS",
@@ -3833,12 +3846,14 @@
         "clientsEmpty": {
           "title": "No download client yet",
           "body": "A direct HTTP download needs no client. Connect one so BookOrbit can fetch releases delivered by torrent or Usenet too.",
-          "note": "qBittorrent, Transmission, Deluge, rTorrent, NZBGet, SABnzbd and Shelfmark are supported."
+          "note": "qBittorrent, Transmission, Deluge, rTorrent, NZBGet and SABnzbd are supported.",
+          "noteWithTorbox": "qBittorrent, Transmission, Deluge, rTorrent, NZBGet, SABnzbd, TorBox and Shelfmark are supported."
         },
         "summary": "{type} - category {category}, priority {priority}",
         "disabled": "Disabled",
         "test": "Test connection",
         "testSaveFirst": "Save your changes before testing",
+        "validateKey": "Validate key",
         "testOk": "Connected to {client} {version}",
         "testOkNoVersion": "Connected to {client}",
         "lastTestOk": "Last tested {time}: connected",
@@ -3852,6 +3867,7 @@
           "rtorrent": "rTorrent",
           "nzbget": "NZBGet",
           "sabnzbd": "SABnzbd",
+          "torbox": "TorBox",
           "shelfmark": "Shelfmark"
         },
         "color": {
@@ -3883,7 +3899,10 @@
           "passwordBrief": "Stored encrypted.",
           "apiKeyBrief": "Found in SABnzbd under Config > General. Stored encrypted.",
           "apiKeyBriefShelfmark": "The value of SHELFMARK_API_KEY on your Shelfmark (v1.4.0 or later). Stored encrypted.",
-          "useHardlinksBrief": "Imports without using the disk twice. Falls back to a copy across filesystems."
+          "torboxApiKeyBrief": "Can be found at https://torbox.app/settings?section=account. Stored encrypted.",
+          "useHardlinksBrief": "Imports without using the disk twice. Falls back to a copy across filesystems.",
+          "removeCompletedDownloads": "Remove completed downloads",
+          "removeCompletedDownloadsBrief": "Deletes the download and its files from the client once the book is imported."
         },
         "mappings": {
           "title": "Path mappings",
@@ -3938,7 +3957,9 @@
           "urlRequired": "Enter the address BookOrbit should reach this client at.",
           "mappingRequired": "Add at least one path mapping, so BookOrbit knows which directory it may import from.",
           "apiKeyRequired": "Enter the SABnzbd API key from Config > General.",
-          "apiKeyRequiredShelfmark": "Enter the SHELFMARK_API_KEY value your Shelfmark runs with."
+          "apiKeyRequiredShelfmark": "Enter the SHELFMARK_API_KEY value your Shelfmark runs with.",
+          "torboxApiKeyRequired": "Enter the TorBox API key from the TorBox account settings.",
+          "removeCompletedUnsupported": "Only Usenet clients can remove completed downloads. Torrent clients keep them for seeding."
         },
         "encryptionKeyMissing": "BOOK_REQUEST_ENCRYPTION_KEY is not set, so a client credential cannot be saved. Generate one with: openssl rand -hex 32",
         "confirmDelete": {
@@ -4382,6 +4403,7 @@
           "rtorrent": "Your own rTorrent, over XML-RPC. The category becomes its label; rTorrent's own settings decide where files go.",
           "nzbget": "Your own NZBGet. BookOrbit sends NZB files over its JSON-RPC API.",
           "sabnzbd": "Your own SABnzbd. BookOrbit sends NZB files using its API key.",
+          "torbox": "Your own TorBox cloud account. BookOrbit sends torrents to it and fetches the finished files for import.",
           "shelfmark": "Your own Shelfmark. Downloads the releases a Shelfmark indexer finds, into a folder BookOrbit can read."
         },
         "searchHealth": {
@@ -4445,7 +4467,9 @@
         "requests": "Sources, download clients, and what happens to a book once it downloads.",
         "webSerials": "Manga and web novel download connections, sources, and destinations.",
         "readerTts": "Read-aloud voice, speed, and narration defaults.",
-        "adminTts": "Text-to-speech engines available to every reader on this server."
+        "adminTts": "Text-to-speech engines available to every reader on this server.",
+        "apiKeys": "Keys that let scripts and other apps use BookOrbit as you.",
+        "adminApiKeys": "Allow API keys on this server and limit how long they last."
       },
       "backToApp": "Back to library",
       "pageDescriptions": {
@@ -5314,6 +5338,7 @@
       "whereFrom": "Where they came from",
       "theShelf": "The shelf",
       "devices": "Devices",
+      "deviceWithSource": "{source} · {device}",
       "allBooks": "All {count} books",
       "behindCount": "{count, plural, one {# behind} other {# behind}}",
       "busiestWeek": "Busiest week",
@@ -5375,6 +5400,149 @@
       "cyan": "Cyan",
       "purple": "Purple",
       "gray": "Gray"
+    }
+  },
+  "apiKeys": {
+    "errors": {
+      "load": "API keys could not be loaded.",
+      "create": "The API key could not be created.",
+      "rename": "The API key could not be renamed.",
+      "regenerate": "The API key could not be regenerated.",
+      "revoke": "The API key could not be revoked.",
+      "revokeAll": "The API keys could not be revoked.",
+      "nameRequired": "Enter a name for the key.",
+      "saveSettings": "The API key settings could not be saved."
+    },
+    "expiry": {
+      "never": "Never",
+      "days": "{count, plural, one {# day} other {# days}}"
+    },
+    "access": {
+      "read": "Read only",
+      "readHint": "Can look but not change anything.",
+      "write": "Read and write",
+      "writeHint": "Can also change things, within the permissions below."
+    },
+    "state": {
+      "active": "Active",
+      "expiring": "Expires soon",
+      "expired": "Expired",
+      "revoked": "Revoked"
+    },
+    "create": {
+      "title": "Create API key",
+      "description": "A key lets a script or another app use BookOrbit as you, with no more access than you choose here.",
+      "issueTitle": "Issue API key",
+      "issueDescription": "The key belongs to this person and acts as them, with no more access than chosen here.",
+      "name": "Name",
+      "namePlaceholder": "Backup script",
+      "nameHint": "Something that says where the key is used.",
+      "expiry": "Expires after",
+      "expiryCapped": "This server allows keys to last at most {count, plural, one {# day} other {# days}}.",
+      "access": "Access",
+      "libraries": "Libraries",
+      "librariesAll": "All my libraries, including ones added later",
+      "librariesAllTheirs": "All their libraries, including ones added later",
+      "librariesSome": "Only some libraries",
+      "librariesSelected": "{count, plural, =0 {None selected} one {# of {total} selected} other {# of {total} selected}}",
+      "librariesRequired": "Choose at least one library.",
+      "admin": "Administrator access",
+      "adminHint": "The key can do everything an administrator can.",
+      "adminWithLibraries": "Not available while the key is limited to some libraries.",
+      "adminWarning": "Anyone holding this key controls the whole server. Keep it somewhere safe and give it a short lifetime.",
+      "permissions": "Extra permissions",
+      "permissionsHint": "Reading the libraries above needs no permission. Grant only what the script needs; the key never gets more than its owner has.",
+      "noPermissions": "There are no permissions to grant.",
+      "creating": "Creating...",
+      "submit": "Create key",
+      "issueSubmit": "Issue key"
+    },
+    "reveal": {
+      "title": "Copy the key for {name}",
+      "description": "Store it in the app or script that will use it, like a password.",
+      "onceOnly": "This is the only time the key is shown. If it is lost, regenerate it.",
+      "tokenLabel": "API key",
+      "copy": "Copy",
+      "copied": "Copied",
+      "copyFailed": "The key could not be copied. Select it and copy it by hand.",
+      "copiedAnnouncement": "Key copied to the clipboard.",
+      "examplesTitle": "Using the key",
+      "examplesHint": "Send it in either header. Never put it in a link.",
+      "done": "Done"
+    },
+    "list": {
+      "label": "API keys",
+      "activeCount": "{count, plural, one {# active key} other {# active keys}}, up to {max}",
+      "limitReached": "The limit of {max} active keys has been reached. Revoke a key to create another.",
+      "adminBadge": "Administrator",
+      "permissions": "Permissions",
+      "permissionsAdmin": "Every permission",
+      "permissionsNone": "None beyond reading",
+      "permissionsCount": "{count, plural, one {# permission} other {# permissions}}",
+      "libraries": "Libraries",
+      "librariesAll": "All",
+      "librariesNone": "None left",
+      "libraryUnknown": "Library {id}",
+      "librariesCount": "{count, plural, one {# library} other {# libraries}}",
+      "created": "Created",
+      "createdBy": "{date}, issued by {username}",
+      "lastUsed": "Last used",
+      "neverUsed": "Never",
+      "lastUsedFrom": "{time} from {ip}",
+      "expires": "Expires",
+      "noExpiry": "Never",
+      "revokedOn": "Revoked {date}",
+      "renameLabel": "Key name",
+      "revokedHeading": "Revoked",
+      "revokedHint": "Revoked keys stay listed for 90 days, then are deleted."
+    },
+    "actions": {
+      "create": "Create key",
+      "issue": "Issue key",
+      "rename": "Rename",
+      "renameAria": "Rename {name}",
+      "regenerate": "Regenerate",
+      "regenerateAria": "Regenerate {name}",
+      "revoke": "Revoke",
+      "revokeAria": "Revoke {name}",
+      "revokeAll": "Revoke all"
+    },
+    "confirm": {
+      "regenerateTitle": "Regenerate {name}?",
+      "regenerateDescription": "A new key with the same access replaces this one. Anything still using the old key stops working at once.",
+      "revokeTitle": "Revoke {name}?",
+      "revokeDescription": "Anything using this key stops working at once. This cannot be undone.",
+      "revokeAllTitle": "Revoke all API keys?",
+      "revokeAllDescription": "Every script and app using one of these keys stops working at once. This cannot be undone.",
+      "revokeAllIssuedDescription": "Every key this person has stops working at once, including the ones they created. This cannot be undone."
+    },
+    "announce": {
+      "renamed": "Key renamed to {name}.",
+      "revoked": "{name} revoked.",
+      "revokedAll": "{count, plural, =0 {No keys to revoke.} one {# key revoked.} other {# keys revoked.}}"
+    },
+    "disabledNotice": "API keys are turned off on this server. Existing keys do not work until an administrator turns them back on.",
+    "ownerNotPermitted": "This person needs the Create API keys permission before a key can be issued for them. Keys they already have stop working without it.",
+    "empty": {
+      "title": "No API keys yet",
+      "hint": "Create a key to let a backup script, a home automation, or another app reach your library without your password.",
+      "issuedTitle": "No API keys",
+      "issuedHint": "Keys this person creates, or that are issued for them, appear here."
+    },
+    "admin": {
+      "section": "API keys",
+      "sectionSummary": "Keys for scripts and apps",
+      "title": "API keys",
+      "hint": "Changes here apply at once and do not need saving."
+    },
+    "server": {
+      "enabled": "Allow API keys",
+      "enabledHint": "When off, no key works and no key can be created. Keys are kept, and work again when this is turned back on.",
+      "maxLifetime": "Maximum key lifetime",
+      "maxLifetimeHint": "New keys cannot last longer than this, and keys that never expire are not offered. Existing keys keep their expiry.",
+      "noLimit": "No limit",
+      "saved": "API key settings saved.",
+      "perUserHint": "Who may create keys is set per person with the Create API keys permission, under Users."
     }
   },
   "audit": {
@@ -5515,7 +5683,8 @@
       "Series": "Series",
       "OidcIdentity": "OIDC identity",
       "MagicLinkToken": "Magic link",
-      "ReadingInsightsProfile": "Reading insights profile"
+      "ReadingInsightsProfile": "Reading insights profile",
+      "ApiKey": "API key"
     },
     "actionLabels": {
       "AuthRegister": "Register account",
@@ -5646,7 +5815,12 @@
       "EmailRecipientGroupMemberRemove": "Remove recipient from group",
       "MaintenanceMissingBooksClean": "Cleaned missing books",
       "MaintenanceBrokenCoversClean": "Cleaned broken covers",
-      "MaintenanceOrphanedCoversClean": "Cleaned orphaned cover folders"
+      "MaintenanceOrphanedCoversClean": "Cleaned orphaned cover folders",
+      "ApiKeyCreate": "Created API key",
+      "ApiKeyRename": "Renamed API key",
+      "ApiKeyRegenerate": "Regenerated API key",
+      "ApiKeyRevoke": "Revoked API key",
+      "ApiKeyRevokeAll": "Revoked all API keys"
     },
     "views": {
       "label": "Show",
@@ -5775,6 +5949,7 @@
       "skipped": "Skipped",
       "remaining": "Remaining",
       "sharingLevel": "Sharing level",
+      "viaApiKey": "Via API key",
       "sharing": {
         "private": "Not shared",
         "summary": "Summary",
@@ -6976,6 +7151,29 @@
         "pageCountLabel": "Page Count",
         "isbn13Label": "ISBN-13",
         "isbn10Label": "ISBN-10",
+        "isbnCandidates": {
+          "trigger": "Find in book",
+          "triggerLabel": "Find the ISBNs printed in this book",
+          "heading": "ISBNs printed in this book",
+          "description": "Read from the first and last pages. Books often list every edition and other titles, so choose the one that matches this file.",
+          "loading": "Reading the book…",
+          "current": "Current",
+          "isbn10": "ISBN-10 {isbn}",
+          "status": {
+            "failed": "The book could not be read. Try again.",
+            "unreadable": "This file's text cannot be searched for ISBNs.",
+            "empty": "No ISBN is printed in this book.",
+            "currentFound": "The current ISBN is printed in this book.",
+            "currentMissing": "The current ISBN is not printed in this book."
+          },
+          "editions": {
+            "ebook": "eBook",
+            "hardcover": "Hardcover",
+            "paperback": "Paperback",
+            "print": "Print",
+            "audio": "Audio"
+          }
+        },
         "durationLabel": "Duration (s)",
         "abridgedLabel": "Abridged",
         "providerIds": "Provider IDs",
@@ -8352,6 +8550,7 @@
           "colReached": "Reached",
           "colSource": "Source",
           "colFormat": "Format",
+          "sourceWithDevice": "{source} · {device}",
           "gapDays": "{count, plural, one {# day without reading} other {# days without reading}}",
           "attemptBegan": "Attempt {index} began",
           "attemptOutsideAny": "Outside any attempt",
@@ -10320,7 +10519,8 @@
       "confirm": {
         "title": "Remove this torrent?",
         "description": "The torrent stops seeding. The downloaded files stay on disk.",
-        "descriptionWithFiles": "The torrent stops seeding and its downloaded files are deleted. The imported book stays in your library."
+        "descriptionWithFiles": "The torrent stops seeding and its downloaded files are deleted. The imported book stays in your library.",
+        "descriptionRemoteDelete": "The torrent stops seeding and the download client deletes it and its files there for good. The imported book stays in your library."
       }
     },
     "pipeline": {
@@ -10377,11 +10577,14 @@
     "confirm": {
       "cancelDownloadTitle": "Cancel this download?",
       "cancelDownloadDescription": "The active transfer stops and the request stays open so another release can be chosen. Client-managed data is kept; partial direct-download staging is deleted.",
+      "cancelDownloadDescriptionRemoteDelete": "The active transfer stops and the request stays open so another release can be chosen. The download client deletes the transfer and its files there for good.",
       "cancelTitle": "Stop this request?",
       "cancelDescription": "It moves to cancelled. Nobody waiting on it will get the book.",
       "cancelDescriptionWithDownload": "The active transfer is stopped. Data in the download client is kept; partial direct-download staging is deleted.",
+      "cancelDescriptionWithDownloadRemoteDelete": "The active transfer is stopped and removed from the download client, which deletes it and its files there for good.",
       "deleteTitle": "Delete this request?",
       "deleteDescription": "The request and the record of who asked for it go for good, for everyone. Any torrent still seeding is removed from the download client with its files kept. Direct-download staging is cleaned automatically. Dismissing the request instead only hides it from your own list.",
+      "deleteDescriptionRemoteDelete": "The request and the record of who asked for it go for good, for everyone. Any torrent still seeding is removed from the download client, which deletes it and its files there for good. Dismissing the request instead only hides it from your own list.",
       "discardImportTitle": "Discard this import?",
       "discardImportDescription": "The downloaded files are removed from the Book Dock and the request is marked failed. The torrent keeps seeding; stop it separately if you want it gone.",
       "leaveTitle": "Leave this request?",
@@ -11783,7 +11986,15 @@
       "LIBRARY_BUSY": "The library is busy with a scan, move, rename or merge. Try again when it finishes.",
       "LINK_GROUP_NOT_EDITABLE": "These books are linked with a book you cannot edit.",
       "LINK_GROUP_FULL": "{max, plural, one {A link holds at most # book. Unlink some first.} other {A link holds at most # books. Unlink some first.}}",
-      "RESOLUTION_IN_PROGRESS": "A duplicate resolution is already running. Wait for it to finish."
+      "RESOLUTION_IN_PROGRESS": "A duplicate resolution is already running. Wait for it to finish.",
+      "API_KEYS_DISABLED": "API keys are turned off on this server.",
+      "API_KEY_READ_ONLY": "This API key can only read.",
+      "API_KEY_ROUTE_FORBIDDEN": "API keys cannot be used for this.",
+      "API_KEY_LIMIT_REACHED": "The limit of {limit} active API keys has been reached. Revoke one first.",
+      "API_KEY_SCOPE_EXCEEDS_OWNER": "A key cannot be given access its owner does not have.",
+      "API_KEY_EXPIRY_EXCEEDS_CAP": "Keys on this server can last at most {cap} days.",
+      "API_KEY_ADMIN_WITH_LIBRARIES": "A key with administrator access cannot be limited to some libraries.",
+      "API_KEY_OWNER_NOT_PERMITTED": "This person cannot have API keys. They need an active account and the Create API keys permission."
     }
   },
   "editionSync": {
@@ -15692,7 +15903,8 @@
       "magic-links": "Magic Links",
       "oidc": "OIDC / SSO",
       "server-fonts": "Server Fonts",
-      "tts": "Text-to-Speech"
+      "tts": "Text-to-Speech",
+      "api-keys": "API Keys"
     },
     "system": {
       "file-naming": "File Naming",
@@ -15706,7 +15918,8 @@
       "profile": "Account",
       "privacy": "Privacy & Sharing",
       "notifications": "Notifications",
-      "restrictions": "Content Restrictions"
+      "restrictions": "Content Restrictions",
+      "apiKeys": "API Keys"
     },
     "smartScopes": "Smart Scopes",
     "collections": "Collections",

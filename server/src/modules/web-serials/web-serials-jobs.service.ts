@@ -88,7 +88,7 @@ export class WebSerialJobsService {
       );
     }
 
-    await this.libraryService.verifyUserAccess(user.id, input.libraryId, user.isSuperuser);
+    await this.libraryService.verifyAccess(user, input.libraryId);
     await this.assertLibraryAcceptsKind(kind, input.libraryId);
     const config = await this.engines.requireConfig(kind);
     // lightnovel-crawler builds one book from every volume it has fetched, so a part of the novel cannot be one book.

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Permission } from '@bookorbit/types';
 
 import { AudiobookshelfController } from './audiobookshelf.controller';
+import { INTERACTIVE_ONLY_KEY } from '../../common/decorators/api-key-policy.decorator';
 import { PERMISSION_KEY } from '../../common/decorators/require-permission.decorator';
 
 const mockSettingsService = {
@@ -32,6 +33,16 @@ describe('AudiobookshelfController', () => {
 
   it('requires the AudiobookshelfSync permission at the class level', () => {
     expect(Reflect.getMetadata(PERMISSION_KEY, AudiobookshelfController)).toBe(Permission.AudiobookshelfSync);
+  });
+
+  it('keeps API keys off the routes that store, remove or send the Audiobookshelf token', () => {
+    const proto = AudiobookshelfController.prototype;
+    for (const handler of [proto.upsertSettings, proto.disconnectUser, proto.testConnection]) {
+      expect(Reflect.getMetadata(INTERACTIVE_ONLY_KEY, handler)).toBe(true);
+    }
+    for (const handler of [proto.getSettings, proto.getLibraries, proto.suggestPathMappings, proto.sync, proto.fullResync]) {
+      expect(Reflect.getMetadata(INTERACTIVE_ONLY_KEY, handler)).toBeUndefined();
+    }
   });
 
   it('getSettings delegates to the settings service with the user id', async () => {

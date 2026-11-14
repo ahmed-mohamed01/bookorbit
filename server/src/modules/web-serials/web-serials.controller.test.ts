@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { Permission } from '@bookorbit/types';
 
+import { KEY_READ_SAFE_KEY } from '../../common/decorators/api-key-policy.decorator';
 import { PERMISSION_KEY } from '../../common/decorators/require-permission.decorator';
 import type { RequestUser } from '../../common/types/request-user';
 import { WebSerialsController } from './web-serials.controller';
@@ -92,6 +93,14 @@ describe('WebSerialsController', () => {
               : Permission.WebSerialAccess;
       expect(Reflect.getMetadata(PERMISSION_KEY, proto[route] as object), route).toEqual(expected);
     }
+  });
+
+  it('lets a read-only API key read the print state, and no other POST', () => {
+    expect(Reflect.getMetadata(KEY_READ_SAFE_KEY, WebSerialsController.prototype.getPrintState)).toBe(true);
+    const readSafe = Object.getOwnPropertyNames(WebSerialsController.prototype).filter((name) =>
+      Reflect.getMetadata(KEY_READ_SAFE_KEY, (WebSerialsController.prototype as unknown as Record<string, object>)[name]),
+    );
+    expect(readSafe).toEqual(['getPrintState']);
   });
 
   it('maps the documented paths and methods', () => {

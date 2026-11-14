@@ -1,10 +1,15 @@
+import { rm } from 'node:fs/promises';
+
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { IN_FLIGHT_BOOK_REQUEST_DOWNLOAD_STATUSES } from '@bookorbit/types';
+import { ConfigService } from '@nestjs/config';
+import { DELIVERY_BY_DOWNLOAD_SOURCE, IN_FLIGHT_BOOK_REQUEST_DOWNLOAD_STATUSES, UNSETTLED_BOOK_REQUEST_DOWNLOAD_STATUSES } from '@bookorbit/types';
+import type { BookRequestDownloadStatus } from '@bookorbit/types';
 
 import { sanitizeLogValue } from '../../../common/utils/log-sanitize.utils';
 import type { BookRequestDownloadRow } from '../../../db/schema';
 import { DownloadClientConfigService } from '../download-clients/download-client-config.service';
 import { DownloadClientRegistry } from '../download-clients/download-client-registry';
+import { legacyStagedClientDir, stagedClientDir } from '../download-clients/download-client-adapter';
 import { BookRequestDownloadRepository } from './book-request-download.repository';
 import { DirectDownloadService } from './direct-download.service';
 
@@ -17,8 +22,11 @@ function leftMessage(reason: LeftReason): string {
   return reason === 'extended_torrent' ? EXTENDED_TORRENT_LEFT_MESSAGE : SHARED_TORRENT_LEFT_MESSAGE;
 }
 
+/** Statuses an attempt only reaches once the client holds every byte of it. */
+const FINISHED_DOWNLOAD_STATUSES: readonly BookRequestDownloadStatus[] = ['completed', 'importing', 'needs_review', 'imported'];
+
 export interface DownloadRemovalOutcome {
-  /** True when a download was actually handed to the client. False when there was nothing to remove. */
+  /** True when a download was actually handed to the client. False when there was nothing to remove, or a finished torrent was left seeding. */
   removed: boolean;
   /** The client's refusal, when it had one. Best-effort callers report it; strict callers throw. */
   error: string | null;
@@ -32,13 +40,17 @@ export interface DownloadRemovalOutcome {
 @Injectable()
 export class DownloadRemovalService {
   private readonly logger = new Logger(DownloadRemovalService.name);
+  private readonly appDataPath: string;
 
   constructor(
     private readonly downloads: BookRequestDownloadRepository,
     private readonly clients: DownloadClientConfigService,
     private readonly registry: DownloadClientRegistry,
     private readonly direct: DirectDownloadService,
-  ) {}
+    config: ConfigService,
+  ) {
+    this.appDataPath = config.getOrThrow<string>('storage.appDataPath');
+  }
 
   /**
    * Strict: an operator who pressed Remove wants the client's own refusal, not a shrug. Resolves
@@ -56,10 +68,11 @@ export class DownloadRemovalService {
       throw new BadRequestException('That attempt is no longer attached to a download client');
     }
 
-    const left = await this.detach(download, deleteFiles);
+    const left = await this.sharedLeft(download, deleteFiles);
+    if (!left) await this.detach(download, deleteFiles);
     const message = left ? leftMessage(left) : null;
     const wasInFlight = await this.failIfInFlight(download, message ?? `Removed from the download client by ${actor}`);
-    return { wasInFlight, leftInClient: left !== false, leftMessage: message };
+    return { wasInFlight, leftInClient: left !== null, leftMessage: message };
   }
 
   /**
@@ -73,9 +86,12 @@ export class DownloadRemovalService {
     if (!download || (download.source !== 'direct_url' && download.downloadClientId === null)) return { removed: false, error: null };
 
     let error: string | null = null;
-    let left: LeftReason | false = false;
+    let left: LeftReason | null = null;
+    let kept = false;
     try {
-      left = await this.detach(download, deleteFiles);
+      left = await this.sharedLeft(download, deleteFiles);
+      kept = left === null && (await this.keepsSeed(download, deleteFiles));
+      if (!left && !kept) await this.detach(download, deleteFiles);
     } catch (caught: unknown) {
       error = caught instanceof Error ? caught.message : String(caught);
       this.logger.warn(
@@ -93,9 +109,11 @@ export class DownloadRemovalService {
         ? `Removed by ${actor}, but the download client refused: ${error}`
         : left
           ? leftMessage(left)
-          : `Removed from the download client by ${actor}`,
+          : kept
+            ? `Stopped by ${actor}; the finished torrent was left seeding in the download client`
+            : `Removed from the download client by ${actor}`,
     );
-    return { removed: error === null && !left, error };
+    return { removed: error === null && !left && !kept, error };
   }
 
   /**
@@ -108,7 +126,7 @@ export class DownloadRemovalService {
    */
   async detachAttempt(download: BookRequestDownloadRow, deleteFiles: boolean): Promise<string | null> {
     try {
-      await this.detach(download, deleteFiles);
+      if (!(await this.sharedLeft(download, deleteFiles)) && !(await this.keepsSeed(download, deleteFiles))) await this.detach(download, deleteFiles);
       return null;
     } catch (caught: unknown) {
       const error = caught instanceof Error ? caught.message : String(caught);
@@ -134,46 +152,153 @@ export class DownloadRemovalService {
   }
 
   /**
-   * A direct file is ours to drop; a torrent is detached from the client that holds it. Resolves
-   * the reason when the torrent was left alone: the grab extended one the client already had, or another attempt shares it.
+   * A staged cloud download is a copy BookOrbit fetched for the import, not a seed: once the Book
+   * Dock owns the bytes there is nothing left to keep, so this is best-effort like the direct
+   * staging cleanup.
+   *
+   * The staged directory is keyed by client key, and a cloud client hands back its existing item
+   * when the same infohash is grabbed again, so another request's attempt can be reading the same
+   * directory. Only an attempt that has not settled still needs it: one already imported or failed
+   * would otherwise keep the last attempt from ever cleaning up. A grab that merely extended an item
+   * the client already had is not a reason to keep the copy, since the remote item is never touched
+   * here and any BookOrbit attempt that owned it is caught by the shared check.
    */
-  private async detach(download: BookRequestDownloadRow, deleteFiles: boolean): Promise<LeftReason | false> {
-    // An attempt a source refused was never handed to anything, so there is nothing holding it.
-    if (download.clientKey === null) return false;
+  async cleanupStagedClientDownload(download: BookRequestDownloadRow): Promise<void> {
+    if (download.source === 'direct_url' || download.downloadClientId === null || download.clientKey === null) return;
 
-    const shared = download.source !== 'direct_url' ? await this.sharedReason(download) : null;
+    try {
+      const config = await this.clients.resolveConfig(download.downloadClientId);
+      const adapter = this.registry.require(config.adapterType);
+      if (typeof adapter.stage !== 'function') return;
+      const shared = await this.downloads.existsOtherForClientKey(
+        download.id,
+        download.requestId,
+        download.downloadClientId,
+        download.clientKey,
+        UNSETTLED_BOOK_REQUEST_DOWNLOAD_STATUSES,
+      );
+      if (shared) {
+        this.logger.log(
+          `[book_request.staging_cleanup] [end] requestId=${download.requestId} downloadId=${download.id} clientId=${download.downloadClientId} reason=shared_torrent - staged client download kept for another attempt`,
+        );
+        return;
+      }
+      await rm(stagedClientDir(this.appDataPath, config.adapterType, config.id, download.clientKey), { recursive: true, force: true });
+      await rm(legacyStagedClientDir(this.appDataPath, config.adapterType, download.clientKey), { recursive: true, force: true });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `[book_request.staging_cleanup] [fail] requestId=${download.requestId} downloadId=${download.id} errorClass=${(error as Error)?.constructor?.name ?? 'Error'} error="${sanitizeLogValue(message)}" - staged client download files were left on disk`,
+      );
+    }
+  }
+
+  /**
+   * A finished torrent is a seed, and settling the request it was grabbed for is no reason to stop
+   * it: the files stay either way, and pulling the torrent from under them turns a private-tracker
+   * grab into a hit-and-run. The client already holds the seed goals it was added with, so it
+   * decides when seeding is done. Only an explicit removal, or consent to delete the files, takes
+   * a finished torrent out. A cloud client that stages locally is left to `detach`, which already
+   * keeps its remote copy and is what clears the local staging.
+   */
+  private async keepsSeed(download: BookRequestDownloadRow, deleteFiles: boolean): Promise<boolean> {
+    if (deleteFiles || download.clientKey === null || download.downloadClientId === null) return false;
+    if (DELIVERY_BY_DOWNLOAD_SOURCE[download.source] !== 'torrent') return false;
+    if (download.completedAt === null && !FINISHED_DOWNLOAD_STATUSES.includes(download.status as BookRequestDownloadStatus)) return false;
+    if (await this.clients.stagesLocally(download.downloadClientId)) return false;
+
+    this.logger.log(
+      `[book_request.remove_download] [end] requestId=${download.requestId} downloadId=${download.id} clientId=${download.downloadClientId} source=${download.source} kept=true - finished torrent left seeding`,
+    );
+    return true;
+  }
+
+  /**
+   * A Usenet job has nothing left to do once the Book Dock holds its import, so a client set to
+   * remove completed downloads drops the job and its folder. Best-effort: the book is already
+   * imported, and a client or filesystem that refuses leaves the job where it was, in the log.
+   */
+  async removeCompletedDownload(download: BookRequestDownloadRow): Promise<void> {
+    if (DELIVERY_BY_DOWNLOAD_SOURCE[download.source] !== 'usenet' || download.downloadClientId === null || download.clientKey === null) return;
+
+    const started = Date.now();
+    try {
+      if (!(await this.clients.removesCompletedDownloads(download.downloadClientId))) return;
+      this.logger.log(
+        `[book_request.remove_completed] [start] requestId=${download.requestId} downloadId=${download.id} clientId=${download.downloadClientId} - removing the imported download from its client`,
+      );
+      const config = await this.clients.resolveConfig(download.downloadClientId);
+      await this.registry.require(config.adapterType).remove(download.clientKey, config, { deleteFiles: true });
+      this.logger.log(
+        `[book_request.remove_completed] [end] requestId=${download.requestId} downloadId=${download.id} clientId=${download.downloadClientId} durationMs=${Date.now() - started} - imported download removed from its client`,
+      );
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `[book_request.remove_completed] [fail] requestId=${download.requestId} downloadId=${download.id} clientId=${download.downloadClientId} durationMs=${Date.now() - started} errorClass=${(error as Error)?.constructor?.name ?? 'Error'} error="${sanitizeLogValue(message)}" - the imported download was left in its client`,
+      );
+    }
+  }
+
+  /**
+   * The torrent is not this attempt's to remove when the grab extended one the client already had,
+   * or another attempt shares it. Checked before the seed rule because it is the reason that explains
+   * why the torrent stays.
+   */
+  private async sharedLeft(download: BookRequestDownloadRow, deleteFiles: boolean): Promise<LeftReason | null> {
+    if (download.source === 'direct_url' || download.clientKey === null) return null;
+    const shared = await this.sharedReason(download, deleteFiles);
     if (shared) {
       this.logger.log(
         `[book_request.remove] [end] requestId=${download.requestId} downloadId=${download.id} clientId=${download.downloadClientId ?? 'none'} reason=${shared} - torrent left in the client`,
       );
-      return shared;
     }
+    return shared;
+  }
+
+  /** A direct file is ours to drop; a torrent is detached from the client that holds it. */
+  private async detach(download: BookRequestDownloadRow, deleteFiles: boolean): Promise<void> {
+    // An attempt a source refused was never handed to anything, so there is nothing holding it.
+    if (download.clientKey === null) return;
 
     const isDirect = download.source === 'direct_url';
-    // There is no swarm to preserve on a staged file, so its bytes always go with the attempt.
-    const shouldDeleteFiles = isDirect || deleteFiles;
+    const stagesLocally = !isDirect && download.downloadClientId !== null && (await this.clients.stagesLocally(download.downloadClientId));
 
     if (isDirect) {
-      await this.direct.remove(download.clientKey, { deleteFiles: shouldDeleteFiles });
+      await this.direct.remove(download.clientKey, { deleteFiles: true });
     } else {
       const config = await this.clients.resolveConfig(download.downloadClientId as number);
       const adapter = this.registry.require(config.adapterType);
-      await adapter.remove(download.clientKey, config, { deleteFiles: shouldDeleteFiles });
+      if (stagesLocally && !deleteFiles) {
+        await adapter.cancelStaging?.(download.clientKey, config);
+        await rm(stagedClientDir(this.appDataPath, config.adapterType, config.id, download.clientKey), { recursive: true, force: true });
+        await rm(legacyStagedClientDir(this.appDataPath, config.adapterType, download.clientKey), { recursive: true, force: true });
+      } else {
+        await adapter.remove(download.clientKey, config, { deleteFiles: deleteFiles });
+      }
     }
 
     this.logger.log(
-      `[book_request.remove_download] [end] requestId=${download.requestId} downloadId=${download.id} clientId=${download.downloadClientId ?? 'direct'} source=${download.source} deleteFiles=${shouldDeleteFiles} - download removed`,
+      `[book_request.remove_download] [end] requestId=${download.requestId} downloadId=${download.id} clientId=${download.downloadClientId ?? 'direct'} source=${download.source} deleteFiles=${isDirect || deleteFiles} - download removed`,
     );
-    return false;
   }
 
   /** The torrent is not this attempt's to remove when it extended one that was already there, or another attempt also uses it. */
-  private async sharedReason(download: BookRequestDownloadRow): Promise<LeftReason | null> {
+  private async sharedReason(download: BookRequestDownloadRow, deleteFiles: boolean): Promise<LeftReason | null> {
+    const stagesLocally = download.downloadClientId !== null && (await this.clients.stagesLocally(download.downloadClientId));
+    if (stagesLocally && !deleteFiles) return null;
     if ((await this.downloads.findExtension(download.id)).extendsExisting) return 'extended_torrent';
     if (download.downloadClientId === null || download.clientKey === null) return null;
-    return (await this.downloads.existsOtherForClientKey(download.id, download.requestId, download.downloadClientId, download.clientKey))
-      ? 'shared_torrent'
-      : null;
+    const shared = stagesLocally
+      ? await this.downloads.existsOtherForClientKey(
+          download.id,
+          download.requestId,
+          download.downloadClientId,
+          download.clientKey,
+          UNSETTLED_BOOK_REQUEST_DOWNLOAD_STATUSES,
+        )
+      : await this.downloads.existsOtherForClientKey(download.id, download.requestId, download.downloadClientId, download.clientKey);
+    return shared ? 'shared_torrent' : null;
   }
 
   /**

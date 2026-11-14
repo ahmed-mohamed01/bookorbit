@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { EDITION_SYNC_BOOK_LIST_PAGE_SIZE, type EditionSyncBookListQuery, type EditionSyncBookListResponse } from '@bookorbit/types';
 
+import { LibraryScopeService } from '../../common/library-scope/library-scope.service';
 import type { RequestUser } from '../../common/types/request-user';
 import { BookCoverStore } from '../book-cover-store/book-cover-store.service';
 import { EditionSyncSettingsService } from './edition-sync-settings.service';
@@ -16,6 +17,7 @@ export class EditionSyncBookListService {
     private readonly repo: EditionSyncRepository,
     private readonly settings: EditionSyncSettingsService,
     private readonly coverStore: BookCoverStore,
+    private readonly libraryScope: LibraryScopeService,
   ) {}
 
   async list(user: RequestUser, query: EditionSyncBookListQuery): Promise<EditionSyncBookListResponse> {
@@ -27,7 +29,8 @@ export class EditionSyncBookListService {
       return { items: [], counts: empty, total: 0, page, pageSize: EDITION_SYNC_BOOK_LIST_PAGE_SIZE, disabledReason: settings.disabledReason };
     }
     const startedAt = Date.now();
-    const result = await this.repo.listBooks(user, settings, filter, query.q, page);
+    const libraryIds = await this.libraryScope.visibleIdsOrAll(user);
+    const result = await this.repo.listBooks(user, libraryIds, settings, filter, query.q, page);
     const faces = await this.coverStore.facesFor(result.items.map((row) => row.bookId));
     const items = result.items.map((row) => ({
       ...row,

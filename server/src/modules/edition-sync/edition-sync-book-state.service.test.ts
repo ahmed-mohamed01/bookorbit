@@ -47,6 +47,7 @@ function setup(
   const queue = { ensureValid: vi.fn().mockResolvedValue(true) };
   const scheduler = { poke: vi.fn(), nextRunAt: vi.fn().mockReturnValue(new Date('2026-11-02T02:00:00Z')) };
   const overlaySource = { invalidate: vi.fn() };
+  const libraryScope = { visibleIdsOrAll: vi.fn().mockResolvedValue([2, 5]) };
   const alignmentStatus = { hasReadyAlignment: vi.fn().mockResolvedValue(options.readyAlignment ?? false) };
   const service = new EditionSyncBookStateService(
     repo as never,
@@ -55,9 +56,10 @@ function setup(
     queue as never,
     scheduler as never,
     overlaySource as never,
+    libraryScope as never,
     options.withoutAlignmentStatus ? undefined : (alignmentStatus as never),
   );
-  return { service, repo, books, queue, scheduler, overlaySource, alignmentStatus };
+  return { service, repo, books, queue, scheduler, overlaySource, libraryScope, alignmentStatus };
 }
 
 describe('EditionSyncBookStateService.getState', () => {
@@ -249,10 +251,11 @@ describe('retryFailed', () => {
     expect(scheduler.poke).not.toHaveBeenCalled();
   });
   it('returns the count, clears cached positions and wakes the scheduler', async () => {
-    const { service, repo, scheduler } = setup();
+    const { service, repo, scheduler, libraryScope } = setup();
     await service.getState(user, 10);
     expect(await service.retryFailed(user)).toEqual({ retried: 3 });
-    expect(repo.retryFailedBooks).toHaveBeenCalledWith(user, expect.objectContaining({ effectiveEnabled: true }), expect.any(Date));
+    expect(libraryScope.visibleIdsOrAll).toHaveBeenCalledWith(user);
+    expect(repo.retryFailedBooks).toHaveBeenCalledWith(user, [2, 5], expect.objectContaining({ effectiveEnabled: true }), expect.any(Date));
     expect(scheduler.poke).toHaveBeenCalledTimes(1);
     await service.getState(user, 10);
     expect(repo.findQueuePosition).toHaveBeenCalledTimes(2);

@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   computeWindowUntil,
   isWindowOpen,
-  normalizeEditionSyncOverride,
   resolveEditionSyncDecision,
   resolveEditionSyncIndexStatus,
   resolveEditionSyncOverrideForToggle,
@@ -64,12 +63,6 @@ describe('resolveEditionSyncOverrideForToggle', () => {
     ['selected_only', false, null],
   ] as const)('%s toggled %s stores %s', (mode, enabled, expected) => {
     expect(resolveEditionSyncOverrideForToggle(mode, enabled)).toBe(expected);
-  });
-
-  it('normalizes unknown stored values to no override', () => {
-    expect(normalizeEditionSyncOverride('included')).toBe('included');
-    expect(normalizeEditionSyncOverride('bogus')).toBeNull();
-    expect(normalizeEditionSyncOverride(null)).toBeNull();
   });
 });
 

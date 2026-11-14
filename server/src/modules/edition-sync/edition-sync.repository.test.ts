@@ -199,11 +199,11 @@ describe('settings books list', () => {
   const noFilters = { includeTagIds: [], includeGenreIds: [], excludeTagIds: [], excludeGenreIds: [] };
   const allEligible: EditionSyncBookListSettings = { effectiveEnabled: true, bookSyncMode: 'all_eligible' };
 
-  function listQueries(user: object, settings = allEligible, q?: string) {
+  function listQueries(user: object, settings = allEligible, q?: string, libraryIds: number[] | null = null) {
     const db = drizzle.mock({ schema: dbSchema });
     const execute = vi.fn().mockResolvedValue({ rows: [] });
     Object.assign(db, { execute });
-    return new EditionSyncRepository(db as never).listBooks(user as never, settings, 'queued', q, 3).then(() => {
+    return new EditionSyncRepository(db as never).listBooks(user as never, libraryIds, settings, 'queued', q, 3).then(() => {
       expect(execute).toHaveBeenCalledTimes(2);
       return execute.mock.calls.map(([query]) => new PgDialect().sqlToQuery(query));
     });
@@ -217,9 +217,8 @@ describe('settings books list', () => {
     );
     for (const query of [page, counts]) {
       expect(query.sql).toContain('eligible_files AS');
-      expect(query.sql).toContain('user_library_access');
+      expect(query.sql).not.toMatch(/a\.user_id = \$\d/);
       expect(query.sql).toContain('o.user_id =');
-      expect(query.params).toContain(isSuperuser);
       expect(query.params).toContain('%100\\%\\_\\\\%');
       expect(query.sql).not.toContain('OFFSET 256');
     }
@@ -228,6 +227,27 @@ describe('settings books list', () => {
     expect(counts.sql.slice(counts.sql.lastIndexOf('SELECT count(*)')).match(/count\(\*\) FILTER/g)).toHaveLength(4);
     expect(counts.sql).not.toContain('LIMIT');
     expect(page.sql).toContain("ESCAPE '\\'");
+  });
+
+  it('adds no library filter when the scope sees every library', async () => {
+    const [page, counts] = await listQueries({ id: 17, isSuperuser: false, contentFilters: noFilters }, allEligible, undefined, null);
+    for (const query of [page, counts]) expect(query.sql).not.toContain('b.library_id IN');
+  });
+
+  it('limits rows and counts to the libraries of a library-limited key', async () => {
+    const [page, counts] = await listQueries({ id: 17, isSuperuser: false, contentFilters: noFilters }, allEligible, undefined, [3, 8]);
+    for (const query of [page, counts]) {
+      expect(query.sql).toMatch(/AND b\.library_id IN \(\$\d+, \$\d+\)/);
+      expect(query.params).toEqual(expect.arrayContaining([3, 8]));
+    }
+  });
+
+  it('matches nothing when the scope has no libraries', async () => {
+    const [page, counts] = await listQueries({ id: 17, isSuperuser: false, contentFilters: noFilters }, allEligible, undefined, []);
+    for (const query of [page, counts]) {
+      expect(query.sql).toContain('AND false');
+      expect(query.sql).not.toContain('b.library_id IN');
+    }
   });
 
   it('filters the page and counts each filter from the same status sets', async () => {
@@ -281,6 +301,7 @@ it('selects monitoring fields with status guards and ranks the queue once', asyn
   const execute = vi.fn().mockResolvedValue({ rows: [] });
   await new EditionSyncRepository({ execute } as never).listBooks(
     { id: 1, isSuperuser: true } as never,
+    null,
     { effectiveEnabled: true, bookSyncMode: 'all_eligible' },
     'all',
     undefined,
@@ -309,6 +330,7 @@ it.each(['all', 'queued', 'problems', 'synced', 'off'] as const)('only ranks the
   const execute = vi.fn().mockResolvedValue({ rows: [] });
   await new EditionSyncRepository({ execute } as never).listBooks(
     { id: 1, isSuperuser: true } as never,
+    null,
     { effectiveEnabled: true, bookSyncMode: 'all_eligible' },
     filter,
     undefined,
@@ -338,13 +360,15 @@ it('retries failed books in the shared user scope with one set update', async ()
   expect(
     await repo.retryFailedBooks(
       { id: 17, isSuperuser: false, contentFilters: { includeTagIds: [], includeGenreIds: [], excludeTagIds: [4], excludeGenreIds: [] } } as never,
+      [6],
       { effectiveEnabled: true, bookSyncMode: 'selected_only' },
       new Date(),
     ),
   ).toBe(3);
   expect(execute).toHaveBeenCalledTimes(1);
   const query = sqlText(execute.mock.calls[0][0]);
-  expect(query).toContain('user_library_access');
+  expect(query).not.toContain('user_library_access');
+  expect(query).toContain('b.library_id IN');
   expect(query).toContain('book_tags');
   expect(query).toContain('eligible_files AS');
   expect(query).toContain('CASE WHEN NOT enabled');

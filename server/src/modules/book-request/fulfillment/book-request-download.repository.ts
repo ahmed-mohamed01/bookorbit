@@ -8,7 +8,7 @@ import {
   IN_FLIGHT_BOOK_REQUEST_DOWNLOAD_STATUSES,
   UNSETTLED_BOOK_REQUEST_DOWNLOAD_STATUSES,
 } from '@bookorbit/types';
-import type { BookRequestDownloadStatus, IndexerColor } from '@bookorbit/types';
+import type { BookRequestDownloadStatus, DownloadClientType, IndexerColor } from '@bookorbit/types';
 
 import { DB } from '../../../db';
 import * as schema from '../../../db/schema';
@@ -44,6 +44,7 @@ export interface BookRequestDownloadJoinedRow {
   download: BookRequestDownloadRow;
   downloadClientName: string | null;
   downloadClientColor: IndexerColor | null;
+  downloadClientAdapterType: DownloadClientType | null;
   /** Null once the indexer row is gone, or for a magnet somebody pasted by hand. */
   indexerName: string | null;
   indexerColor: IndexerColor | null;
@@ -135,8 +136,17 @@ export class BookRequestDownloadRepository {
     return row?.contentFileCount ?? null;
   }
 
-  /** Whether a different request still has a live (not failed) attempt on the same torrent on the same client. */
-  async existsOtherForClientKey(downloadId: number, requestId: number, downloadClientId: number, clientKey: string): Promise<boolean> {
+  /**
+   * Whether a different request still has a live (not failed) attempt on the same torrent on the same
+   * client. `statuses` narrows "live" to attempts in one of those statuses.
+   */
+  async existsOtherForClientKey(
+    downloadId: number,
+    requestId: number,
+    downloadClientId: number,
+    clientKey: string,
+    statuses?: readonly BookRequestDownloadStatus[],
+  ): Promise<boolean> {
     const [row] = await this.db
       .select({ id: bookRequestDownloads.id })
       .from(bookRequestDownloads)
@@ -146,7 +156,7 @@ export class BookRequestDownloadRepository {
           eq(bookRequestDownloads.clientKey, clientKey),
           sql`${bookRequestDownloads.id} <> ${downloadId}`,
           sql`${bookRequestDownloads.requestId} <> ${requestId}`,
-          sql`${bookRequestDownloads.status} <> 'failed'`,
+          statuses ? inArray(bookRequestDownloads.status, [...statuses]) : sql`${bookRequestDownloads.status} <> 'failed'`,
         ),
       )
       .limit(1);
@@ -450,6 +460,7 @@ export class BookRequestDownloadRepository {
         download: bookRequestDownloads,
         downloadClientName: downloadClients.name,
         downloadClientColor: downloadClients.color,
+        downloadClientAdapterType: downloadClients.adapterType,
         indexerName: sql<string | null>`coalesce(${requestIndexers.managerMetadata}->>'displayName', ${requestIndexers.name})`,
         indexerColor: requestIndexers.color,
       })
@@ -473,6 +484,7 @@ export class BookRequestDownloadRepository {
         download: bookRequestDownloads,
         downloadClientName: downloadClients.name,
         downloadClientColor: downloadClients.color,
+        downloadClientAdapterType: downloadClients.adapterType,
         indexerName: sql<string | null>`coalesce(${requestIndexers.managerMetadata}->>'displayName', ${requestIndexers.name})`,
         indexerColor: requestIndexers.color,
       })

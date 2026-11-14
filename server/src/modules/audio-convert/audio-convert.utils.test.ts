@@ -10,7 +10,6 @@ import {
   buildFfmetadata,
   chooseAutoCodec,
   exactStartsMs,
-  mapWithConcurrency,
   outputPathFor,
   perFileChapters,
   plainStartsSeconds,
@@ -170,26 +169,6 @@ describe('spreadBookmarkPositions', () => {
         { userId: 1, positionSeconds: 5, unique: false },
       ]),
     ).toEqual([5, 5]);
-  });
-});
-
-describe('mapWithConcurrency', () => {
-  it('never runs more than the limit at once and keeps the order', async () => {
-    let running = 0;
-    let peak = 0;
-    const out = await mapWithConcurrency(
-      Array.from({ length: 20 }, (_, i) => i),
-      4,
-      async (value) => {
-        running++;
-        peak = Math.max(peak, running);
-        await new Promise((resolve) => setTimeout(resolve, 2));
-        running--;
-        return value * 2;
-      },
-    );
-    expect(peak).toBe(4);
-    expect(out).toEqual(Array.from({ length: 20 }, (_, i) => i * 2));
   });
 });
 

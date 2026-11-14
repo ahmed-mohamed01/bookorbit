@@ -10,6 +10,7 @@ import { BookCoverStore } from '../src/modules/book-cover-store/book-cover-store
 import { DashboardWidgetService } from '../src/modules/dashboard/dashboard-widget.service';
 import { DashboardWidgetRepository } from '../src/modules/dashboard/dashboard-widget.repository';
 import { LibraryService } from '../src/modules/library/library.service';
+import { LibraryScopeService } from '../src/common/library-scope/library-scope.service';
 import type { RequestUser } from '../src/common/types/request-user';
 
 import { UserBookStatusService } from '../src/modules/user-book-status/user-book-status.service';
@@ -68,7 +69,7 @@ describe('Reading attempt cache integration', () => {
         {
           provide: UserStatisticsRepository,
           useValue: {
-            resolveActivityLibraryIds: vi.fn().mockResolvedValue([1, 2]),
+            resolveActivityLibraryIds: vi.fn().mockReturnValue([1, 2]),
             getActivitySessionPage: vi.fn().mockResolvedValue([]),
             getActivityActiveDays: vi.fn().mockResolvedValue([]),
             getActivityAvailableYears: vi.fn().mockResolvedValue([2025, 2026]),
@@ -92,6 +93,7 @@ describe('Reading attempt cache integration', () => {
         { provide: ReadingAttemptRepository, useValue: fake.repo },
         { provide: DashboardWidgetRepository, useValue: { countCompletedBooks, getCurrentlyReadingBooks: vi.fn().mockResolvedValue({ books: [] }) } },
         { provide: LibraryService, useValue: { findAccessibleLibraryIds: vi.fn().mockResolvedValue([1, 2]) } },
+        { provide: LibraryScopeService, useValue: { visibleIdsOrAll: vi.fn().mockResolvedValue([1, 2]) } },
       ],
     }).compile();
     await module.init();

@@ -12,14 +12,6 @@ const saving = ref(false)
 const error = ref<number | null>(null)
 let pending: Promise<void> | null = null
 
-export function resetAudioConvertSettings(): void {
-  settings.value = null
-  loading.value = false
-  saving.value = false
-  error.value = null
-  pending = null
-}
-
 export function useAudioConvertSettings() {
   const { hasPermission } = usePermissions()
   const { setState } = useAudioConvertEnabled({ autoload: false })

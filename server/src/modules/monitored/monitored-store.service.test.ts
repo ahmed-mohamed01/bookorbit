@@ -2361,4 +2361,26 @@ describe('MonitoredStoreService summary cache', () => {
       clock.mockRestore();
     }
   });
+
+  it('keeps an API key and its owner apart in the summary cache, and clears both for the owner', async () => {
+    const db = { insert: vi.fn().mockReturnThis(), values: vi.fn().mockReturnThis(), onConflictDoUpdate: vi.fn().mockResolvedValue(undefined) };
+    const store = new MonitoredStoreService(db as never, {} as never);
+    const load = vi.spyOn(store as never, 'loadSummary').mockResolvedValue({ authors: 1 } as never);
+    const owner = { id: 1, isSuperuser: false, permissions: [] } as unknown as RequestUser;
+    const key = {
+      ...owner,
+      credential: { kind: 'api_key', keyId: 9, keyName: 'k', audience: 'api', access: 'read', libraryIds: [3], ownerIsSuperuser: false },
+    } as RequestUser;
+    const read = (user: RequestUser) => store.countSummary(user, '2026-01-01', '2027-01-01', '2026-11-06');
+    await read(owner);
+    await read(key);
+    await read(owner);
+    await read(key);
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(load.mock.calls[1]![0]).toBe(key);
+    await store.upsertBook({ ownerUserId: 1 } as never);
+    await read(owner);
+    await read(key);
+    expect(load).toHaveBeenCalledTimes(4);
+  });
 });

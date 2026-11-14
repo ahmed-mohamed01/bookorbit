@@ -2,7 +2,7 @@ import { isTransientRegexFailure, RegexMetadataService } from '../metadata/regex
 import type { RegexMetadataConfig, RegexMetadataPreview } from '@bookorbit/types';
 import { ConflictException, Inject, Injectable, Logger, NotFoundException, OnApplicationBootstrap, Optional } from '@nestjs/common';
 import { createHash } from 'crypto';
-import { mapWithConcurrency } from '../../common/utils/batch.utils';
+import { mapWithConcurrency, pipelineWithConcurrency } from '../../common/utils/batch.utils';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { audioBookPercentageAt, compareBookFilePaths, remapAudioBookPosition, type AudioTrackSpan } from '../../common/utils/audio-track-order.utils';
 import { compareAudioTracks } from '../../common/utils/book-media.utils';
@@ -30,6 +30,7 @@ import { BookMetadataFetchOrchestratorService } from '../book-metadata-fetch/boo
 import { BookCoverStore } from '../book-cover-store/book-cover-store.service';
 import { selectEmbeddedCoverSources } from '../book-cover-store/cover-sources';
 import { CoverSlotReconciler } from '../metadata/cover-slot-reconciler.service';
+import type { AudioChapterProbe } from '../metadata/extractors/audio.extractor';
 import { MetadataService } from '../metadata/metadata.service';
 import { NotificationService } from '../notification/notification.service';
 import type { BookFile } from '../../db/schema';
@@ -154,6 +155,8 @@ const BOOK_MISSING_NOTIFY_DEBOUNCE_MS = 5000;
 const WATCHER_NOTIFY_DEBOUNCE_MS = 30_000;
 const LIBRARY_ROOTS_CACHE_MS = 5_000;
 const TARGETED_BOOK_SCAN_MAX_CONCURRENCY = 8;
+// Books a full scan reads at once; each reads up to AUDIO_DURATION_PROBE_CONCURRENCY files itself.
+const FULL_SCAN_BOOK_READ_CONCURRENCY = 4;
 const MISSING_FILE_STAT_BATCH_SIZE = 50;
 const AUDIO_DURATION_PROBE_CONCURRENCY = 4;
 const MEDIA_OVERLAY_REPAIR_CONCURRENCY = 4;
@@ -234,6 +237,19 @@ interface ProcessedFileResult {
 
 interface UpsertBookResult extends BookEntry {
   created: boolean;
+}
+
+/** A candidate whose book and files are registered, waiting for its files to be read. */
+interface RegisteredCandidate {
+  candidate: BookCandidate;
+  book: UpsertBookResult;
+  counts: { added: number; updated: number };
+  retainedFileIds: Set<number>;
+  registeredFiles: RegisteredFile[];
+  contentFiles: RegisteredFile[];
+  winner: RegisteredFile | null;
+  formerOwnerBookIds: Set<number>;
+  mediaOverlayChanged: boolean;
 }
 
 interface ProcessCandidateResult {
@@ -760,7 +776,8 @@ export class ScannerService implements OnApplicationBootstrap {
     await this.scannerRepo.failAllRunningJobs('Server restarted during scan');
   }
 
-  async startScan(libraryId: number, triggeredBy: ScanTriggeredBy, options: ScanOptions = {}): Promise<{ jobId: number }> {
+  async startScan(libraryId: number, triggeredBy: ScanTriggeredBy, options: ScanOptions | boolean = {}): Promise<{ jobId: number }> {
+    options = typeof options === 'boolean' ? { forceFullScan: options } : options;
     const event = 'scanner.start_scan';
     const startedAt = Date.now();
     const reextractMetadata = options.reextractMetadata ?? false;
@@ -1990,41 +2007,46 @@ export class ScannerService implements OnApplicationBootstrap {
       const seenBookIds = new Set<number>();
       const allRetainedFileIds = new Set<number>();
       const coverBookIds = new Set<number>();
-      const importedBookIds: number[] = [];
+      // Indexed by candidate so metadata fetches queue in discovery order, whichever read finished first.
+      const importedBookIdByCandidate: Array<number | undefined> = [];
       const candidateFolderPaths = new Set(candidates.map((candidate) => candidate.folderPath));
 
-      for (const candidate of candidates) {
-        const result = await this.processCandidate(
-          candidate,
-          libraryId,
-          libraryFolderId,
-          maps,
-          formatPriority,
-          metadataPrecedence,
-          addedAtSource,
-          isFirstScan,
-          candidateFolderPaths,
-          organizationMode,
-          reextractMetadata,
-          regexContext,
-        );
-        seenBookIds.add(result.bookId);
-        if (result.created) importedBookIds.push(result.bookId);
-        for (const fid of result.retainedFileIds) allRetainedFileIds.add(fid);
-        for (const coverBookId of result.coverBookIds) coverBookIds.add(coverBookId);
-        counts.addedCount += result.added;
-        counts.updatedCount += result.updated;
-        if (result.becameVisible) {
-          this.bufferBookForEmit(libraryId, result.bookId);
-          this.flushBookEmitBuffer(libraryId);
-        }
+      await pipelineWithConcurrency(
+        candidates,
+        FULL_SCAN_BOOK_READ_CONCURRENCY,
+        (candidate) =>
+          this.registerCandidate(
+            candidate,
+            libraryId,
+            libraryFolderId,
+            maps,
+            formatPriority,
+            addedAtSource,
+            isFirstScan,
+            candidateFolderPaths,
+            reextractMetadata,
+          ),
+        async (registered, _candidate, index) => {
+          const result = await this.readCandidateFiles(registered, libraryId, metadataPrecedence, organizationMode, regexContext);
+          seenBookIds.add(result.bookId);
+          if (result.created) importedBookIdByCandidate[index] = result.bookId;
+          for (const fid of result.retainedFileIds) allRetainedFileIds.add(fid);
+          for (const coverBookId of result.coverBookIds) coverBookIds.add(coverBookId);
+          counts.addedCount += result.added;
+          counts.updatedCount += result.updated;
+          if (result.becameVisible) {
+            this.bufferBookForEmit(libraryId, result.bookId);
+            this.flushBookEmitBuffer(libraryId);
+          }
 
-        const entry = this.scanJobStore.increment(libraryId, { processed: 1 });
-        if (entry && this.scanJobStore.shouldEmit(entry)) {
-          this.emitFromStore(libraryId, jobId, 'running');
-          this.scanJobStore.markEmitted(entry);
-        }
-      }
+          const entry = this.scanJobStore.increment(libraryId, { processed: 1 });
+          if (entry && this.scanJobStore.shouldEmit(entry)) {
+            this.emitFromStore(libraryId, jobId, 'running');
+            this.scanJobStore.markEmitted(entry);
+          }
+        },
+      );
+      const importedBookIds = importedBookIdByCandidate.filter((bookId): bookId is number => bookId !== undefined);
 
       await this.repairMissingAudioDurations(knownFiles, unchangedDirs, seenBookIds);
       await this.repairUncheckedMediaOverlays(knownFiles, unchangedDirs, seenBookIds);
@@ -2251,6 +2273,36 @@ export class ScannerService implements OnApplicationBootstrap {
     reextractMetadata = false,
     regexContext?: RegexScanContext,
   ): Promise<ProcessCandidateResult> {
+    const registered = await this.registerCandidate(
+      candidate,
+      libraryId,
+      libraryFolderId,
+      maps,
+      formatPriority,
+      addedAtSource,
+      isFirstScan,
+      candidateFolderPaths,
+      reextractMetadata,
+    );
+    return this.readCandidateFiles(registered, libraryId, metadataPrecedence, organizationMode, regexContext);
+  }
+
+  /**
+   * Phases 1 and 2 of a candidate: its book row, every file registered against it, and its primary
+   * file. These resolve identity (moves, merges, transfers) through the scan's shared lookup maps,
+   * so a full scan runs them for one candidate at a time, in discovery order.
+   */
+  private async registerCandidate(
+    candidate: BookCandidate,
+    libraryId: number,
+    libraryFolderId: number,
+    maps: ScanLookupMaps,
+    formatPriority: string[],
+    addedAtSource: AddedAtSource,
+    isFirstScan: boolean,
+    candidateFolderPaths: Set<string>,
+    reextractMetadata = false,
+  ): Promise<RegisteredCandidate> {
     const { bookByFolderPath, booksByParentDir, fileByPath, fileByIno } = maps;
     const counts = { added: 0, updated: 0 };
     const fileCounts: ScanCounts = { addedCount: 0, updatedCount: 0, missingCount: 0 };
@@ -2367,6 +2419,23 @@ export class ScannerService implements OnApplicationBootstrap {
 
     await this.scannerRepo.updateBookPrimaryFile(book.id, winner?.fileId ?? null);
 
+    return { candidate, book, counts, retainedFileIds, registeredFiles, contentFiles, winner, formerOwnerBookIds, mediaOverlayChanged };
+  }
+
+  /**
+   * Phase 3 of a candidate: reads its files (tags, cover, lengths, chapters) into the book it was
+   * registered as. It writes that book's own rows and name tables that take concurrent inserts, so a
+   * full scan reads several candidates at once.
+   */
+  private async readCandidateFiles(
+    registered: RegisteredCandidate,
+    libraryId: number,
+    metadataPrecedence: string[],
+    organizationMode: OrganizationMode,
+    regexContext?: RegexScanContext,
+  ): Promise<ProcessCandidateResult> {
+    const { candidate, book, counts, retainedFileIds, registeredFiles, contentFiles, winner, formerOwnerBookIds, mediaOverlayChanged } = registered;
+
     // Phase 3: Metadata extraction, source-precedence driven, triggered by new/reassigned/changed metadata sources.
     //
     // Design rules:
@@ -2465,10 +2534,13 @@ export class ScannerService implements OnApplicationBootstrap {
 
     // 3c: Write per-file duration for new, changed, or historically unprobed audio files.
     //     Including the winner ensures aggregateAudioDuration has accurate data for the total.
+    //     Each probe also read the file's chapters, which 3e reuses instead of probing again.
+    const audioProbes = new Map<string, AudioChapterProbe>();
     if (audioFilesNeedingDuration.length > 0 && !selfWriteInProgress) {
       await mapWithConcurrency(audioFilesNeedingDuration, AUDIO_DURATION_PROBE_CONCURRENCY, async (audioFile) => {
         try {
-          await this.metadataService.extractAudioFileDuration(book.id, audioFile.absolutePath);
+          const probe = await this.metadataService.measureAudioFile(book.id, audioFile.absolutePath);
+          if (probe) audioProbes.set(audioFile.absolutePath, probe);
         } catch (err) {
           this.logger.warn(
             `[scanner.extract_audio_duration] [fail] bookId=${book.id} path="${sanitizeLogValue(audioFile.absolutePath)}" errorClass=${err instanceof Error ? err.name : 'Error'} error="${sanitizeLogValue(err instanceof Error ? err.message : String(err))}" - audio duration extraction failed`,
@@ -2502,7 +2574,7 @@ export class ScannerService implements OnApplicationBootstrap {
       // length, so stored chapters still look complete; rebuild them anyway.
       const filesChanged = (shouldExtractMetadata || changedAudioFiles.length > 0 || audioOrderChanged) && !metadataCameFromProvider;
       try {
-        await this.metadataService.extractMergedAudioChapters(book.id, orderedAudioPaths, { filesChanged });
+        await this.metadataService.extractMergedAudioChapters(book.id, orderedAudioPaths, { filesChanged, probes: audioProbes });
       } catch (err) {
         this.logger.warn(
           `[scanner.merge_audio_chapters] [fail] bookId=${book.id} files=${orderedAudioPaths.length} errorClass=${err instanceof Error ? err.name : 'Error'} error="${sanitizeLogValue(err instanceof Error ? err.message : String(err))}" - audio chapter merge failed`,

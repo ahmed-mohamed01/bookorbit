@@ -178,6 +178,57 @@ breaks it). Each is a one-line catch-up; make it rather than carry a red test.
 
 ### Merge log
 
+- **2026-11-14, upstream v3.8.0 + 6 (`c77966cc5`), 18 commits.** 17 conflicted files. Upstream added
+  API keys (`api_keys`, `ApiKeyPolicyGuard`, `@InteractiveOnly` / `@KeyReadSafe`, `principalCacheKey`)
+  and routed every requester library decision through `LibraryScopeService`; the TorBox cloud client
+  (local staging, `stagedClientDir`); removal of finished usenet jobs after import; keeping finished
+  torrents seeding when a request settles; named KOReader devices on sessions and highlights; ISBN
+  candidates read from a book's text; and a concurrent scanner (`registerCandidate` +
+  `readCandidateFiles` under `pipelineWithConcurrency`, audio lengths read in-process).
+  Shelfmark and TorBox coexist in every `DownloadClientType` map (Shelfmark stages nothing, never
+  deletes remote, never removes completed); upstream's generic apiKey check replaced the fork's
+  Shelfmark credential branch. `download-removal.service.ts` runs the fork's shared/extended-torrent
+  rule, then upstream's `keepsSeed`, then `detach`; an explicit `removeAttempt` applies only the
+  shared rule, as upstream lets an operator remove a finished torrent; `cleanupStagedClientDownload`
+  keeps a staged copy another unsettled attempt shares (`existsOtherForClientKey` gained a
+  `statuses` argument). The scanner threads `reextractMetadata` into `registerCandidate` and
+  `organizationMode` into `readCandidateFiles`, keeps the `processCandidate` wrapper for the fork's
+  call sites, and keeps `!selfWriteInProgress` on upstream's new audio probe block. `auth.service.ts`
+  keeps the parallel session/user lookup and returns upstream's `credential`. The read-aloud worker
+  `Dockerfile` is upstream's again (same Debian upgrade fix as `be24a4255`).
+  API-key adaptation of fork code: `LibraryService.verifyUserAccess` -> `verifyAccess` in Web Serials;
+  the edition sync book list, count and retry take `LibraryScopeService.visibleIdsOrAll` (the
+  `WANTING_USERS_CTE` fan-out is on upstream's `library-scope-guard.test.ts` allow-list); the Watchlist
+  summary cache uses `principalCacheKey`; `MonitoredGateway` authenticates through upstream's
+  `AuthenticatorService.authenticateSocket` and refuses API-key sockets (fetch events carry the
+  owner's full scope), so `MonitoredModule` no longer registers its own `JwtModule`. Fork routes are
+  stricter than upstream's own credential routes: `@InteractiveOnly` on ABS settings PATCH/DELETE and
+  `test-connection` (it would send the stored token to a caller-chosen host) and Web Serials settings
+  PUT; `@KeyReadSafe` on the Web Serials `print-state` POST. `isbn13To10` in the Hardcover edition
+  evidence moved to upstream's `isbn10FromIsbn13` (which also checks the ISBN-13 checksum).
+  Migration 0142 recreated `download_clients_adapter_type_chk`; the Shelfmark row was parked (dev DB
+  ledger 143 -> 147). The 156 fork routes (fork controllers plus fork routes in upstream's cover,
+  scanner and book-request controllers) are in the authorization matrix gap baseline
+  `uncovered-routes.json`, taken from the live labels, so upstream's "every route is inventoried or in
+  the gap baseline" check passes. Run the suite with an empty `SETUP_BOOTSTRAP_TOKEN` (the dev `.env`
+  token makes setup fail with 403). Known leftovers: the suite's "proves allow-path for each
+  permission" test fails, as it has since the fork added `audiobookshelf_sync`, `edition_sync` and
+  `web_serial_access`, because no inventoried route carries them. A post-merge review (five lenses,
+  verified by a senior pass, fixed, re-reviewed) then tightened fork access to upstream's levels:
+  the sidecar-first single-book cover re-extract, `re-extract-metadata` and alignment build/cancel
+  now need editor access to the library. A staging client (TorBox) is no longer held back by the
+  shared-torrent rule when an earlier request already imported the same item. `startScan` accepts
+  upstream's boolean `forceFullScan` again, so upstream e2e specs run the full scan they ask for.
+  Dead fork helpers went (`resetAudioConvertSettings`, `normalizeEditionSyncOverride`,
+  `monitoredDateTime`, `NarrationTimeline.clipStart`, the audio-convert `mapWithConcurrency`, now
+  upstream's), and the unused `clientsEmpty.note` string is upstream's again. Deferred: moving the
+  Hardcover client additions, batch import, `useMediaOverlay`, release inspection, router/nav
+  entries and book-request repository methods into fork-owned files; the edition sync overlay
+  permission check by principal; content filters on Watchlist match writes; the 409 for a fully
+  locked single-book cover re-extract. Read-only keys can call `GET /monitored/authors/:id` and
+  `GET /monitored/releases`, which run an idempotent availability repair that writes match rows;
+  `audio-convert.utils.test.ts` "keeps a run that prints nothing" is timing-flaky under the full suite.
+
 - **2026-11-08, upstream v3.7.0 (`6f8f5f481`), 33 commits.** Upstream added book merge
   (`BookConsolidationService`, the `book_merges` redirect), the rTorrent client, Book Dock joins, its
   own `AppChart` and static cache headers. The fork's perf work moved onto upstream's where they did

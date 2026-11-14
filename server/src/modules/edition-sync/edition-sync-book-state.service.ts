@@ -7,6 +7,7 @@ import type {
   ReadAloudWorkerStage,
 } from '@bookorbit/types';
 
+import { LibraryScopeService } from '../../common/library-scope/library-scope.service';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import type { RequestUser } from '../../common/types/request-user';
 import { BookService } from '../book/book.service';
@@ -37,6 +38,7 @@ export class EditionSyncBookStateService {
     private readonly queue: EditionSyncQueueService,
     private readonly scheduler: EditionSyncSchedulerService,
     private readonly overlaySource: EditionSyncOverlaySourceService,
+    private readonly libraryScope: LibraryScopeService,
     @Optional() private readonly alignmentStatus?: ReadingAlignmentStatusService,
   ) {}
 
@@ -84,7 +86,8 @@ export class EditionSyncBookStateService {
     try {
       const settings = await this.settings.getSettings(user);
       if (settings.disabledReason === 'server_disabled') throw new BadRequestException(EDITION_SYNC_SERVER_DISABLED_MESSAGE);
-      retried = await this.repo.retryFailedBooks(user, settings, new Date());
+      const libraryIds = await this.libraryScope.visibleIdsOrAll(user);
+      retried = await this.repo.retryFailedBooks(user, libraryIds, settings, new Date());
       this.positionCache.clear();
       this.scheduler.poke();
       this.logger.log(

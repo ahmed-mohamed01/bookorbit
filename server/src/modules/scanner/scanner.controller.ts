@@ -65,6 +65,7 @@ export class ScannerController {
 
   @Post('libraries/:id/re-extract-metadata')
   @RequirePermission(Permission.ManageLibraries)
+  @RequireLibraryAccess('editor')
   @HttpCode(HttpStatus.ACCEPTED)
   reExtractMetadata(@Param('id', ParseIntPipe) libraryId: number) {
     return this.scannerService.startScan(libraryId, 'manual', { reextractMetadata: true });

@@ -1,31 +1,25 @@
-import { Logger, UnauthorizedException } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
+import { ForbiddenException, Logger, UnauthorizedException } from '@nestjs/common';
 import { OnGatewayConnection, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Permission, type AuthenticationMethod, type MonitoredAuthorItem } from '@bookorbit/types';
-import { AuthService } from '../auth/auth.service';
+import { Permission, type MonitoredAuthorItem } from '@bookorbit/types';
+import { apiKeyCredentialOf } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { rejectSocketConnection } from '../../common/utils/ws-auth.utils';
 import { wsCorsOrigin } from '../../common/utils/ws-cors.utils';
+import { AuthenticatorService } from '../auth/authenticator.service';
 
 @WebSocketGateway({ namespace: '/monitored', cors: { origin: wsCorsOrigin() } })
 export class MonitoredGateway implements OnGatewayConnection {
   @WebSocketServer() server: Server;
   private readonly logger = new Logger(MonitoredGateway.name);
-  constructor(
-    private readonly jwtService: JwtService,
-    private readonly authService: AuthService,
-  ) {}
+  constructor(private readonly authenticator: AuthenticatorService) {}
 
   async handleConnection(client: Socket): Promise<void> {
     try {
-      const token = client.handshake.auth?.token as string | undefined;
-      if (!token) throw new UnauthorizedException('No token provided');
-      const payload = this.jwtService.verify<{ sub: number; ver: number; sid?: number; amr?: AuthenticationMethod }>(token, {
-        algorithms: ['HS256'],
-      });
-      const user = await this.authService.validateSessionUser(payload.sub, payload.ver, payload.amr ?? 'legacy', payload.sid);
-      if (!user) throw new UnauthorizedException('User not found or token revoked');
+      const user = await this.authenticator.authenticateSocket(client);
+      // Fetch events are built with the owner's full scope, so a narrower key must not receive them.
+      const apiKey = apiKeyCredentialOf(user);
+      if (apiKey) throw new ForbiddenException(`API key ${apiKey.keyId} cannot subscribe to watchlist events`);
       if (!user.isSuperuser && !user.permissions.includes(Permission.BookRequestAccess)) {
         throw new UnauthorizedException('Missing book request access');
       }

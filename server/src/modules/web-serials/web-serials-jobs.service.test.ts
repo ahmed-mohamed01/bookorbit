@@ -34,7 +34,7 @@ describe('WebSerialJobsService createJob', () => {
 
     const job = await service.createJob(input, USER);
 
-    expect(libraryService.verifyUserAccess).toHaveBeenCalledWith(7, 3, false);
+    expect(libraryService.verifyAccess).toHaveBeenCalledWith(USER, 3);
     expect(repo.createJob).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: 7,
@@ -66,7 +66,7 @@ describe('WebSerialJobsService createJob', () => {
 
   it('rejects a library the user cannot reach before any engine call', async () => {
     const { service, libraryService, client } = setup();
-    libraryService.verifyUserAccess.mockRejectedValue(new ForbiddenException('No access to this library'));
+    libraryService.verifyAccess.mockRejectedValue(new ForbiddenException('No access to this library'));
 
     await expect(service.createJob(input, USER)).rejects.toBeInstanceOf(ForbiddenException);
     expect(client.getSeries).not.toHaveBeenCalled();

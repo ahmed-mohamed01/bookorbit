@@ -1,6 +1,12 @@
+import { LIBRARY_ACCESS_KEY } from '../../common/decorators/require-library-access.decorator';
+
 import { ScannerController } from './scanner.controller';
 
 describe('ScannerController', () => {
+  it('requires library editor access to re-extract metadata', () => {
+    expect(Reflect.getMetadata(LIBRARY_ACCESS_KEY, ScannerController.prototype.reExtractMetadata)).toBe('editor');
+  });
+
   it('delegates scan requests to ScannerService.startScan with manual trigger', () => {
     const scannerService = { startScan: vi.fn().mockResolvedValue({ jobId: 11 }), refreshCovers: vi.fn() } as any;
     const controller = new ScannerController(scannerService, {} as any);

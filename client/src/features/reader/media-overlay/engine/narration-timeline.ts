@@ -139,11 +139,6 @@ export class NarrationTimeline {
     return segment.end ?? this.#fileDurations.get(segment.href) ?? null
   }
 
-  clipStart(clip: NarrationClip): number {
-    const segment = this.segments[clip.segment]!
-    return segment.start + clip.begin - segment.begin
-  }
-
   position(segment: NarrationSegment, fileTime: number): number {
     return segment.start + Math.min(Math.max(fileTime - segment.begin, 0), segment.duration)
   }

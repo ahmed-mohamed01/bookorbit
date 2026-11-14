@@ -22,7 +22,7 @@ function setup(options: Parameters<typeof setupServices>[0] = {}) {
 describe('WebSerialsCatalogService capabilities', () => {
   it('reports availability from saved settings and the library the user can add to', async () => {
     const { service, libraryService } = setup();
-    libraryService.verifyUserAccess.mockImplementation(async (_user: number, libraryId: number) => {
+    libraryService.verifyAccess.mockImplementation(async (_user: unknown, libraryId: number) => {
       if (libraryId === 5) throw new ForbiddenException('No access');
     });
 
@@ -34,7 +34,7 @@ describe('WebSerialsCatalogService capabilities', () => {
 
   it('hides the admin folder of a library the user cannot add to', async () => {
     const { service, libraryService } = setup();
-    libraryService.verifyUserAccess.mockRejectedValue(new ForbiddenException('No access'));
+    libraryService.verifyAccess.mockRejectedValue(new ForbiddenException('No access'));
 
     await expect(service.getCapabilities(USER)).resolves.toMatchObject({
       manga: { defaultLibraryId: null, targetFolderId: null },

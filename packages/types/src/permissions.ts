@@ -20,6 +20,7 @@ export enum Permission {
   AudiobookshelfSync = "audiobookshelf_sync",
   EditionSync = "edition_sync",
   OpdsAccess = "opds_access",
+  ApiKeys = "api_keys",
 
   // Email
   EmailSend = "email_send",
@@ -61,6 +62,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   [Permission.AudiobookshelfSync]: "Audiobookshelf sync",
   [Permission.EditionSync]: "Edition sync",
   [Permission.OpdsAccess]: "OPDS access",
+  [Permission.ApiKeys]: "Create API keys",
   [Permission.EmailSend]: "Send by email",
   [Permission.ManageEmail]: "Manage email",
   [Permission.ManageLibraries]: "Manage libraries",
@@ -76,6 +78,12 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   [Permission.ViewAuditLog]: "View audit log",
   [Permission.NotificationAccess]: "Notifications",
 };
+
+/**
+ * Permissions that take something away rather than grant it. An API key keeps every one its owner
+ * holds, whatever the key was granted: intersecting them away would let a key escape a restriction.
+ */
+export const RESTRICTIVE_PERMISSIONS: readonly Permission[] = [Permission.DemoRestricted];
 
 /**
  * Permissions that are inert without another one, and the dependency is enforced when permissions

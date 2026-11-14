@@ -54,7 +54,6 @@ describe('narration timeline', () => {
     expect(at.segment.href).toBe('a11.mp4')
     expect(at.fileTime).toBe(7)
     expect(timeline.clipIn(at.segment, at.fileTime).text).toBe('c11.xhtml#b1')
-    expect(timeline.clipStart(timeline.clips[4]!)).toBe(33)
     expect(timeline.position(at.segment, 12)).toBe(35)
     expect(timeline.locate(1000)!.fileTime).toBe(5)
     expect(timeline.locate(-5)!.fileTime).toBe(0)

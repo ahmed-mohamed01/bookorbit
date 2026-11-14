@@ -1,6 +1,7 @@
 import { Permission } from '@bookorbit/types';
 import { Body, Controller, Delete, Get, Patch, Post } from '@nestjs/common';
 
+import { InteractiveOnly } from '../../common/decorators/api-key-policy.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import type { RequestUser } from '../../common/types/request-user';
@@ -29,16 +30,19 @@ export class AudiobookshelfController {
   }
 
   @Patch('settings')
+  @InteractiveOnly()
   upsertSettings(@CurrentUser() user: RequestUser, @Body() dto: UpsertAudiobookshelfSettingsDto) {
     return this.settingsService.upsertSettings(user.id, dto);
   }
 
   @Delete('settings')
+  @InteractiveOnly()
   disconnectUser(@CurrentUser() user: RequestUser) {
     return this.settingsService.disconnectUser(user.id);
   }
 
   @Post('test-connection')
+  @InteractiveOnly()
   testConnection(@CurrentUser() user: RequestUser, @Body() dto: TestAudiobookshelfConnectionDto) {
     return this.settingsService.testConnection(user.id, dto);
   }

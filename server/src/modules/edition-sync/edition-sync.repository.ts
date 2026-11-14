@@ -166,6 +166,16 @@ function listFilterPredicate(filter: EditionSyncBookListFilter): SQL {
   return filter === 'all' ? sql`true` : statusIn(LIST_FILTER_STATUSES[filter]);
 }
 
+/** Limits `b` to the requester's visible libraries; null adds no filter and an empty list matches nothing. */
+function libraryFilterSql(libraryIds: readonly number[] | null): SQL {
+  if (libraryIds === null) return sql``;
+  if (libraryIds.length === 0) return sql`AND false`;
+  return sql`AND b.library_id IN (${sql.join(
+    libraryIds.map((id) => sql`${id}`),
+    sql`, `,
+  )})`;
+}
+
 const LIST_FILTER_COUNTS_SQL = sql.join(
   [
     sql`count(*)::int AS "all"`,
@@ -199,8 +209,16 @@ export class EditionSyncRepository {
 
   constructor(@Inject(DB) private readonly db: Db) {}
 
-  async listBooks(user: RequestUser, settings: EditionSyncBookListSettings, filter: EditionSyncBookListFilter, q: string | undefined, page: number) {
-    const base = this.listScope(user, settings, q);
+  /** `libraryIds` is the requester's visible library list from `LibraryScopeService`; null means every library. */
+  async listBooks(
+    user: RequestUser,
+    libraryIds: readonly number[] | null,
+    settings: EditionSyncBookListSettings,
+    filter: EditionSyncBookListFilter,
+    q: string | undefined,
+    page: number,
+  ) {
+    const base = this.listScope(user, libraryIds, settings, q);
     const positioned =
       filter === 'queued' || filter === 'all'
         ? sql`queue_positions AS MATERIALIZED (${queueQuery(sql`b.id, row_number() OVER (ORDER BY ${QUEUE_ORDER_SQL})::int AS position`)}), positioned AS (
@@ -243,7 +261,7 @@ export class EditionSyncRepository {
     };
   }
 
-  private listScope(user: RequestUser, settings: EditionSyncBookListSettings, q?: string): SQL {
+  private listScope(user: RequestUser, libraryIds: readonly number[] | null, settings: EditionSyncBookListSettings, q?: string): SQL {
     const contentFilterClauses = !user.isSuperuser && user.contentFilters ? buildContentFilterClauses(user.contentFilters, this.db) : [];
     // The content filter clauses reference the unaliased "books" table, so they run in their own scope.
     const contentFilterSql =
@@ -259,7 +277,7 @@ export class EditionSyncRepository {
       LEFT JOIN edition_sync_book_overrides o ON o.book_id = b.id AND o.user_id = ${user.id}
       LEFT JOIN edition_sync_book_index i ON i.book_id = b.id
       WHERE ${BOOK_PLACEMENT_SQL}
-        AND (${user.isSuperuser} OR EXISTS (SELECT 1 FROM user_library_access a WHERE a.user_id = ${user.id} AND a.library_id = b.library_id))
+        ${libraryFilterSql(libraryIds)}
         ${q ? sql`AND ${title} ILIKE ${`%${escapeLikePattern(q)}%`} ESCAPE '\\'` : sql``}
         ${contentFilterSql}
     ), states AS (
@@ -271,9 +289,9 @@ export class EditionSyncRepository {
     )`;
   }
 
-  async retryFailedBooks(user: RequestUser, settings: EditionSyncBookListSettings, at: Date): Promise<number> {
+  async retryFailedBooks(user: RequestUser, libraryIds: readonly number[] | null, settings: EditionSyncBookListSettings, at: Date): Promise<number> {
     const result = await this.db.execute<{ retried: number }>(sql`
-      ${this.listScope(user, settings)}, updated AS (
+      ${this.listScope(user, libraryIds, settings)}, updated AS (
         UPDATE edition_sync_book_index i
         SET pinned_at = ${at}, attempt_count = 0, retry_requested = true, updated_at = ${at}
         FROM states s WHERE s.id = i.book_id AND s.status = 'failed' AND i.status = 'failed' AND NOT i.retry_requested

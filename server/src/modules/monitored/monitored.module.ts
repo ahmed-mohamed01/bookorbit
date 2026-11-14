@@ -1,7 +1,4 @@
 import { Module } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { JwtModule } from '@nestjs/jwt';
-import type { StringValue } from 'ms';
 
 import { AuthModule } from '../auth/auth.module';
 import { AuthorsModule } from '../authors/authors.module';
@@ -47,13 +44,6 @@ import { AmazonProductPageClient } from './release-probe/amazon-product-page.cli
 @Module({
   imports: [
     AuthModule,
-    JwtModule.registerAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        secret: config.getOrThrow<string>('auth.jwtSecret'),
-        signOptions: { expiresIn: config.getOrThrow<StringValue | number>('auth.jwtExpiresIn') },
-      }),
-    }),
     AppSettingsModule,
     AuthorsModule,
     BookConsolidationModule,

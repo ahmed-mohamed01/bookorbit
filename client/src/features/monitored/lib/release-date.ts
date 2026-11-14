@@ -29,10 +29,6 @@ export function parseMonitoredDate(value: string | null | undefined, precision: 
   return { date, precision: claimed }
 }
 
-export function monitoredDateTime(value: string | null | undefined): number | null {
-  return parseMonitoredDate(value)?.date.getTime() ?? null
-}
-
 export function monitoredReleaseWindowStarted(
   value: string | null | undefined,
   precision: MonitoredDatePrecision | null | undefined,

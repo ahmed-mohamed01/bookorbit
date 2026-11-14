@@ -33,7 +33,7 @@ function build(row: Record<string, unknown> | undefined = undefined) {
     findLibraryFolders: vi.fn().mockResolvedValue([{ id: 5, path: '/lib' }]),
   };
   const libraryService = {
-    verifyUserAccess: vi.fn().mockResolvedValue(undefined),
+    verifyAccess: vi.fn().mockResolvedValue(undefined),
     findOne: vi.fn().mockResolvedValue({ allowedFormats: [] }),
   };
   const suwayomi = { health: vi.fn().mockResolvedValue(HEALTH), listSources: vi.fn().mockResolvedValue([]) };
@@ -264,7 +264,7 @@ describe('WebSerialsSettingsService', () => {
 
       await service.updateSettings({ manga: { targetLibraryId: 3 } }, ADMIN);
 
-      expect(libraryService.verifyUserAccess).toHaveBeenCalledWith(1, 3, true);
+      expect(libraryService.verifyAccess).toHaveBeenCalledWith(ADMIN, 3);
       expect(repo.upsertSettings.mock.calls[0]![0]).toMatchObject({ mangaTargetLibraryId: 3, mangaTargetFolderId: null });
     });
 
@@ -297,7 +297,7 @@ describe('WebSerialsSettingsService', () => {
 
     it('propagates a library access refusal and a missing library', async () => {
       const { service, libraryService } = build();
-      libraryService.verifyUserAccess.mockRejectedValueOnce(new ForbiddenException());
+      libraryService.verifyAccess.mockRejectedValueOnce(new ForbiddenException());
       await expect(service.updateSettings({ manga: { targetLibraryId: 3 } }, ADMIN)).rejects.toThrow(ForbiddenException);
 
       libraryService.findOne.mockRejectedValueOnce(new NotFoundException());

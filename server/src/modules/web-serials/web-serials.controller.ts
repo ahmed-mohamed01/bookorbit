@@ -22,6 +22,7 @@ import type {
 } from '@bookorbit/types';
 import { Permission } from '@bookorbit/types';
 
+import { KeyReadSafe } from '../../common/decorators/api-key-policy.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import type { RequestUser } from '../../common/types/request-user';
@@ -96,6 +97,7 @@ export class WebSerialsController {
     return this.print.download(user, matchId, input);
   }
   @Post('novel/:matchId/print-state')
+  @KeyReadSafe()
   @RequirePermission(Permission.WebSerialAccess)
   getPrintState(
     @Param('matchId') matchId: string,

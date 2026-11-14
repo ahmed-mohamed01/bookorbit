@@ -426,7 +426,7 @@ export class AuthService {
     if (!active) throw new UnauthorizedException();
     if (!this.isAuthenticationMethodAllowed(authenticationMethod)) throw new UnauthorizedException();
     const validated = await this.validateFetchedUser(user, tokenVersion, authenticationMethod);
-    return { ...validated, sessionId };
+    return { ...validated, sessionId, credential: { kind: 'session' as const, sessionId } };
   }
 
   async validateUser(userId: number, tokenVersion: number, authenticationMethod: AuthenticationMethodValue) {

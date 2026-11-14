@@ -83,6 +83,12 @@ function build(overrides?: {
 }
 
 describe('ReadingAlignmentStatusService.requestBuild', () => {
+  it('checks editor access', async () => {
+    const { service, bookService } = build();
+    await service.requestBuild(BOOK_ID, USER);
+    expect(bookService.verifyBookAccess).toHaveBeenCalledExactlyOnceWith(BOOK_ID, USER, 'editor');
+  });
+
   beforeEach(() => vi.clearAllMocks());
 
   it("kicks off buildAlignment and returns 'building' when no row exists yet", async () => {
@@ -192,6 +198,12 @@ describe('ReadingAlignmentStatusService.requestBuild', () => {
 });
 
 describe('ReadingAlignmentStatusService.getStatus', () => {
+  it('checks viewer access', async () => {
+    const { service, bookService } = build();
+    await service.getStatus(BOOK_ID, USER);
+    expect(bookService.verifyBookAccess).toHaveBeenCalledExactlyOnceWith(BOOK_ID, USER);
+  });
+
   beforeEach(() => vi.clearAllMocks());
 
   it('returns the status/progress shape when a row exists', async () => {
@@ -296,6 +308,12 @@ describe('ReadingAlignmentStatusService.getStatus', () => {
 });
 
 describe('ReadingAlignmentStatusService.cancelBuild', () => {
+  it('checks editor access', async () => {
+    const { service, bookService } = build();
+    await service.cancelBuild(BOOK_ID, USER);
+    expect(bookService.verifyBookAccess).toHaveBeenCalledExactlyOnceWith(BOOK_ID, USER, 'editor');
+  });
+
   beforeEach(() => vi.clearAllMocks());
 
   it('aborts a build in flight before its first row write and deletes nothing', async () => {

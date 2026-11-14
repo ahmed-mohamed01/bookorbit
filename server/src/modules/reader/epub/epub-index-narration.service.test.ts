@@ -84,7 +84,7 @@ describe('EpubIndexNarrationService', () => {
     findPrimaryFilesByBookIds: vi.fn(),
     findAudioEbookProgressSyncFiles: vi.fn(),
   };
-  const libraryService = { verifyUserAccess: vi.fn() };
+  const libraryService = { verifyAccess: vi.fn() };
   const resolver = { resolveOverlaySource: vi.fn() };
 
   async function compile(withResolver = true) {
@@ -140,7 +140,7 @@ describe('EpubIndexNarrationService', () => {
     bookReadService.findLibraryIdByBookId.mockResolvedValue(3);
     bookReadService.findFileById.mockResolvedValue({ id: 12, bookId: 7, format: 'epub', absolutePath: plainPath });
     bookReadService.findAudioEbookProgressSyncFiles.mockImplementation(() => Promise.resolve({ primaryFileId: 12, files }));
-    libraryService.verifyUserAccess.mockResolvedValue(undefined);
+    libraryService.verifyAccess.mockResolvedValue(undefined);
     resolver.resolveOverlaySource.mockImplementation((_userId: number, _bookId: number, candidates: Array<{ id: number }>) =>
       Promise.resolve(candidates.find((file) => file.id === 90) ?? null),
     );

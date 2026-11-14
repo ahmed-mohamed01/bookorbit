@@ -136,7 +136,7 @@ export function setupServices(options: { settings?: Record<string, unknown>; lib
   };
   const covers = { remember: vi.fn() };
   const libraryService = {
-    verifyUserAccess: vi.fn().mockResolvedValue(undefined),
+    verifyAccess: vi.fn().mockResolvedValue(undefined),
     findOne: vi.fn().mockResolvedValue(options.library ?? { allowedFormats: [] }),
   };
   const lookupService = {

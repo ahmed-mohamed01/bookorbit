@@ -526,7 +526,7 @@ export class WebSerialsCatalogService {
   private async usableLibraryId(user: RequestUser, libraryId: number | null): Promise<number | null> {
     if (libraryId === null) return null;
     try {
-      await this.libraryService.verifyUserAccess(user.id, libraryId, user.isSuperuser);
+      await this.libraryService.verifyAccess(user, libraryId);
       return libraryId;
     } catch (err) {
       if (err instanceof ForbiddenException) return null;

@@ -1,5 +1,6 @@
 import type { MonitoredFormat } from '@bookorbit/types';
 
+import { isbn10FromIsbn13 } from '../../../common/text-match/isbn-normalize';
 import { isPublishedDateKey } from '../../../common/utils/published-date.utils';
 import type { HardcoverEditionsProbeBook } from '../../metadata-fetch/providers/hardcover/hardcover.types';
 import type { EditionEvidence, HardcoverEvidence, HardcoverProbeBook, HardcoverProbeEdition } from './release-probe.types';
@@ -7,15 +8,6 @@ import type { EditionEvidence, HardcoverEvidence, HardcoverProbeBook, HardcoverP
 export type EditionFormat = MonitoredFormat | 'physical';
 
 const FORMAT_BY_ID: Record<number, EditionFormat | undefined> = { 1: 'physical', 2: 'audiobook', 4: 'ebook' };
-
-function isbn13To10(value: string): string | null {
-  const digits = value.replace(/[^0-9]/g, '');
-  if (!/^978\d{10}$/.test(digits)) return null;
-  const body = digits.slice(3, 12);
-  const sum = [...body].reduce((total, digit, index) => total + Number(digit) * (10 - index), 0);
-  const remainder = (11 - (sum % 11)) % 11;
-  return `${body}${remainder === 10 ? 'X' : remainder}`;
-}
 
 const FAR_FUTURE_DAYS = 548;
 
@@ -59,7 +51,7 @@ function seedsFrom(editions: HardcoverProbeEdition[]): string[] {
   const seeds: string[] = [];
   const seen = new Set<string>();
   for (const edition of editions) {
-    for (const seed of [edition.asin, edition.isbn10, edition.isbn13 ? isbn13To10(edition.isbn13) : null]) {
+    for (const seed of [edition.asin, edition.isbn10, isbn10FromIsbn13(edition.isbn13)]) {
       if (seed && !seen.has(seed)) {
         seen.add(seed);
         seeds.push(seed);

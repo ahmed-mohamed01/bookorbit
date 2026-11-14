@@ -68,7 +68,7 @@ describe('EpubService.extractSpineText', () => {
     findFileById: vi.fn(),
     findPrimaryFilesByBookIds: vi.fn(),
   };
-  const libraryService = { verifyUserAccess: vi.fn() };
+  const libraryService = { verifyAccess: vi.fn() };
   let service: EpubService;
 
   beforeEach(() => {
@@ -76,7 +76,7 @@ describe('EpubService.extractSpineText', () => {
     service = new EpubService(bookReadService as any, libraryService as any, {} as any);
     bookReadService.findLibraryIdByBookId.mockResolvedValue(3);
     bookReadService.findPrimaryFilesByBookIds.mockResolvedValue([{ format: 'epub', absolutePath: '/books/book.epub', sizeBytes: null }]);
-    libraryService.verifyUserAccess.mockResolvedValue(undefined);
+    libraryService.verifyAccess.mockResolvedValue(undefined);
     mockStat.mockResolvedValue({ mtimeMs: 100 } as Awaited<ReturnType<typeof stat>>);
   });
 
@@ -89,7 +89,7 @@ describe('EpubService.extractSpineText', () => {
       { spineIndex: 0, text: 'Chapter One It was Mr. O’Brien.' },
       { spineIndex: 1, text: 'The & end.' },
     ]);
-    expect(libraryService.verifyUserAccess).toHaveBeenCalledWith(10, 3, false);
+    expect(libraryService.verifyAccess).toHaveBeenCalledWith(user, 3);
   });
 
   it('yields empty text when a spine entry is missing from the archive', async () => {

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { Permission } from '@bookorbit/types';
 
+import { INTERACTIVE_ONLY_KEY } from '../../common/decorators/api-key-policy.decorator';
 import { PERMISSION_KEY } from '../../common/decorators/require-permission.decorator';
 import type { RequestUser } from '../../common/types/request-user';
 import { WebSerialsAdminController } from './web-serials-admin.controller';
@@ -166,6 +167,12 @@ describe('WebSerialsAdminController', () => {
     expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(method);
     expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe(path);
     expect(Reflect.getMetadata(PERMISSION_KEY, handler)).toBe(Permission.ManageAppSettings);
+  });
+
+  it('keeps API keys off the route that stores engine credentials', () => {
+    expect(Reflect.getMetadata(INTERACTIVE_ONLY_KEY, WebSerialsAdminController.prototype.updateSettings)).toBe(true);
+    expect(Reflect.getMetadata(INTERACTIVE_ONLY_KEY, WebSerialsAdminController.prototype.getSettings)).toBeUndefined();
+    expect(Reflect.getMetadata(INTERACTIVE_ONLY_KEY, WebSerialsAdminController.prototype.testConnection)).toBeUndefined();
   });
 
   it('answers the test route with 200', () => {

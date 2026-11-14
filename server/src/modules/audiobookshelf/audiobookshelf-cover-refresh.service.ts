@@ -37,7 +37,7 @@ export class AudiobookshelfCoverRefreshService implements BulkCoverRefresher {
   ): Promise<{ processed: number; updated: number }> {
     if (bookIds.length === 0) return this.bookService.bulkReExtractCover(bookIds, user, onProgress, options);
 
-    await this.bookService.resolveSelectionToIds({ bookIds }, user);
+    await this.bookService.resolveSelectionToIds({ bookIds }, user, 'editor');
     const sidecarFirst = await this.findSidecarFirstCovers(bookIds);
     let callbackInterrupted = false;
     const trackedProgress = onProgress
