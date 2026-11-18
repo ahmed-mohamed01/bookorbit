@@ -39,6 +39,7 @@ export class EditionSyncBookListService {
       coverVersion: faces.get(row.bookId)?.coverVersion ?? null,
       canRunNow: row.status === 'queued' || row.status === 'stale',
       canRetry: row.status === 'failed',
+      canReindex: row.status === 'ready',
     }));
     const counts = result.counts ?? empty;
     const durationMs = Date.now() - startedAt;

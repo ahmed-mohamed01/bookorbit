@@ -25,6 +25,7 @@ export function bookItem(overrides: Partial<EditionSyncBookListItem> = {}): Edit
     whisperFallback: false,
     canRunNow: false,
     canRetry: false,
+    canReindex: false,
     ...overrides,
   }
 }

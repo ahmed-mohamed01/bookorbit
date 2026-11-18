@@ -19,6 +19,7 @@ function makeState(overrides: Partial<EditionSyncBookState> = {}, status: Editio
     wanted: true,
     canRunNow: false,
     canRetry: false,
+    canReindex: false,
     hasReadAlong: false,
     hasAudio: true,
     pinned: false,

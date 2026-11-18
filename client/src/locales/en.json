@@ -12019,6 +12019,7 @@
       "saveFailed": "Failed to save edition sync setting.",
       "runFailed": "Failed to start indexing.",
       "retryFailed": "Failed to retry indexing.",
+      "reindexFailed": "Failed to re-index the book.",
       "settingsLoadFailed": "Failed to load edition sync settings."
     },
     "fork": {
@@ -12197,9 +12198,14 @@
       "retryFailedDone": "{count, plural, one {# book queued to retry} other {# books queued to retry}}",
       "queueHint": "In the order they will run.",
       "openBook": "Open book",
+      "reindexDialog": {
+        "title": "Re-index from scratch?",
+        "description": "{title} will be aligned with its audio again. Read along is off for this book until the new index is ready, which can take 15 to 30 minutes."
+      },
       "actions": {
         "retry": "Retry",
         "runNext": "Run next",
+        "reindex": "Re-index",
         "turnOff": "Turn off for this book",
         "turnOn": "Turn on sync"
       },
@@ -12235,6 +12241,7 @@
         "indexMissing": "The index file is missing",
         "yielded": "Paused for another book",
         "interrupted": "The last run was interrupted",
+        "requested": "You asked to re-index it",
         "notIndexed": "Not indexed yet"
       },
       "offReasons": {

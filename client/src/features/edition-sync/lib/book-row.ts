@@ -42,6 +42,7 @@ const REASON_KEY: Record<EditionSyncInvalidatedReason, string> = {
   index_missing: 'indexMissing',
   yielded: 'yielded',
   interrupted: 'interrupted',
+  requested: 'requested',
 }
 
 function detail(key: string, value: string, t: Translate): BookRowDetail {
@@ -72,7 +73,9 @@ function queuedDetails(item: EditionSyncBookListItem, t: Translate): BookRowDeta
       t,
     ),
   ]
-  if (item.status === 'stale' && item.indexedAt) rows.push(detail('positionSync', t(`${BOOKS}values.previousIndex`), t))
+  // A re-index the user asked for is marked stale, which turns the old index off until the new one is ready.
+  if (item.invalidatedReason === 'requested') rows.push(detail('positionSync', t(`${BOOKS}values.notAvailable`), t))
+  else if (item.status === 'stale' && item.indexedAt) rows.push(detail('positionSync', t(`${BOOKS}values.previousIndex`), t))
   return rows
 }
 
@@ -121,7 +124,7 @@ export function bookRowDetails(item: EditionSyncBookListItem, context: BookRowCo
   }
 }
 
-export type BookRowActionId = 'retry' | 'run' | 'toggle'
+export type BookRowActionId = 'retry' | 'run' | 'reindex' | 'toggle'
 
 export interface BookRowAction {
   id: BookRowActionId
@@ -157,6 +160,9 @@ function bookRowActions(item: EditionSyncBookListItem, context: BookRowViewConte
   const actions: BookRowAction[] = []
   if (isPendingStatus(item.status) && item.canRunNow) {
     actions.push({ id: 'run', label: t(`${BOOKS}actions.runNext`), primary: false, disabled: context.pending })
+  }
+  if (item.status === 'ready' && item.canReindex) {
+    actions.push({ id: 'reindex', label: t(`${BOOKS}actions.reindex`), primary: false, disabled: context.pending })
   }
   actions.push({
     id: 'toggle',

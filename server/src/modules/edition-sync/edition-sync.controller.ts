@@ -74,6 +74,12 @@ export class EditionSyncController {
     return this.bookState.runNow(user, bookId);
   }
 
+  @Post('books/:bookId/reindex')
+  @HttpCode(HttpStatus.OK)
+  reindexBook(@CurrentUser() user: RequestUser, @Param('bookId', ParseIntPipe) bookId: number): Promise<EditionSyncBookState> {
+    return this.bookState.reindex(user, bookId);
+  }
+
   @Post('books/:bookId/retry')
   @HttpCode(HttpStatus.OK)
   retryBook(@CurrentUser() user: RequestUser, @Param('bookId', ParseIntPipe) bookId: number): Promise<EditionSyncBookState> {

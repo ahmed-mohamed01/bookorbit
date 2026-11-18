@@ -70,6 +70,22 @@ export class EditionSyncBookStateService {
     return this.buildState(user, bookId);
   }
 
+  /**
+   * Indexes a ready book again from scratch. Marking it stale is what makes the run align the audio
+   * again: a job for a ready index replays its stored timings instead. Read along is off until it is done.
+   */
+  async reindex(user: RequestUser, bookId: number): Promise<EditionSyncBookState> {
+    await this.books.verifyBookAccess(bookId, user);
+    const state = await this.buildState(user, bookId);
+    if (state.effectiveReason === 'server_disabled') throw new BadRequestException(EDITION_SYNC_SERVER_DISABLED_MESSAGE);
+    if (!state.canReindex) throw new BadRequestException('This book has no index to rebuild');
+    if (!(await this.repo.markStale(bookId, 'requested'))) throw new BadRequestException('This book is being indexed now');
+    this.overlaySource.invalidateBook(bookId);
+    this.logger.log(`[edition_sync.reindex] [end] bookId=${bookId} userId=${user.id} - re-index requested`);
+    await this.pin(bookId, false);
+    return this.buildState(user, bookId);
+  }
+
   async retry(user: RequestUser, bookId: number): Promise<EditionSyncBookState> {
     await this.books.verifyBookAccess(bookId, user);
     const state = await this.buildState(user, bookId);
@@ -175,6 +191,7 @@ export class EditionSyncBookStateService {
       index,
       canRunNow: decision.syncEnabled && (status === 'queued' || status === 'stale'),
       canRetry: decision.syncEnabled && eligibility.eligible && status === 'failed',
+      canReindex: decision.syncEnabled && eligibility.eligible && status === 'ready',
     };
   }
 

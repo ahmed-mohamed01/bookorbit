@@ -35,6 +35,7 @@ function makeState(status: EditionSyncBookState['index']['status'] = 'ready', ov
     wanted: true,
     canRunNow: false,
     canRetry: false,
+    canReindex: false,
     hasReadAlong: false,
     hasAudio: true,
     pinned: false,

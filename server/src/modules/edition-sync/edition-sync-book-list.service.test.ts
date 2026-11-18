@@ -86,7 +86,7 @@ it.each(['included', 'excluded', null])('passes an off row through while the use
   const { service, repo } = await setup('user_disabled');
   repo.listBooks.mockResolvedValue({ items: [row({ syncEnabled: false, syncOverride: override, status: 'off' })], counts: COUNTS });
   const [item] = (await service.list({ id: 1 } as never, {})).items;
-  expect(item).toMatchObject({ syncEnabled: false, syncOverride: override, status: 'off', canRunNow: false, canRetry: false });
+  expect(item).toMatchObject({ syncEnabled: false, syncOverride: override, status: 'off', canRunNow: false, canRetry: false, canReindex: false });
 });
 
 it.each(['queued', 'stale', 'running', 'ready', 'failed', 'off'])('maps actions for %s', async (status) => {
@@ -98,6 +98,7 @@ it.each(['queued', 'stale', 'running', 'ready', 'failed', 'off'])('maps actions 
   const { items } = await service.list({ id: 1 } as never, {});
   expect(items[0].canRunNow).toBe(status === 'queued' || status === 'stale');
   expect(items[0].canRetry).toBe(status === 'failed');
+  expect(items[0].canReindex).toBe(status === 'ready');
 });
 
 // The repository computes syncEnabled in SQL; this table is the rule that SQL implements.

@@ -11,6 +11,7 @@ import {
 import { i18n } from '@/i18n'
 import {
   fetchEditionSyncBooks,
+  reindexEditionSyncBook,
   retryEditionSyncBook,
   retryFailedEditionSyncBooks,
   runEditionSyncBookNow,
@@ -43,6 +44,7 @@ export function applyBookState(item: EditionSyncBookListItem, state: EditionSync
     progress: state.index.progress,
     canRunNow: state.canRunNow,
     canRetry: state.canRetry,
+    canReindex: state.canReindex,
     // The book state's place is not the server-wide run order the list numbers by.
     queuePosition: null,
   }
@@ -239,6 +241,10 @@ export function useEditionSyncBooks(options: UseEditionSyncBooksOptions = {}) {
     return updateRow(bookId, () => runEditionSyncBookNow(bookId), 'editionSync.errors.runFailed')
   }
 
+  function reindex(bookId: number): Promise<boolean> {
+    return updateRow(bookId, () => reindexEditionSyncBook(bookId), 'editionSync.errors.reindexFailed')
+  }
+
   function retry(bookId: number): Promise<boolean> {
     return updateRow(bookId, () => retryEditionSyncBook(bookId), 'editionSync.errors.retryFailed')
   }
@@ -294,6 +300,7 @@ export function useEditionSyncBooks(options: UseEditionSyncBooksOptions = {}) {
     canToggle,
     setSyncEnabled,
     runNow,
+    reindex,
     retry,
     retryAllFailed,
   }

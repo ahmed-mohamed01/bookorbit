@@ -50,6 +50,13 @@ describe('bookRowView', () => {
     expect(actionIds(bookItem({ status: 'running' }))).toEqual([])
   })
 
+  it('offers Re-index on a ready row that can be re-indexed', () => {
+    expect(actionIds(bookItem({ status: 'ready', canReindex: true }))).toEqual(['reindex', 'toggle'])
+    expect(actionIds(bookItem({ status: 'ready', canReindex: false }))).toEqual(['toggle'])
+    expect(actionIds(bookItem({ status: 'stale', canRunNow: true, canReindex: true }))).toEqual(['run', 'toggle'])
+    expect(bookRowView(bookItem({ status: 'ready', canReindex: true }), context({ pending: true }), t).actions[0]!.disabled).toBe(true)
+  })
+
   it('words the toggle by its value and locks it when it cannot change', () => {
     const [off] = bookRowView(bookItem(), context({ toggleOn: false, canToggle: false }), t).actions
     expect(off).toMatchObject({ id: 'toggle', label: `${B}actions.turnOn`, disabled: true })

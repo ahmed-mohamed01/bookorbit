@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { AlertCircle, ChevronDown, ChevronUp, Loader2, RefreshCw, Search } from '@lucide/vue'
 import type { EditionSyncBookListFilter, EditionSyncBookListItem } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { formatKeyCode } from '@/features/book/lib/book-formats'
 import { SYNC_STATUS_TEXT_CLASS } from '@/lib/sync-issue'
 import { formatNumber } from '@/i18n/formatters'
@@ -22,6 +23,8 @@ const TABS: EditionSyncBookListFilter[] = ['problems', 'queued', 'synced', 'off'
 const searchId = 'edition-sync-books-search'
 const idPrefix = useId()
 const expandedId = ref<number | null>(null)
+/** The book whose re-index waits for the user to confirm it. */
+const reindexItem = ref<EditionSyncBookListItem | null>(null)
 
 onMounted(() => {
   void books.load()
@@ -94,7 +97,14 @@ function handleToggleExpanded(item: EditionSyncBookListItem) {
 function handleRowAction(item: EditionSyncBookListItem, action: BookRowAction) {
   if (action.id === 'retry') void books.retry(item.bookId)
   else if (action.id === 'run') void books.runNow(item.bookId)
+  else if (action.id === 'reindex') reindexItem.value = item
   else void books.setSyncEnabled(item.bookId, !books.toggleValue(item))
+}
+
+function confirmReindex() {
+  const item = reindexItem.value
+  reindexItem.value = null
+  if (item) void books.reindex(item.bookId)
 }
 
 function handleRetryAllFailed() {
@@ -301,5 +311,15 @@ function handleRetryLoad() {
         </Button>
       </div>
     </div>
+
+    <ConfirmDialog
+      :open="reindexItem !== null"
+      :title="t('editionSync.books.reindexDialog.title')"
+      :description="t('editionSync.books.reindexDialog.description', { title: reindexItem?.title ?? '' })"
+      :confirm-label="t('editionSync.books.actions.reindex')"
+      :destructive="false"
+      @confirm="confirmReindex"
+      @cancel="reindexItem = null"
+    />
   </section>
 </template>

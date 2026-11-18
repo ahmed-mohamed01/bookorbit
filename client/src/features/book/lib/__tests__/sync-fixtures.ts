@@ -80,6 +80,7 @@ export function editionSyncState(
     index: editionSyncIndex(index),
     canRunNow: true,
     canRetry: true,
+    canReindex: false,
     ...overrides,
   }
 }

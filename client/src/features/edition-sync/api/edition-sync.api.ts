@@ -56,6 +56,10 @@ export async function runEditionSyncBookNow(bookId: number): Promise<EditionSync
   return readJson(await api(`${BASE}/books/${bookId}/run`, jsonInit('POST')))
 }
 
+export async function reindexEditionSyncBook(bookId: number): Promise<EditionSyncBookState> {
+  return readJson(await api(`${BASE}/books/${bookId}/reindex`, jsonInit('POST')))
+}
+
 export async function retryEditionSyncBook(bookId: number): Promise<EditionSyncBookState> {
   return readJson(await api(`${BASE}/books/${bookId}/retry`, jsonInit('POST')))
 }

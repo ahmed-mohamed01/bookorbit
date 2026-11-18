@@ -30,6 +30,7 @@ function setup(
     setOverride: vi.fn().mockResolvedValue(undefined),
     retryFailedBooks: vi.fn().mockResolvedValue(3),
     pinBook: vi.fn().mockResolvedValue(undefined),
+    markStale: vi.fn().mockResolvedValue(true),
     findQueuePosition: vi.fn().mockResolvedValue(142),
     findBookFileIdByPath: vi.fn().mockResolvedValue(55),
     updateIndexRow: vi.fn().mockImplementation((_bookId: number, patch: Record<string, unknown>) => Promise.resolve({ ...options.row, ...patch })),
@@ -46,7 +47,7 @@ function setup(
   };
   const queue = { ensureValid: vi.fn().mockResolvedValue(true) };
   const scheduler = { poke: vi.fn(), nextRunAt: vi.fn().mockReturnValue(new Date('2026-11-02T02:00:00Z')) };
-  const overlaySource = { invalidate: vi.fn() };
+  const overlaySource = { invalidate: vi.fn(), invalidateBook: vi.fn() };
   const libraryScope = { visibleIdsOrAll: vi.fn().mockResolvedValue([2, 5]) };
   const alignmentStatus = { hasReadyAlignment: vi.fn().mockResolvedValue(options.readyAlignment ?? false) };
   const service = new EditionSyncBookStateService(
@@ -228,8 +229,57 @@ describe('EditionSyncBookStateService run now and retry', () => {
   });
 });
 
-it.each(['runNow', 'retry'] as const)('rejects %s and does not pin while the server is disabled', async (method) => {
-  const { service, repo } = setup({ effectiveEnabled: false, serverEnabled: false, row: { status: method === 'retry' ? 'failed' : 'stale' } });
+describe('EditionSyncBookStateService.reindex', () => {
+  const ready = { bookId: 10, status: 'ready', indexFileId: 3, indexPath: '/x', indexedAt: new Date() };
+
+  it('marks a ready book stale, so the run aligns again, and puts it at the front of the queue', async () => {
+    const { service, repo, scheduler, overlaySource } = setup({ row: ready });
+    await service.reindex(user, 10);
+    expect(repo.markStale).toHaveBeenCalledWith(10, 'requested');
+    expect(overlaySource.invalidateBook).toHaveBeenCalledWith(10);
+    expect(repo.pinBook).toHaveBeenCalledWith(10, expect.any(Date), false);
+    expect(scheduler.poke).toHaveBeenCalled();
+    expect(repo.markStale.mock.invocationCallOrder[0]).toBeLessThan(repo.pinBook.mock.invocationCallOrder[0]);
+  });
+
+  it('offers a re-index only for a ready book with sync on', async () => {
+    expect((await setup({ row: ready }).service.getState(user, 10)).canReindex).toBe(true);
+    expect((await setup({ row: { bookId: 10, status: 'failed' } }).service.getState(user, 10)).canReindex).toBe(false);
+    expect((await setup({ row: ready, effectiveEnabled: false }).service.getState(user, 10)).canReindex).toBe(false);
+  });
+
+  it.each([
+    ['failed', { bookId: 10, status: 'failed' }],
+    ['running', { bookId: 10, status: 'running' }],
+    ['never indexed', null],
+  ])('refuses a book that is %s', async (_label, row) => {
+    const { service, repo } = setup({ row });
+    await expect(service.reindex(user, 10)).rejects.toBeInstanceOf(BadRequestException);
+    expect(repo.markStale).not.toHaveBeenCalled();
+    expect(repo.pinBook).not.toHaveBeenCalled();
+  });
+
+  it('does not pin when the run started before the book could be marked stale', async () => {
+    const { service, repo } = setup({ row: ready });
+    repo.markStale.mockResolvedValue(false);
+    await expect(service.reindex(user, 10)).rejects.toThrow('This book is being indexed now');
+    expect(repo.pinBook).not.toHaveBeenCalled();
+  });
+
+  it('checks book access first', async () => {
+    const { service, books, repo } = setup({ row: ready });
+    books.verifyBookAccess.mockRejectedValueOnce(new NotFoundException());
+    await expect(service.reindex(user, 10)).rejects.toBeInstanceOf(NotFoundException);
+    expect(repo.markStale).not.toHaveBeenCalled();
+  });
+});
+
+it.each(['runNow', 'retry', 'reindex'] as const)('rejects %s and does not pin while the server is disabled', async (method) => {
+  const { service, repo } = setup({
+    effectiveEnabled: false,
+    serverEnabled: false,
+    row: { status: method === 'retry' ? 'failed' : method === 'reindex' ? 'ready' : 'stale' },
+  });
   await expect(service[method](user, 10)).rejects.toThrow(new BadRequestException(EDITION_SYNC_SERVER_DISABLED_MESSAGE));
   expect(repo.pinBook).not.toHaveBeenCalled();
   expect(repo.isWanted).not.toHaveBeenCalled();

@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   update: vi.fn<(bookId: number, payload: { syncEnabled: boolean }) => Promise<EditionSyncBookState>>(),
   run: vi.fn<(bookId: number) => Promise<EditionSyncBookState>>(),
   retry: vi.fn<(bookId: number) => Promise<EditionSyncBookState>>(),
+  reindex: vi.fn<(bookId: number) => Promise<EditionSyncBookState>>(),
   retryFailed: vi.fn<() => Promise<{ retried: number }>>(),
   toastSuccess: vi.fn<(message: string) => void>(),
   toastError: vi.fn<(message: string) => void>(),
@@ -19,11 +20,13 @@ vi.mock('../../api/edition-sync.api', () => ({
   updateEditionSyncBookState: mocks.update,
   runEditionSyncBookNow: mocks.run,
   retryEditionSyncBook: mocks.retry,
+  reindexEditionSyncBook: mocks.reindex,
   retryFailedEditionSyncBooks: mocks.retryFailed,
 }))
 vi.mock('vue-sonner', () => ({ toast: { error: mocks.toastError, success: mocks.toastSuccess } }))
 
 import EditionSyncBooksList from '../EditionSyncBooksList.vue'
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { useEditionSyncSettings } from '../../composables/useEditionSyncSettings'
 
 enableAutoUnmount(afterEach)
@@ -261,6 +264,39 @@ describe('EditionSyncBooksList', () => {
     expect(facts.indexed).toMatch(/· worker 1\.4\.0$/)
     expect(facts.indexSize).toMatch(/2/)
     expect(actions(wrapper, 3)).toEqual(['Turn off for this book'])
+  })
+
+  it('re-indexes a synced book only after the user confirms it', async () => {
+    mocks.fetchBooks.mockResolvedValue(response({ items: [bookItem({ bookId: 4, title: 'Mistborn', canReindex: true })] }))
+    const wrapper = await mountList()
+    await expand(wrapper, 0)
+    expect(actions(wrapper, 0)).toEqual(['Re-index', 'Turn off for this book'])
+    const dialog = wrapper.getComponent(ConfirmDialog)
+    expect(dialog.props('open')).toBe(false)
+
+    await row(wrapper, 0).get('[data-action="reindex"]').trigger('click')
+    expect(dialog.props('open')).toBe(true)
+    expect(dialog.props('description')).toContain('Mistborn will be aligned with its audio again')
+    dialog.vm.$emit('cancel')
+    await flushPromises()
+    expect(dialog.props('open')).toBe(false)
+    expect(mocks.reindex).not.toHaveBeenCalled()
+
+    mocks.reindex.mockResolvedValue(editionSyncState({ status: 'stale', queuePosition: 1 }, { bookId: 4, canRunNow: true }))
+    await row(wrapper, 0).get('[data-action="reindex"]').trigger('click')
+    dialog.vm.$emit('confirm')
+    await flushPromises()
+    expect(mocks.reindex).toHaveBeenCalledWith(4)
+    expect(dialog.props('open')).toBe(false)
+  })
+
+  it('says a book re-indexed on request is queued because the user asked', async () => {
+    mocks.fetchBooks.mockResolvedValue(
+      response({ items: [bookItem({ status: 'stale', invalidatedReason: 'requested', queuePosition: 1, canRunNow: true })] }),
+    )
+    const wrapper = await mountList()
+    await expand(wrapper, 0)
+    expect(details(wrapper, 0)).toMatchObject({ queuedBecause: 'You asked to re-index it', positionSync: 'Not available until this is indexed' })
   })
 
   it('says why a book is off and turns it back on', async () => {

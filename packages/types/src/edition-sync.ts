@@ -43,7 +43,7 @@ export type EditionSyncIndexStatus = "none" | "queued" | "running" | "ready" | "
 /** Values of `edition_sync_book_index.status`. */
 export type EditionSyncStoredIndexStatus = "running" | "ready" | "failed" | "stale";
 export type EditionSyncInvalidatedReason =
-  "audio_changed" | "epub_changed" | "file_missing" | "files_changed" | "index_missing" | "yielded" | "interrupted";
+  "audio_changed" | "epub_changed" | "file_missing" | "files_changed" | "index_missing" | "yielded" | "interrupted" | "requested";
 
 /** When a book's files change: queue it for the next scheduled run, or re-index once the files stop changing. */
 export const EDITION_SYNC_FILES_CHANGED_MODES = ["next_run", "immediate"] as const;
@@ -92,6 +92,8 @@ export interface EditionSyncBookState {
   index: EditionSyncIndexState;
   canRunNow: boolean;
   canRetry: boolean;
+  /** Ready, so it can be indexed again from scratch. */
+  canReindex: boolean;
 }
 
 export interface UpdateEditionSyncBookStatePayload {
@@ -193,6 +195,8 @@ export interface EditionSyncBookListItem {
   whisperFallback: boolean;
   canRunNow: boolean;
   canRetry: boolean;
+  /** Ready, so it can be indexed again from scratch. */
+  canReindex: boolean;
 }
 
 export interface EditionSyncRetryFailedResult {
