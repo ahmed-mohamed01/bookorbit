@@ -12,6 +12,7 @@ import {
   type ReadAloudWorkerStage,
 } from "@bookorbit/types";
 import type { SourceFingerprint } from "./protocol.js";
+import { AUDIO_PREPARE_VERSION } from "./xhe-aac.js";
 
 /** Stages whose output is cached in the job folder behind a `.done-<stage>` marker. */
 export const MARKER_STAGES = ["preparing_audio", "generating_emissions", "marking_up_ebook", "aligning"] as const;
@@ -58,7 +59,7 @@ export function stageInputs(stage: MarkerStage, source: FingerprintSource): Reco
   const epub = { path: source.epub.path, size: source.epub.size, mtimeMs: source.epub.mtimeMs };
   switch (stage) {
     case "preparing_audio":
-      return { v: MARKER_VERSION, audio };
+      return { v: MARKER_VERSION, prepare: AUDIO_PREPARE_VERSION, audio };
     case "generating_emissions":
       return { v: MARKER_VERSION, audio, model: source.model, language: new Intl.Locale(locale).language };
     case "marking_up_ebook":

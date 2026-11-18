@@ -8,6 +8,7 @@ import type { ReadAloudErrorCode, ReadAloudStageDetail, ReadAloudWorkerStage } f
 import { cleanMessage, errorClass, errorMessage, logLine } from "./log.js";
 import { publishOutputs } from "./local-work.js";
 import { StageError, type LogListener, type Pipeline, type StageContext, type StageResult, type WorkPaths } from "./pipeline-contract.js";
+import { assertFullyDecoded } from "./xhe-aac.js";
 import { MAX_EVENT_MESSAGE_LENGTH, type ControlToRunner, type EventData, type RunnerJob, type RunnerToControl } from "./protocol.js";
 import {
   MARKER_STAGES,
@@ -431,6 +432,7 @@ async function validateOutput(paths: WorkPaths, maxOutputBytes: number): Promise
   if (!totals || REPORT_TOTAL_KEYS.some((key) => typeof totals[key] !== "number" || !Number.isFinite(totals[key]))) {
     throw new StageError("invalid_output", "The alignment report has no usable totals");
   }
+  assertFullyDecoded((parsed as { tracks?: unknown }).tracks);
   return {
     outputBytes: output.size,
     data: {

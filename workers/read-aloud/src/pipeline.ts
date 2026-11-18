@@ -6,6 +6,7 @@ import { ctcAlign, emit, markup, processAudiobook, upgradeEpub } from "@storytel
 import { getModelDir, loadCtcModel, resolveCtcRun, type CtcRun } from "@storyteller-platform/ghost-story";
 import type { ReadAloudStageDetail, ReadAloudStageUnit } from "@bookorbit/types";
 import { StageError, type Pipeline, type StageContext } from "./pipeline-contract.js";
+import { reencodeXheAac } from "./xhe-aac.js";
 
 const ENGINE = "ctc-local";
 const MAX_SPLIT_HOURS = 2;
@@ -35,6 +36,7 @@ export const pipeline: Pipeline = {
         bitrate: match[1] ?? null,
       });
     });
+    await reencodeXheAac(context.paths.sourceAudioDir, context);
     // `encoding` stays unset: with a codec STAlign skips its VBR MP3 to CBR re-encode.
     await processAudiobook(context.paths.sourceAudioDir, context.paths.processedAudioDir, {
       maxLength: MAX_SPLIT_HOURS,
