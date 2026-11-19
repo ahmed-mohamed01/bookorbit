@@ -1500,6 +1500,14 @@ shrinks the footprint.
 
 ### Propose upstream (each deletes fork lines for good)
 
+- `server/bin/kepubify/*`: the six bundled binaries are rebuilt with Go 1.27.4 (2026-11-19) for
+  CVE-2026-97054, which failed the image's Trivy gate. Same recipe as upstream's own rebuilds, proven
+  by reproducing upstream's Go 1.27.3 binaries byte for byte first: kepubify commit
+  `9546034bc023891af5ce30709de6ae2dcf264628`, `go get golang.org/x/sync@v0.24.0
+golang.org/x/text@v0.43.0`, then `CGO_ENABLED=0 go build -trimpath -ldflags="-s -w"
+./cmd/kepubify` per target (`GOARM=7` for linux-arm). The version string stays `v4-dev` and
+  converted books have identical entries and CRCs. Take upstream's binaries at the next merge that
+  rebuilds them.
 - `client/src/features/book/components/BookListRow.vue`: one line, `:frame-aspect-ratio="coverAspectRatio"`
   on the row's `BookCoverArtwork` (2026-11-19). Upstream sizes the list row's cover box from the book's
   own ratio but lets the artwork fall back to the library's, so a 2/3 cover in a square-cover library is
