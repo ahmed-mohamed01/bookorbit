@@ -1,8 +1,10 @@
 /* eslint-disable @typescript-eslint/require-await */
 import { ConflictException, NotFoundException } from '@nestjs/common';
+import { WebSerialErrorCode } from '@bookorbit/types';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ADMIN, CONN, jobRow, mangaSeries, setupServices, USER } from '../../../test/support/web-serials/web-serials-test-fixtures';
+import { WebSerialsRepository } from './web-serials.repository';
 
 vi.mock('./web-serials-engine-registry.service', () => ({ WebSerialsEngineRegistry: class {} }));
 vi.mock('./web-serials-cover.service', () => ({ WebSerialsCoverService: class {} }));
@@ -117,6 +119,52 @@ describe('WebSerialJobMoveService move candidates', () => {
 });
 
 describe('WebSerialJobMoveService move job', () => {
+  it.each([
+    { status: 'failed', count: 24, allowed: true },
+    { status: 'failed', count: 25, allowed: false },
+    { status: 'paused', count: 25, allowed: true },
+  ] as const)('moves a $status source with $count capped jobs when allowed=$allowed', async ({ status, count, allowed }) => {
+    const { service, repo, client } = setup();
+    const source = jobRow({ status });
+    repo.findJobById.mockImplementation(async (id: number) => (id === 22 ? jobRow({ id: 22, seriesKey: 'm:2' }) : source));
+    repo.getJobStatus.mockResolvedValue(status);
+    repo.findMoveItems.mockResolvedValue([{ id: 1, sequence: '1', status: 'failed' }]);
+    repo.countItemsByStatus.mockResolvedValue({ failed: 1 });
+    client.getSeries.mockResolvedValue({ ...mangaSeries, sourceName: 'AllManga' });
+
+    let cappedJobs: number = count;
+    const moveJob = vi.fn(async (input: Parameters<WebSerialsRepository['moveJob']>[0]) => {
+      cappedJobs += input.sourceExpectedStatus === 'paused' ? 0 : 1;
+      return { id: 22 };
+    });
+    const tx = {
+      execute: vi.fn().mockResolvedValue(undefined),
+      select: () => ({ from: () => ({ where: async () => [{ value: cappedJobs }] }) }),
+    };
+    const db = { transaction: <T>(callback: (value: typeof tx) => Promise<T>) => callback(tx) };
+    const quotaRepo = new WebSerialsRepository(db as never);
+    const withUserJobQuota = vi.fn((userId: number, limit: number, exceeded: () => Error, operation: (scoped: typeof repo) => Promise<unknown>) =>
+      quotaRepo.withUserJobQuota(userId, limit, exceeded, () => operation({ ...repo, moveJob })),
+    );
+    Object.assign(repo, { withUserJobQuota });
+
+    const result = service.moveJob(11, { seriesKey: 'm:2' }, USER);
+    if (allowed) {
+      await expect(result).resolves.toMatchObject({ from: { id: 11 }, to: { id: 22 } });
+    } else {
+      await expect(result).rejects.toMatchObject({
+        status: 400,
+        response: { errorCode: WebSerialErrorCode.TooManyJobs, errorMeta: { limit: 25 } },
+      });
+      expect(repo.findJobById).toHaveBeenCalledTimes(1);
+    }
+    expect(withUserJobQuota).toHaveBeenCalledWith(source.userId, 25, expect.any(Function), expect.any(Function));
+    expect(moveJob).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceExpectedStatus: status, targetJob: expect.objectContaining({ status: 'queued' }) }),
+    );
+    expect(repo.moveJob).not.toHaveBeenCalled();
+  });
+
   it('pauses and settles the source, marks moved and missing items, and preserves target job fields', async () => {
     const { service, repo, client, runner } = setup();
     const source = jobRow({

@@ -84,4 +84,8 @@ DO $$ BEGIN
 END $$;
 --> statement-breakpoint
 ALTER TABLE "reading_progress" ADD COLUMN IF NOT EXISTS "alignment_projected_at" timestamp with time zone;
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "audiobook_alignment_jobs_active_idx" ON "audiobook_alignment" USING btree ("status", "updated_at") WHERE "status" IN ('pending', 'building', 'failed');
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "audiobook_alignment_jobs_finish_idx" ON "audiobook_alignment" USING btree ("updated_at" DESC, "id" DESC);
 `;

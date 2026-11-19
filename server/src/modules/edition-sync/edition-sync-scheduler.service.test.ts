@@ -70,9 +70,14 @@ function setup(options: { runHours?: number; cron?: string | null; onFilesChange
     ),
     cancelCurrent: vi.fn().mockResolvedValue(undefined),
   };
-  const workerClient = { healthState: vi.fn().mockResolvedValue(okHealth), cancel: vi.fn().mockResolvedValue({}) };
+  const workerClient = {
+    healthState: vi.fn().mockResolvedValue(okHealth),
+    lastKnownHealthState: vi.fn().mockResolvedValue(okHealth),
+    cancel: vi.fn().mockResolvedValue({}),
+  };
   const upstreamWorker = { currentJobId: null as string | null };
   const registry = new SchedulerRegistry();
+  const jobChanges = { notify: vi.fn() };
   const service = new EditionSyncSchedulerService(
     repo as never,
     queue as never,
@@ -80,9 +85,10 @@ function setup(options: { runHours?: number; cron?: string | null; onFilesChange
     workerClient as never,
     upstreamWorker as never,
     registry,
+    jobChanges as never,
   );
   const finished = () => vi.waitFor(() => expect(repo.finishRun).toHaveBeenCalled());
-  return { service, repo, queue, indexer, workerClient, upstreamWorker, registry, finished };
+  return { service, repo, queue, indexer, workerClient, upstreamWorker, registry, jobChanges, finished };
 }
 
 describe('EditionSyncSchedulerService', () => {
@@ -280,6 +286,34 @@ describe('EditionSyncSchedulerService', () => {
     expect(repo.finishRun).toHaveBeenCalledWith(5, expect.objectContaining({ stopReason: 'stopped' }));
   });
 
+  it('tells the Jobs area when a run starts, is stopped and ends, as ownerless state changes', async () => {
+    const { service, queue, indexer, jobChanges, finished } = setup();
+    queue.claimNext.mockResolvedValue(claimFor(1));
+    let finish: (value: EditionSyncIndexOutcome) => void = () => undefined;
+    indexer.indexBook.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+    indexer.cancelCurrent.mockImplementationOnce(() => {
+      finish(outcome(claimFor(1), 'cancelled'));
+      return Promise.resolve();
+    });
+
+    await service.startManualRun();
+    expect(jobChanges.notify).toHaveBeenCalledTimes(1);
+    expect(service.activeTrigger()).toBe('manual');
+    await vi.waitFor(() => expect(indexer.indexBook).toHaveBeenCalled());
+    expect(service.currentBookId()).toBe(1);
+    await service.stop();
+    await finished();
+    await vi.waitFor(() => expect(jobChanges.notify).toHaveBeenCalledTimes(3));
+    expect(jobChanges.notify).toHaveBeenCalledWith({ type: 'edition-sync', ownerId: null, state: true });
+    expect(service.activeTrigger()).toBeNull();
+    expect(service.currentBookId()).toBeNull();
+  });
+
+  it('works without the Jobs area', () => {
+    const service = new EditionSyncSchedulerService({} as never, {} as never, {} as never, {} as never, {} as never, new SchedulerRegistry());
+    expect(() => service.changed()).not.toThrow();
+  });
+
   it('registers the cron job in the system time zone and removes it for Never', () => {
     const { service, registry } = setup();
     expect(service.syncSchedule('0 2 * * *', true)).toBe(true);
@@ -319,6 +353,18 @@ describe('EditionSyncSchedulerService', () => {
     expect(repo.markInterruptedRows).toHaveBeenCalled();
     expect(registry.doesExist('cron', EDITION_SYNC_CRON_JOB_NAME)).toBe(true);
     service.onModuleDestroy();
+  });
+
+  it('tells the Jobs area on boot only when it closed something', async () => {
+    const quiet = setup();
+    await quiet.service.onApplicationBootstrap();
+    expect(quiet.jobChanges.notify).not.toHaveBeenCalled();
+    quiet.service.onModuleDestroy();
+    const interrupted = setup();
+    interrupted.repo.markInterruptedRows.mockResolvedValue(1);
+    await interrupted.service.onApplicationBootstrap();
+    expect(interrupted.jobChanges.notify).toHaveBeenCalledWith({ type: 'edition-sync', ownerId: null, state: true });
+    interrupted.service.onModuleDestroy();
   });
   it('defers pinned runs while the worker is down and logs once per state', async () => {
     const { service, repo, workerClient, finished } = setup();
@@ -432,6 +478,14 @@ it('does not register, pin or start runs when the server switch is off', async (
   expect(repo.createRun).not.toHaveBeenCalled();
   expect(indexer.indexBook).not.toHaveBeenCalled();
   await expect(service.stop()).resolves.toMatchObject({ run: { active: false }, counts: { queued: 0 }, backlogEstimate: { books: 0 } });
+});
+
+it('reports the last known worker state without waiting on a fresh probe', async () => {
+  const { service, workerClient } = setup();
+  workerClient.lastKnownHealthState.mockResolvedValue({ state: 'unreachable' });
+
+  expect((await service.getAdminStatus()).worker).toMatchObject({ configured: true, state: 'unreachable' });
+  expect(workerClient.healthState).not.toHaveBeenCalled();
 });
 
 it('maps the latest finished run to ISO dates and reports null without one', async () => {

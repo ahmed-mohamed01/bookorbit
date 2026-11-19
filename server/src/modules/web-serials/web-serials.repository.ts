@@ -623,7 +623,7 @@ export class WebSerialsRepository {
     const now = new Date();
     const [row] = await this.db
       .update(webSerialJobs)
-      .set({ status: 'running', startedAt: sql`coalesce(${webSerialJobs.startedAt}, ${now})`, heartbeatAt: now, updatedAt: now })
+      .set({ status: 'running', startedAt: sql`coalesce(${webSerialJobs.startedAt}, ${now})`, updatedAt: now })
       .where(and(eq(webSerialJobs.id, id), eq(webSerialJobs.status, 'queued')))
       .returning();
     return row;
@@ -649,11 +649,6 @@ export class WebSerialsRepository {
       .where(and(eq(webSerialJobs.id, id), inArray(webSerialJobs.status, from), unsettled))
       .returning({ id: webSerialJobs.id });
     return row;
-  }
-
-  async heartbeat(id: number): Promise<void> {
-    const now = new Date();
-    await this.db.update(webSerialJobs).set({ heartbeatAt: now, updatedAt: now }).where(eq(webSerialJobs.id, id));
   }
 
   /** Only an active job takes it, so a cancelled job never shows progress again. */
@@ -689,12 +684,12 @@ export class WebSerialsRepository {
   }
 
   async resumeJob(id: number): Promise<WebSerialJobId | undefined> {
-    return this.transitionJob(id, ['paused'], { status: 'queued', queueOrder: QUEUE_ORDER_NOW, heartbeatAt: null });
+    return this.transitionJob(id, ['paused'], { status: 'queued', queueOrder: QUEUE_ORDER_NOW });
   }
 
   /** Puts a job a failed move paused back where it stood in the queue. */
   async restoreAfterMove(id: number, queueOrder: number): Promise<WebSerialJobId | undefined> {
-    return this.transitionJob(id, ['paused'], { status: 'queued', queueOrder, heartbeatAt: null });
+    return this.transitionJob(id, ['paused'], { status: 'queued', queueOrder });
   }
 
   async moveJobToTop(id: number, userId: number | null = null): Promise<WebSerialJobId | undefined> {
@@ -752,7 +747,6 @@ export class WebSerialsRepository {
           message: null,
           currentUnit: null,
           finishedAt: null,
-          heartbeatAt: null,
           queueOrder: QUEUE_ORDER_NOW,
           updatedAt: new Date(),
         })
@@ -795,7 +789,6 @@ export class WebSerialsRepository {
           message: null,
           currentUnit: null,
           finishedAt: null,
-          heartbeatAt: null,
           queueOrder: QUEUE_ORDER_NOW,
           updatedAt: new Date(),
         })
@@ -931,7 +924,6 @@ export class WebSerialsRepository {
           message: input.sourceMessage,
           currentUnit: null,
           finishedAt: now,
-          heartbeatAt: null,
           updatedAt: now,
         })
         .where(and(eq(webSerialJobs.id, input.sourceJobId), eq(webSerialJobs.status, input.sourceExpectedStatus)))

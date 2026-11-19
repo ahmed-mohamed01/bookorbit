@@ -30,7 +30,8 @@ function resetDisplaySettings() {
   settings.gridCardPrimaryLabel.value = 'hidden'
   settings.gridCardSecondaryLabel.value = 'hidden'
   settings.cardInfoMode.value = 'hover-overlay'
-  settings.thumbnailClickAction.value = 'reader'
+  settings.thumbnailClickAction.value = 'details'
+  settings.openHighlightsInPeek.value = false
   settings.formatBadgeStyle.value = 'underline'
 }
 
@@ -53,7 +54,7 @@ describe('useDisplaySettings preferences helpers', () => {
       showJumpRails: true,
       bookSpineOverlay: 'strong',
       bookCoverDisplayMode: 'natural-bottom',
-      thumbnailClickAction: 'reader',
+      thumbnailClickAction: 'details',
     })
   })
 
@@ -232,9 +233,9 @@ describe('useDisplaySettings preferences helpers', () => {
     expect(snap.thumbnailClickAction).toBe('details')
   })
 
-  it('defaults thumbnailClickAction to reader', () => {
+  it('defaults thumbnailClickAction to details', () => {
     resetDisplaySettings()
-    expect(settings.thumbnailClickAction.value).toBe('reader')
+    expect(settings.thumbnailClickAction.value).toBe('details')
   })
 
   it('sanitizes valid thumbnailClickAction values', () => {
@@ -250,6 +251,25 @@ describe('useDisplaySettings preferences helpers', () => {
   it('applies thumbnailClickAction from preferences', () => {
     applyDisplayPreferences({ thumbnailClickAction: 'details' })
     expect(settings.thumbnailClickAction.value).toBe('details')
+  })
+
+  it('defaults openHighlightsInPeek to off and includes it in the snapshot', () => {
+    expect(settings.openHighlightsInPeek.value).toBe(false)
+    expect(getDisplayPreferencesSnapshot().openHighlightsInPeek).toBe(false)
+
+    settings.openHighlightsInPeek.value = true
+    expect(getDisplayPreferencesSnapshot().openHighlightsInPeek).toBe(true)
+  })
+
+  it('sanitizes openHighlightsInPeek to booleans only', () => {
+    expect(sanitizeDisplayPreferences({ openHighlightsInPeek: true })).toEqual({ openHighlightsInPeek: true })
+    expect(sanitizeDisplayPreferences({ openHighlightsInPeek: false })).toEqual({ openHighlightsInPeek: false })
+    expect(sanitizeDisplayPreferences({ openHighlightsInPeek: 'yes' })).toEqual({})
+  })
+
+  it('applies openHighlightsInPeek from preferences', () => {
+    applyDisplayPreferences({ openHighlightsInPeek: true })
+    expect(settings.openHighlightsInPeek.value).toBe(true)
   })
 
   it('sanitizes valid formatBadgeStyle values and drops the rest', () => {

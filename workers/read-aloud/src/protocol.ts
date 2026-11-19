@@ -24,6 +24,11 @@ export type RunnerJob = {
   workDir: string;
   /** Fork: the shared job folder that receives the output when the run happens in a local folder. */
   publishDir: string | null;
+  /**
+   * Scratch space for unpacked working copies. It sits under READ_ALOUD_TMP_DIR, not in the job folder:
+   * on a network share, a folder whose files were just closed can fail to delete (ENOTEMPTY).
+   */
+  scratchDir: string;
   epub: SourceFingerprint;
   audio: SourceFingerprint[];
   language: string;

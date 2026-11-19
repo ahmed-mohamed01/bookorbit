@@ -8,9 +8,12 @@ import { BookDockModule } from '../book-dock/book-dock.module';
 import { BookModule } from '../book/book.module';
 import { ChapterEditorModule } from '../chapter-editor/chapter-editor.module';
 import { FileWriteModule } from '../file-write/file-write.module';
+import { JobsModule } from '../jobs/jobs.module';
 import { MetadataModule } from '../metadata/metadata.module';
 import { AudioConvertBookConsolidationParticipant } from './audio-convert-book-consolidation.participant';
 import { AudioConvertConverterService } from './audio-convert-converter.service';
+import { AudioConvertJobPageRepository } from './audio-convert-job-page.repository';
+import { AudioConvertJobSource } from './audio-convert-job-source';
 import { AudioConvertPipelineService } from './audio-convert-pipeline.service';
 import { AudioConvertQueueService } from './audio-convert-queue.service';
 import { AudioConvertSchemaBootstrapService } from './audio-convert-schema-bootstrap.service';
@@ -29,6 +32,7 @@ import { AudioConvertService } from './audio-convert.service';
     ChapterEditorModule,
     CommonModule,
     FileWriteModule,
+    JobsModule,
     MetadataModule,
     SelfWriteRegistryModule,
   ],
@@ -41,6 +45,8 @@ import { AudioConvertService } from './audio-convert.service';
     AudioConvertQueueService,
     AudioConvertPipelineService,
     AudioConvertService,
+    AudioConvertJobPageRepository,
+    AudioConvertJobSource,
   ],
 })
 export class AudioConvertModule {}

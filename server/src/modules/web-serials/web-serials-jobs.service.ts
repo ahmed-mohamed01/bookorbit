@@ -1,5 +1,5 @@
 import { Permission } from '@bookorbit/types';
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 
 import type {
   CreateWebSerialJobInput,
@@ -13,6 +13,7 @@ import type {
 } from '@bookorbit/types';
 import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
+import { JobChangesService } from '../jobs/job-changes.service';
 import { LibraryService } from '../library/library.service';
 import { WebSerialsLookupService } from './lookup/web-serials-lookup.service';
 import { WebSerialsCatalogService } from './web-serials-catalog.service';
@@ -40,11 +41,11 @@ const QUEUE_EVENT = 'web_serials.job.queue';
 const REMOVE_EVENT = 'web_serials.job.remove';
 const CLEAR_EVENT = 'web_serials.job.clear_finished';
 const CANCEL_SETTLE_TIMEOUT_MS = 10_000;
-const MAX_ACTIVE_JOBS_PER_USER = 25;
+export const MAX_ACTIVE_JOBS_PER_USER = 25;
 const REQUEUED_ON_RETRY = new Set<WebSerialJobStatus>(['completed', 'completed_with_gaps', 'failed']);
 const LIBRARY_FORMAT: Record<WebSerialKind, string> = { manga: 'cbz', novel: 'epub' };
 
-function tooManyJobs(): BadRequestException {
+export function tooManyJobs(): BadRequestException {
   return new BadRequestException(
     codedError('You have too many downloads waiting, running or paused. Wait for some to finish, or cancel one.', WebSerialErrorCode.TooManyJobs, {
       limit: MAX_ACTIVE_JOBS_PER_USER,
@@ -67,6 +68,7 @@ export class WebSerialJobsService {
     private readonly lookupService: WebSerialsLookupService,
     private readonly runner: WebSerialsJobRunnerService,
     private readonly importer: WebSerialsImportService,
+    @Optional() private readonly jobChanges?: JobChangesService,
   ) {}
 
   async createJob(request: CreateWebSerialJobRequest, user: RequestUser): Promise<WebSerialJob> {
@@ -143,6 +145,7 @@ export class WebSerialJobsService {
         metadata,
       }),
     );
+    this.changed(user.id);
     this.logger.log(
       `[${CREATE_EVENT}] [end] jobId=${created.id} userId=${user.id} kind=${kind} packaging=${input.packaging} libraryId=${input.libraryId} durationMs=${Date.now() - startedAt} title="${sanitizeLogValue(created.title)}" - job queued`,
     );
@@ -184,8 +187,8 @@ export class WebSerialJobsService {
   }
 
   async cancelJob(id: number, user: RequestUser): Promise<WebSerialJob> {
-    await this.getAccessibleJob(id, user);
-    await this.repo.cancelJob(id);
+    const job = await this.getAccessibleJob(id, user);
+    if (await this.repo.cancelJob(id)) this.changed(job.userId);
     this.runner.abortJob(id);
     if (await this.runner.waitForJobToSettle(id, CANCEL_SETTLE_TIMEOUT_MS)) await this.discardWorkDir(id);
     return this.requireJob(id, user);
@@ -199,6 +202,7 @@ export class WebSerialJobsService {
       throw new ConflictException(
         codedError('Only downloads that failed or finished with gaps can be retried', WebSerialErrorCode.JobRetryNotAllowed),
       );
+    this.changed(job.userId);
     return this.requireJob(id, user);
   }
 
@@ -209,9 +213,10 @@ export class WebSerialJobsService {
 
   async pauseJob(id: number, user: RequestUser): Promise<WebSerialJob> {
     const startedAt = Date.now();
-    await this.getAccessibleJob(id, user);
+    const job = await this.getAccessibleJob(id, user);
     const paused = await this.repo.pauseJob(id);
     if (!paused) throw new ConflictException(codedError('Only waiting or running downloads can be paused', WebSerialErrorCode.JobPauseNotAllowed));
+    this.changed(job.userId);
     this.runner.interruptChapterFetch(id);
     this.logger.log(`[${QUEUE_EVENT}] [end] jobId=${id} userId=${user.id} durationMs=${Date.now() - startedAt} action=pause - job paused`);
     return this.requireJob(id, user);
@@ -230,15 +235,17 @@ export class WebSerialJobsService {
       (repo) => repo.countActiveJobs(job.userId),
     );
     if (!resumed) throw new ConflictException(codedError('Only paused downloads can be resumed', WebSerialErrorCode.JobResumeNotAllowed));
+    this.changed(job.userId);
     this.logger.log(`[${QUEUE_EVENT}] [end] jobId=${id} userId=${user.id} durationMs=${Date.now() - startedAt} action=resume - job resumed`);
     return this.requireJob(id, user);
   }
 
   async moveJobToTop(id: number, user: RequestUser): Promise<WebSerialJob> {
     const startedAt = Date.now();
-    await this.getAccessibleJob(id, user);
+    const job = await this.getAccessibleJob(id, user);
     const moved = await this.repo.moveJobToTop(id, user.isSuperuser || user.permissions.includes(Permission.ManageAppSettings) ? null : user.id);
     if (!moved) throw new ConflictException(codedError('Only waiting downloads can be moved up the queue', WebSerialErrorCode.JobMoveUpNotAllowed));
+    this.changed(job.userId);
     this.logger.log(
       `[${QUEUE_EVENT}] [end] jobId=${id} userId=${user.id} durationMs=${Date.now() - startedAt} action=move_to_top - job moved to the front`,
     );
@@ -251,6 +258,7 @@ export class WebSerialJobsService {
     const startedAt = Date.now();
     const removed = await this.repo.deleteFinishedJob(id);
     if (!removed) throw new ConflictException(codedError('Cancel it first.', WebSerialErrorCode.JobCancelFirst));
+    this.changed(job.userId);
     await this.discardWorkDir(id);
     this.logger.log(`[${REMOVE_EVENT}] [end] jobId=${id} userId=${user.id} durationMs=${Date.now() - startedAt} - finished job removed`);
   }
@@ -260,6 +268,7 @@ export class WebSerialJobsService {
     const startedAt = Date.now();
     this.logger.log(`[${CLEAR_EVENT}] [start] userId=${user.id} scope=${scope} - clearing finished jobs`);
     const removedIds = await this.repo.clearFinishedJobs(userId);
+    if (removedIds.length > 0) this.changed(userId);
     for (const jobId of removedIds) await this.discardWorkDir(jobId);
     this.logger.log(
       `[${CLEAR_EVENT}] [end] userId=${user.id} scope=${scope} durationMs=${Date.now() - startedAt} removed=${removedIds.length} - finished jobs cleared`,
@@ -277,6 +286,7 @@ export class WebSerialJobsService {
     await this.assertRoomToRequeue(job);
     const rearmed = await this.repo.withUserJobQuota(job.userId, MAX_ACTIVE_JOBS_PER_USER, tooManyJobs, (repo) => repo.retryItem(jobId, itemId));
     if (!rearmed) throw new ConflictException(codedError('Only failed items can be retried', WebSerialErrorCode.ItemRetryNotAllowed));
+    this.changed(job.userId);
     this.logger.log(
       `[${QUEUE_EVENT}] [end] jobId=${jobId} itemId=${itemId} userId=${user.id} durationMs=${Date.now() - startedAt} action=retry_item - item set to retry`,
     );
@@ -285,12 +295,19 @@ export class WebSerialJobsService {
 
   async pauseQueue(user: RequestUser): Promise<{ queuePaused: boolean }> {
     await this.settings.setQueuePaused(true, user);
+    this.changed(null);
     return { queuePaused: true };
   }
 
   async resumeQueue(user: RequestUser): Promise<{ queuePaused: boolean }> {
     await this.settings.setQueuePaused(false, user);
+    this.changed(null);
     return { queuePaused: false };
+  }
+
+  /** Tells the Jobs area a download changed status. */
+  changed(ownerId: number | null): void {
+    this.jobChanges?.notify({ type: 'web-serial', ownerId, state: true });
   }
 
   async discardWorkDir(jobId: number): Promise<void> {

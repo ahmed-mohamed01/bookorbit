@@ -1,12 +1,11 @@
 import { computed, onScopeDispose, ref, watch, type Ref } from 'vue'
 import { Permission, type EditionSyncBookState } from '@bookorbit/types'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
+import { followJobType } from '@/features/jobs/lib/follow-job-type'
 import { i18n } from '@/i18n'
 import { fetchEditionSyncBookState, retryEditionSyncBook, runEditionSyncBookNow, updateEditionSyncBookState } from '../api/edition-sync.api'
 import { useEditionSyncSettings } from './useEditionSyncSettings'
 
-export const EDITION_SYNC_POLL_MS = 10_000
-export const EDITION_SYNC_QUEUED_POLL_MS = 60_000
 export const EDITION_SYNC_VIEW_REFRESH_MS = 30_000
 
 function messageOf(err: unknown, fallbackKey: string): string {
@@ -26,7 +25,7 @@ export function useEditionSyncBookState(bookId: Ref<number>, filesKey?: () => st
   let settingsRequestId = 0
   let stateRequestId = 0
   let loadRequestId = 0
-  let pollTimer: ReturnType<typeof setTimeout> | null = null
+  let stopFollowing: (() => void) | null = null
   let lastFetchAt = 0
   let disposed = false
 
@@ -37,15 +36,14 @@ export function useEditionSyncBookState(bookId: Ref<number>, filesKey?: () => st
   const eligible = computed(() => state.value?.eligible !== false)
   const busy = computed(() => loading.value || saving.value || acting.value)
   const polling = computed(() => syncEnabled.value && ['running', 'queued', 'stale'].includes(state.value?.index.status ?? ''))
-  const pollDelay = computed(() => {
-    const current = state.value
-    if (current?.index.status === 'queued' && !current.pinned && !current.runActive) return EDITION_SYNC_QUEUED_POLL_MS
-    return EDITION_SYNC_POLL_MS
-  })
 
-  function stopPolling(): void {
-    if (pollTimer) clearTimeout(pollTimer)
-    pollTimer = null
+  function unfollow(): void {
+    stopFollowing?.()
+    stopFollowing = null
+  }
+
+  function running(): boolean {
+    return state.value?.index.status === 'running'
   }
 
   async function refresh(): Promise<void> {
@@ -56,21 +54,18 @@ export function useEditionSyncBookState(bookId: Ref<number>, filesKey?: () => st
       const next = await fetchEditionSyncBookState(targetBookId)
       if (!disposed && requestId === stateRequestId && bookId.value === targetBookId) state.value = next
     } catch {
-      // A failed poll keeps the last known state; the next tick retries.
+      // A failed refresh keeps the last known state; the next push or poll retries.
     }
   }
 
-  function schedulePoll(): void {
-    stopPolling()
-    if (disposed || !polling.value) return
-    pollTimer = setTimeout(() => {
-      pollTimer = null
-      void refresh().finally(schedulePoll)
-    }, pollDelay.value)
+  /** While the index is moving, the Jobs push for edition sync keeps the state current. */
+  function followWhileActive(): void {
+    if (disposed || !polling.value) return unfollow()
+    stopFollowing ??= followJobType('edition-sync', refresh, running)
   }
 
-  watch(polling, schedulePoll)
-  watch(state, schedulePoll)
+  watch(bookId, unfollow, { flush: 'sync' })
+  watch(state, followWhileActive)
   if (filesKey) {
     watch(filesKey, () => {
       if (visible.value) void refresh()
@@ -85,7 +80,7 @@ export function useEditionSyncBookState(bookId: Ref<number>, filesKey?: () => st
   document.addEventListener('visibilitychange', refreshOnView)
   onScopeDispose(() => {
     disposed = true
-    stopPolling()
+    unfollow()
     document.removeEventListener('visibilitychange', refreshOnView)
   })
 

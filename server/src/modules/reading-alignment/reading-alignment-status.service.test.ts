@@ -71,6 +71,7 @@ function build(overrides?: {
       .fn()
       .mockResolvedValue(overrides?.pair === undefined ? { textBookId: TEXT_BOOK_ID, audioBookId: AUDIO_BOOK_ID } : overrides.pair),
   };
+  const jobChanges = { notify: vi.fn() };
   const service = new ReadingAlignmentStatusService(
     config as never,
     repo as never,
@@ -78,8 +79,9 @@ function build(overrides?: {
     whisper as never,
     bookService as never,
     pairService as never,
+    jobChanges as never,
   );
-  return { service, config, repo, buildService, whisper, bookService, pairService };
+  return { service, config, repo, buildService, whisper, bookService, pairService, jobChanges };
 }
 
 describe('ReadingAlignmentStatusService.requestBuild', () => {
@@ -372,6 +374,16 @@ describe('ReadingAlignmentStatusService.cancelBuild', () => {
     expect(repo.deleteAlignment).toHaveBeenCalledWith(3);
   });
 
+  it('tells the Jobs area only when a cancel removed a build', async () => {
+    const removed = build({ existing: alignmentRow({ status: 'building' }) });
+    await removed.service.cancelBuild(BOOK_ID, USER);
+    expect(removed.jobChanges.notify).toHaveBeenCalledWith({ type: 'whisper-alignment', ownerId: null, state: true });
+
+    const kept = build({ existing: alignmentRow({ status: 'ready' }) });
+    await kept.service.cancelBuild(BOOK_ID, USER);
+    expect(kept.jobChanges.notify).not.toHaveBeenCalled();
+  });
+
   it('answers 404 when the book has no pair', async () => {
     const { service, repo } = build({ pair: null });
 
@@ -407,5 +419,33 @@ describe('ReadingAlignmentStatusService.hasReadyAlignment', () => {
     const noPair = build({ pair: null, existing: alignmentRow() });
     await expect(noPair.service.hasReadyAlignment(BOOK_ID, USER.id)).resolves.toBe(false);
     expect(noPair.repo.getAlignmentByPair).not.toHaveBeenCalled();
+  });
+});
+
+describe('ReadingAlignmentStatusService.rebuildCouldChange', () => {
+  const SETTINGS = { whisperModel: '/models/ggml-base.en.bin', readingAlignmentSampleIntervalSec: 1200, readingAlignmentClipSeconds: 15 };
+  const built = { ...alignmentRow({ status: 'unalignable' }), whisperModel: 'ggml-base.en.bin', sampleIntervalSec: 1200, clipSeconds: 15 };
+
+  function withSettings(overrides?: Parameters<typeof build>[0]) {
+    const made = build(overrides);
+    Object.assign(made.config, SETTINGS);
+    return made;
+  }
+
+  it('is false when the same files would be rebuilt with the same settings', async () => {
+    await expect(withSettings().service.rebuildCouldChange(built)).resolves.toBe(false);
+  });
+
+  it('is true once the audio or ebook changed', async () => {
+    const changed = withSettings({ audioFiles: [{ fileId: 9, absolutePath: '/books/x.m4b', durationSeconds: 41 }] });
+    await expect(changed.service.rebuildCouldChange(built)).resolves.toBe(true);
+  });
+
+  it('is true without reading files when the whisper model, interval or clip length changed', async () => {
+    for (const change of [{ whisperModel: 'ggml-small.bin' }, { sampleIntervalSec: 600 }, { clipSeconds: 30 }]) {
+      const made = withSettings();
+      await expect(made.service.rebuildCouldChange({ ...built, ...change })).resolves.toBe(true);
+      expect(made.repo.findEbookFile).not.toHaveBeenCalled();
+    }
   });
 });

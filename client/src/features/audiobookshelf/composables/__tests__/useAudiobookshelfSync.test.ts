@@ -94,6 +94,28 @@ describe('useAudiobookshelfSync', () => {
     expect(mockFetchBookStates).toHaveBeenCalledTimes(3)
   })
 
+  it('refetches settings past the cache after a sync', async () => {
+    mockSync.mockResolvedValue(RESULT)
+    const { useAudiobookshelfSettings } = await import('../useAudiobookshelfSettings')
+    await useAudiobookshelfSettings().fetchSettings()
+    const c = await loadComposable()
+
+    await c.syncNow()
+
+    expect(mockFetchSettings).toHaveBeenCalledTimes(2)
+  })
+
+  it('refetches settings past the cache after a failed sync', async () => {
+    mockSync.mockRejectedValue(new Error('boom'))
+    const { useAudiobookshelfSettings } = await import('../useAudiobookshelfSettings')
+    await useAudiobookshelfSettings().fetchSettings()
+    const c = await loadComposable()
+
+    await c.syncNow()
+
+    expect(mockFetchSettings).toHaveBeenCalledTimes(2)
+  })
+
   it('fullResync runs the full-resync endpoint', async () => {
     mockFullResync.mockResolvedValue(RESULT)
     const c = await loadComposable()

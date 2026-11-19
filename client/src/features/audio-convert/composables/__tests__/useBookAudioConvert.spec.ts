@@ -3,8 +3,28 @@ import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AudioConvertJob, AudioConvertPlan } from '@bookorbit/types'
 
+import { JOB_TYPE_FALLBACK_POLL_MS, JOB_TYPE_REFRESH_GAP_MS } from '@/features/jobs/lib/follow-job-type'
+
 import * as api from '../../api/audio-convert'
 import { useBookAudioConvert } from '../useBookAudioConvert'
+
+const socket = vi.hoisted(() => ({
+  listener: null as null | { changed: (event: { type: string; state: boolean }) => void; live: (live: boolean) => void },
+  stop: vi.fn<() => void>(),
+}))
+
+vi.mock('@/features/jobs/lib/jobs-socket', () => ({
+  listenToJobs: (listener: NonNullable<typeof socket.listener>) => {
+    socket.listener = listener
+    listener.live(true)
+    return socket.stop
+  },
+}))
+
+async function push(state: boolean): Promise<void> {
+  socket.listener?.changed({ type: 'audio-convert', state })
+  await vi.advanceTimersByTimeAsync(JOB_TYPE_REFRESH_GAP_MS)
+}
 
 vi.mock('../../api/audio-convert', () => {
   class AudioConvertHttpError extends Error {
@@ -83,6 +103,7 @@ function setup(onConverted = vi.fn<(job: AudioConvertJob) => void>(), onFailed =
 
 beforeEach(() => {
   vi.useFakeTimers()
+  socket.listener = null
 })
 
 afterEach(() => {
@@ -93,18 +114,19 @@ afterEach(() => {
 })
 
 describe('useBookAudioConvert', () => {
-  it('loads the plan without polling when nothing is running', async () => {
+  it('loads the plan without following the jobs push when nothing is active', async () => {
     fetchPlan.mockResolvedValue(plan())
     const { convert } = setup()
     await convert.load()
 
     expect(convert.plan.value?.outputName).toBe('Valkyrie.m4b')
     expect(convert.active.value).toBe(false)
-    await vi.advanceTimersByTimeAsync(5000)
+    expect(socket.listener).toBeNull()
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_FALLBACK_POLL_MS * 2)
     expect(fetchPlan).toHaveBeenCalledTimes(1)
   })
 
-  it('starts a conversion, polls the job, and reports success once', async () => {
+  it('starts a conversion, follows the job from the push, and reports success once', async () => {
     fetchPlan
       .mockResolvedValueOnce(plan())
       .mockResolvedValueOnce(plan(job('running')))
@@ -117,36 +139,28 @@ describe('useBookAudioConvert', () => {
     expect(convertBook).toHaveBeenCalledWith(5, { codec: 'auto', bitrate: '128k', channels: null })
     expect(convert.active.value).toBe(true)
 
-    await vi.advanceTimersByTimeAsync(2000)
+    await push(true)
     expect(convert.job.value?.status).toBe('running')
-    await vi.advanceTimersByTimeAsync(2000)
+    await push(true)
     expect(convert.job.value?.status).toBe('success')
     expect(onConverted).toHaveBeenCalledTimes(1)
+    expect(socket.stop).toHaveBeenCalled()
 
-    await vi.advanceTimersByTimeAsync(6000)
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_FALLBACK_POLL_MS * 2)
     expect(fetchPlan).toHaveBeenCalledTimes(3)
   })
 
-  it('polls a waiting job every thirty seconds, not every two', async () => {
-    fetchPlan.mockResolvedValue(plan(job('waiting')))
+  it('ignores progress pushes until the job runs', async () => {
+    fetchPlan.mockResolvedValueOnce(plan(job('waiting'))).mockResolvedValue(plan(job('running')))
     const { convert } = setup()
     await convert.load()
     expect(convert.active.value).toBe(true)
 
-    await vi.advanceTimersByTimeAsync(29_000)
+    await push(false)
     expect(fetchPlan).toHaveBeenCalledTimes(1)
-    await vi.advanceTimersByTimeAsync(1000)
-    expect(fetchPlan).toHaveBeenCalledTimes(2)
-  })
-
-  it('switches to the fast poll once a waiting job is queued', async () => {
-    fetchPlan.mockResolvedValueOnce(plan(job('waiting'))).mockResolvedValue(plan(job('queued')))
-    const { convert } = setup()
-    await convert.load()
-
-    await vi.advanceTimersByTimeAsync(30_000)
-    expect(convert.job.value?.status).toBe('queued')
-    await vi.advanceTimersByTimeAsync(2000)
+    await push(true)
+    expect(convert.job.value?.status).toBe('running')
+    await push(false)
     expect(fetchPlan).toHaveBeenCalledTimes(3)
   })
 
@@ -156,7 +170,7 @@ describe('useBookAudioConvert', () => {
     const { convert, onConverted, onFailed } = setup()
     await convert.load()
 
-    await vi.advanceTimersByTimeAsync(2000)
+    await push(true)
     expect(onFailed).toHaveBeenCalledTimes(1)
     expect(onFailed).toHaveBeenCalledWith(failed)
     expect(onConverted).not.toHaveBeenCalled()

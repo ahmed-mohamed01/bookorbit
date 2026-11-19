@@ -5,6 +5,7 @@ import { appConfig } from '../../config/config';
 import { BOOK_DOCK_BOOKS_FILED } from '../book-dock/book-dock-events.service';
 import { ChapterEditorService } from '../chapter-editor/chapter-editor.service';
 import { AudioConvertConverterService } from './audio-convert-converter.service';
+import { JobChangesService } from '../jobs/job-changes.service';
 import { AudioConvertPipelineService } from './audio-convert-pipeline.service';
 import { AudioConvertRepository } from './audio-convert.repository';
 import type { AudioConvertJobRow, AudioConvertSettingsRow } from './schema/audio-convert.schema';
@@ -85,6 +86,7 @@ async function setup() {
   };
   const chapters = { bulkLookup: vi.fn().mockResolvedValue({ status: 'applied' }) };
   const converter = { plan: vi.fn().mockResolvedValue({ status: 'can_convert' }) };
+  const jobChanges = { notify: vi.fn() };
   const module = await Test.createTestingModule({
     providers: [
       AudioConvertPipelineService,
@@ -92,9 +94,10 @@ async function setup() {
       { provide: ChapterEditorService, useValue: chapters },
       { provide: AudioConvertConverterService, useValue: converter },
       { provide: appConfig.KEY, useValue: { nodeEnv: 'test' } },
+      { provide: JobChangesService, useValue: jobChanges },
     ],
   }).compile();
-  return { pipeline: module.get(AudioConvertPipelineService), repo, chapters, converter };
+  return { pipeline: module.get(AudioConvertPipelineService), repo, chapters, converter, jobChanges };
 }
 
 describe('AudioConvertPipelineService', () => {
@@ -253,6 +256,13 @@ describe('AudioConvertPipelineService', () => {
         ['waiting'],
         expect.objectContaining({ stage: 'chapters', result: expect.objectContaining({ metadata: 'already_fetched' }) }),
       );
+    });
+
+    it('tells the Jobs area the waiting job moved to the chapters step, as a change of state', async () => {
+      const { pipeline, repo, jobChanges } = await setup();
+      repo.findBook.mockResolvedValue({ bookId: 9, lastMetadataFetchAt: new Date(0) });
+      await pipeline.step(job(), settings);
+      expect(jobChanges.notify).toHaveBeenCalledWith({ type: 'audio-convert', ownerId: job().userId, state: true });
     });
 
     it('keeps waiting while the fetch is pending and gives up after a day', async () => {

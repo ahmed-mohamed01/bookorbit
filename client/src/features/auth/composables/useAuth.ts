@@ -17,6 +17,8 @@ import { cancelPendingLocaleSync, hydrateLocalePreference, initLocaleSync } from
 import { useSetupStatus } from './useSetupStatus'
 import { disconnectAuthorEnrichmentSocket } from '@/features/settings/composables/useAuthorEnrichmentStatus'
 import { disconnectBookMetadataFetchSocket } from '@/features/book-metadata-fetch/composables/useBookMetadataFetchStatus'
+import { disconnectStoryGuideSocket } from '@/features/story-guide/lib/story-guide-socket'
+import { disconnectJobsSocket } from '@/features/jobs/lib/jobs-socket'
 import { resetWhatsNew } from '@/features/whats-new/composables/useWhatsNew'
 import { resetLibraries } from '@/features/library/composables/useLibraries'
 import { resetSmartScopes } from '@/features/smart-scope/composables/useSmartScopes'
@@ -79,6 +81,8 @@ function clearAuth() {
   setAccessToken(null)
   disconnectAuthorEnrichmentSocket()
   disconnectBookMetadataFetchSocket()
+  disconnectStoryGuideSocket()
+  disconnectJobsSocket()
   resetWhatsNew()
   clearSessionState()
 }

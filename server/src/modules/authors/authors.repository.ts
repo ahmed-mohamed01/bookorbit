@@ -2,9 +2,10 @@ import { Inject, Injectable } from '@nestjs/common';
 import { SQL, and, asc, desc, eq, exists, inArray, isNull, max, or, sql } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-import type { ContentFilterRules } from '@bookorbit/types';
+import type { AuthorGender, ContentFilterRules } from '@bookorbit/types';
 import { buildContentFilterClauses } from '../../common/utils/content-filter-sql.utils';
 import { accentInsensitiveIlike, buildSearchPattern } from '../../common/utils/accent-insensitive-search.utils';
+import { normalizeMetadataTextKey, normalizeMetadataTextKeySql } from '../../common/utils/metadata-text-normalize.utils';
 import { DB } from '../../db';
 import { refreshPrimaryAuthorSortNamesForAuthors, refreshPrimaryAuthorSortNamesForBooks } from '../../db/book-author-sort-key';
 import * as schema from '../../db/schema';
@@ -38,6 +39,7 @@ type AuthorBookIdRow = {
 };
 
 export type AuthorDetailRow = AuthorSummaryRow & {
+  gender: AuthorGender | null;
   birthDate: string | null;
   birthYear: number | null;
   deathDate: string | null;
@@ -187,6 +189,7 @@ export class AuthorsRepository {
         name: authors.name,
         sortName: authors.sortName,
         description: authors.description,
+        gender: authors.gender,
         birthDate: authors.birthDate,
         birthYear: authors.birthYear,
         deathDate: authors.deathDate,
@@ -209,6 +212,7 @@ export class AuthorsRepository {
         authors.name,
         authors.sortName,
         authors.description,
+        authors.gender,
         authors.birthDate,
         authors.birthYear,
         authors.deathDate,
@@ -302,11 +306,11 @@ export class AuthorsRepository {
 
   async findPortraitCandidates(ids: number[], names: string[]): Promise<{ id: number; name: string; hasPhoto: boolean }[]> {
     const uniqueIds = [...new Set(ids.filter((value): value is number => value != null))];
-    const loweredNames = [...new Set(names.map((value) => value.trim().toLowerCase()).filter(Boolean))];
-    if (uniqueIds.length === 0 && loweredNames.length === 0) return [];
+    const nameKeys = [...new Set(names.map(normalizeMetadataTextKey).filter((value): value is string => value != null))];
+    if (uniqueIds.length === 0 && nameKeys.length === 0) return [];
     const clauses: SQL[] = [];
     if (uniqueIds.length) clauses.push(inArray(authors.id, uniqueIds));
-    if (loweredNames.length) clauses.push(inArray(sql`lower(${authors.name})`, loweredNames));
+    if (nameKeys.length) clauses.push(inArray(normalizeMetadataTextKeySql(authors.name), nameKeys));
     return this.db
       .select({ id: authors.id, name: authors.name, hasPhoto: authors.hasPhoto })
       .from(authors)
@@ -393,6 +397,7 @@ export class AuthorsRepository {
       name: string;
       sortName: string | null;
       description: string | null;
+      gender: AuthorGender | null;
       hasPhoto: boolean;
       birthDate: string | null;
       birthYear: number | null;
@@ -412,6 +417,7 @@ export class AuthorsRepository {
       name: authors.name,
       sortName: authors.sortName,
       description: authors.description,
+      gender: authors.gender,
       hasPhoto: authors.hasPhoto,
       lastEnrichedAt: authors.lastEnrichedAt,
     });

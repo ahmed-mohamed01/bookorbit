@@ -112,7 +112,11 @@ function makePlaylistWithZeroLengthClip() {
   };
 }
 
-/** A Storyteller track-boundary clip closes chapter one: it ends before it begins, so its length is unknown. */
+/**
+ * A Storyteller track-boundary clip closes chapter one: it starts at the end of the first track and
+ * carries on into the second, so it ends before it begins and its length is unknown. The audiobook
+ * timeline runs 0-40 on the first track and 40-100 on the second, the same clock the sections declare.
+ */
 function makePlaylistWithTrackBoundaryClip() {
   const playlist = makePlaylist();
   return {
@@ -122,8 +126,8 @@ function makePlaylistWithTrackBoundaryClip() {
       { index: 1, href: 'OPS/chapter-2.xhtml', label: null, smilHref: 'OPS/chapter-2.smil', startSeconds: 45, durationSeconds: 55 },
     ],
     items: [
-      { ...playlist.items[0]!, textFragment: 'before', clipEndSeconds: 40, durationSeconds: 40 },
-      { ...playlist.items[1]!, textFragment: 'boundary', clipBeginSeconds: 7223.15, clipEndSeconds: 7198.408, durationSeconds: null },
+      { ...playlist.items[0]!, textFragment: 'before', audioHref: 'OPS/a.mp3', clipBeginSeconds: 0, clipEndSeconds: 40, durationSeconds: 40 },
+      { ...playlist.items[1]!, textFragment: 'boundary', audioHref: 'OPS/a.mp3', clipBeginSeconds: 40, clipEndSeconds: 0.5, durationSeconds: null },
       {
         ...playlist.items[1]!,
         index: 2,
@@ -131,8 +135,9 @@ function makePlaylistWithTrackBoundaryClip() {
         smilHref: 'OPS/chapter-2.smil',
         textHref: 'OPS/chapter-2.xhtml',
         textFragment: 'next',
-        clipBeginSeconds: 0,
-        clipEndSeconds: 55,
+        audioHref: 'OPS/b.mp3',
+        clipBeginSeconds: 5,
+        clipEndSeconds: 60,
         durationSeconds: 55,
       },
     ],
@@ -152,10 +157,24 @@ function makePlaylistWithMidSectionBoundaryClip() {
     items: [
       before!,
       boundary!,
-      { ...before!, index: 2, textFragment: 'after', clipBeginSeconds: 0, clipEndSeconds: 5, durationSeconds: 5 },
-      { ...next!, index: 3, clipEndSeconds: 50, durationSeconds: 50 },
+      { ...before!, index: 2, textFragment: 'after', audioHref: 'OPS/b.mp3', clipBeginSeconds: 5, clipEndSeconds: 10, durationSeconds: 5 },
+      { ...next!, index: 3, clipBeginSeconds: 10, clipEndSeconds: 60, durationSeconds: 50 },
     ],
   };
+}
+
+/** A narration that clips three sentences out of a 1000 second track, leaving long stretches of music and silence between them. */
+function makeGappedPlaylist() {
+  const playlist = makePlaylist();
+  const clip = (index: number, fragment: string, begin: number, end: number) => ({
+    ...playlist.items[0]!,
+    index,
+    textFragment: fragment,
+    clipBeginSeconds: begin,
+    clipEndSeconds: end,
+    durationSeconds: end - begin,
+  });
+  return { ...playlist, durationSeconds: 300, items: [clip(0, 'a', 0, 100), clip(1, 'b', 500, 600), clip(2, 'c', 900, 1000)] };
 }
 
 /** A Storyteller read-along EPUB beside the original, with the audiobook never imported. */
@@ -240,7 +259,7 @@ describe('AudiobookEbookProgressSyncService', () => {
   });
 
   it.each([
-    [42, 'boundary'],
+    [39, 'before'],
     [45, 'next'],
     [75, 'next'],
     [100, 'next'],
@@ -264,7 +283,7 @@ describe('AudiobookEbookProgressSyncService', () => {
   });
 
   it.each([
-    [42, 'boundary'],
+    [39, 'before'],
     [46, 'after'],
     [50, 'next'],
     [90, 'next'],
@@ -297,6 +316,31 @@ describe('AudiobookEbookProgressSyncService', () => {
     ).resolves.toBe(true);
 
     expect(bookRepo.upsertAudioProgress).toHaveBeenCalledWith(7, 5, 10, 50, 50, SOURCE_TIME);
+  });
+
+  it.each([
+    [40, 40],
+    [43, 43],
+    [45, 45],
+  ])('carries narration at %s seconds through a track-boundary clip into the next track', async (positionSeconds, audioSeconds) => {
+    const { service, bookRepo } = makeFixture();
+    mockBuildPlaylist.mockResolvedValueOnce(makePlaylistWithTrackBoundaryClip());
+    const boundary = positionSeconds < 45;
+
+    await expect(
+      service.syncFromEbookProgress({
+        userId: 7,
+        bookId: 5,
+        bookFileId: 30,
+        percentage: positionSeconds,
+        positionSeconds,
+        mediaOverlayFragment: boundary ? 'OPS/chapter.xhtml#boundary' : 'OPS/chapter-2.xhtml#next',
+        mediaOverlaySectionIndex: boundary ? 0 : 1,
+        sourceUpdatedAt: SOURCE_TIME,
+      }),
+    ).resolves.toBe(true);
+
+    expect(bookRepo.upsertAudioProgress).toHaveBeenCalledWith(7, 5, 10, audioSeconds, audioSeconds, SOURCE_TIME);
   });
 
   it.each([40, 75, 100])('skips a zero-length media-overlay clip when mapping %s seconds', async (positionSeconds) => {
@@ -378,6 +422,42 @@ describe('AudiobookEbookProgressSyncService', () => {
       expect.objectContaining({ fileId: 30, percentage: 50, positionSeconds: 50, sourceUpdatedAt: SOURCE_TIME }),
     );
     expect(positionConverter.nearestFragmentForPosition).toHaveBeenCalledWith(expect.objectContaining({ bookFileId: 20, sourceBookFileId: 30 }));
+  });
+
+  it('places audiobook progress on the sentence being spoken when the narration leaves gaps in the audio', async () => {
+    mockBuildPlaylist.mockResolvedValue(makeGappedPlaylist());
+    const { service, bookRepo } = makeFixture(1000);
+
+    await expect(
+      service.syncFromAudioProgress({ userId: 7, bookId: 5, currentFileId: 10, positionSeconds: 550, percentage: 55, syncKobo: false }),
+    ).resolves.toBe(true);
+
+    expect(bookRepo.upsertSyncedEpubProgressIfNewer).toHaveBeenCalledWith(
+      expect.objectContaining({ fileId: 30, positionSeconds: 150, mediaOverlayFragment: 'OPS/chapter.xhtml#b', percentage: 50 }),
+    );
+  });
+
+  it('moves to the sentence about to be spoken while the audiobook plays through a gap', async () => {
+    mockBuildPlaylist.mockResolvedValue(makeGappedPlaylist());
+    const { service, bookRepo } = makeFixture(1000);
+
+    await service.syncFromAudioProgress({ userId: 7, bookId: 5, currentFileId: 10, positionSeconds: 800, percentage: 80, syncKobo: false });
+
+    expect(bookRepo.upsertSyncedEpubProgressIfNewer).toHaveBeenCalledWith(
+      expect.objectContaining({ fileId: 30, positionSeconds: 200, mediaOverlayFragment: 'OPS/chapter.xhtml#c' }),
+    );
+  });
+
+  it('maps an EPUB position to the audiobook second its sentence starts at when the narration leaves gaps', async () => {
+    mockBuildPlaylist.mockResolvedValue(makeGappedPlaylist());
+    const { service, bookRepo, positionConverter } = makeFixture(1000);
+    positionConverter.nearestFragmentForPosition.mockResolvedValue({ status: 'exact', fragment: 'b', chapterIndex: 0 });
+
+    await expect(
+      service.syncFromEbookProgress({ userId: 7, bookId: 5, bookFileId: 20, percentage: 40, cfi: 'epubcfi(/6/4)', sourceUpdatedAt: SOURCE_TIME }),
+    ).resolves.toBe(true);
+
+    expect(bookRepo.upsertAudioProgress).toHaveBeenCalledWith(7, 5, 10, 500, 50, SOURCE_TIME);
   });
 
   it('skips a zero-length clip when propagating an EPUB narration position to a sibling', async () => {

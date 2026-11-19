@@ -4,6 +4,7 @@ import { buildEpubMediaOverlayPlaylistFromFile } from '../reader/epub/epub-media
 import { readAloudConfig } from '../../config/config';
 import { AudioPlayOrderService } from '../audiobook-chapters/audio-play-order.service';
 import { ReadAloudWorkerClientService, WorkerJobNotFoundError, WorkerUnreachableError } from '../read-aloud/read-aloud-worker-client.service';
+import { JobChangesService } from '../jobs/job-changes.service';
 import { ReadAloudWorkspace } from '../read-aloud/read-aloud-workspace.service';
 import { EditionSyncIndexStoreService } from './edition-sync-index-store.service';
 import { EditionSyncIndexerService } from './edition-sync-indexer.service';
@@ -28,6 +29,7 @@ describe('EditionSyncIndexerService', () => {
   const workspace = { ensure: vi.fn(), dir: vi.fn(), outputPath: vi.fn(), remove: vi.fn() };
   const store = { capture: vi.fn(), removeSupersededIndex: vi.fn() };
   const playOrder = { resolveAudioPlayOrder: vi.fn() };
+  const jobChanges = { notify: vi.fn() };
   const claim = { bookId: 7, workerJobId: 'job-id', pinned: false };
   const running = { status: 'running', stage: 'aligning', progress: 60, events: [] };
   const completed = { ...running, status: 'completed' };
@@ -65,6 +67,7 @@ describe('EditionSyncIndexerService', () => {
         { provide: EditionSyncIndexStoreService, useValue: store },
         { provide: AudioPlayOrderService, useValue: playOrder },
         { provide: readAloudConfig.KEY, useValue: { maxOutputBytes: 10000 } },
+        { provide: JobChangesService, useValue: jobChanges },
       ],
     }).compile();
     service = module.get(EditionSyncIndexerService);
@@ -98,6 +101,20 @@ describe('EditionSyncIndexerService', () => {
       new Date(1234),
     );
     expect(service.currentWorkerJobId).toBeNull();
+    expect(jobChanges.notify).toHaveBeenCalledWith({ type: 'edition-sync', ownerId: null, state: true });
+  });
+  it('tells the Jobs area about progress it writes, then that the build ended', async () => {
+    worker.start.mockResolvedValue(running);
+    worker.status.mockResolvedValueOnce(running).mockResolvedValue(completed);
+    expect((await run()).status).toBe('ready');
+    expect(repo.updateIndexRow).toHaveBeenCalledWith(7, { stage: 'aligning', progress: 60 });
+    expect(jobChanges.notify.mock.calls.map(([change]) => (change as { state: boolean }).state)).toEqual([false, true]);
+  });
+  it('tells the Jobs area a failed build ended', async () => {
+    worker.start.mockResolvedValue({ ...running, status: 'failed', errorCode: 'inference_failed', error: 'empty audio source' });
+    await run();
+    expect(jobChanges.notify).toHaveBeenCalledTimes(1);
+    expect(jobChanges.notify).toHaveBeenCalledWith({ type: 'edition-sync', ownerId: null, state: true });
   });
   it('preserves work and records explicit worker failures without automatic retry', async () => {
     worker.start.mockResolvedValue({ ...running, status: 'failed', errorCode: 'inference_failed', error: 'empty audio source' });

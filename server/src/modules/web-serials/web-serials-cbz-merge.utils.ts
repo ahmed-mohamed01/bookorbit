@@ -75,8 +75,7 @@ export async function mergeCbzChapters(
     }
     if (pages === 0) throw new BadGatewayException('The downloaded chapters do not contain any pages');
     await Promise.race([appendEntry(archive, Buffer.from(buildComicInfo(metadata), 'utf8'), 'ComicInfo.xml', rejectFailure), failure]);
-    void archive.finalize();
-    await Promise.race([closed, failure]);
+    await Promise.race([Promise.all([archive.finalize(), closed]), failure]);
     await rename(partialPath, outputPath);
     return { path: outputPath, pages, sizeBytes: (await stat(outputPath)).size };
   } catch (error) {

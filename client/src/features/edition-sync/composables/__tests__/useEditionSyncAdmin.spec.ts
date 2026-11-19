@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { effectScope } from 'vue'
+import { effectScope, nextTick } from 'vue'
 import type { EditionSyncAdminSettings, EditionSyncAdminStatus, EditionSyncClearUnusedResult } from '@bookorbit/types'
 
 const mocks = vi.hoisted(() => ({
@@ -10,6 +10,23 @@ const mocks = vi.hoisted(() => ({
   start: vi.fn<() => Promise<EditionSyncAdminStatus>>(),
   stop: vi.fn<() => Promise<EditionSyncAdminStatus>>(),
   clear: vi.fn<() => Promise<EditionSyncClearUnusedResult>>(),
+}))
+
+const socket = vi.hoisted(() => ({
+  listener: null as null | { changed: (event: { type: string; state: boolean }) => void; live: (live: boolean) => void },
+  live: true,
+  stop: vi.fn<() => void>(),
+}))
+
+vi.mock('@/features/jobs/lib/jobs-socket', () => ({
+  listenToJobs: (listener: NonNullable<typeof socket.listener>) => {
+    socket.listener = listener
+    if (socket.live) listener.live(true)
+    return () => {
+      socket.listener = null
+      socket.stop()
+    }
+  },
 }))
 
 vi.mock('../../api/edition-sync.api', () => ({
@@ -23,7 +40,8 @@ vi.mock('../../api/edition-sync.api', () => ({
 
 vi.mock('../useEditionSyncSettings', () => ({ invalidateEditionSyncSettings: mocks.invalidate }))
 
-import { EDITION_SYNC_ADMIN_POLL_MS, useEditionSyncAdmin } from '../useEditionSyncAdmin'
+import { JOB_TYPE_FALLBACK_POLL_MS, JOB_TYPE_REFRESH_GAP_MS } from '@/features/jobs/lib/follow-job-type'
+import { useEditionSyncAdmin } from '../useEditionSyncAdmin'
 
 function makeStatus(active: boolean): EditionSyncAdminStatus {
   return {
@@ -38,6 +56,12 @@ function makeStatus(active: boolean): EditionSyncAdminStatus {
 
 const SETTINGS: EditionSyncAdminSettings = { enabled: true, cronExpression: '0 2 * * *', runHours: 8, onFilesChanged: 'next_run', updatedAt: null }
 
+async function push(state: boolean): Promise<void> {
+  socket.listener?.changed({ type: 'edition-sync', state })
+  await vi.advanceTimersByTimeAsync(JOB_TYPE_REFRESH_GAP_MS)
+  await nextTick()
+}
+
 function setup() {
   const scope = effectScope()
   return { scope, api: scope.run(() => useEditionSyncAdmin())! }
@@ -47,6 +71,9 @@ describe('useEditionSyncAdmin', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     Object.values(mocks).forEach((mock) => mock.mockReset())
+    socket.listener = null
+    socket.live = true
+    socket.stop.mockReset()
     mocks.fetchSettings.mockResolvedValue(SETTINGS)
     mocks.fetchStatus.mockResolvedValue(makeStatus(false))
   })
@@ -93,16 +120,73 @@ describe('useEditionSyncAdmin', () => {
     scope.stop()
   })
 
-  it('polls only while a run is active', async () => {
-    mocks.fetchStatus.mockResolvedValueOnce(makeStatus(true)).mockResolvedValue(makeStatus(false))
+  it('does not follow the jobs push while no run is active', async () => {
     const { scope, api } = setup()
     await api.load()
-    expect(mocks.fetchStatus).toHaveBeenCalledTimes(1)
+    expect(socket.listener).toBeNull()
 
-    await vi.advanceTimersByTimeAsync(EDITION_SYNC_ADMIN_POLL_MS)
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_FALLBACK_POLL_MS * 2)
+    expect(mocks.fetchStatus).toHaveBeenCalledTimes(1)
+    scope.stop()
+  })
+
+  it('refreshes on state and progress pushes while a run is active, and stops following once it ends', async () => {
+    mocks.fetchStatus.mockResolvedValueOnce(makeStatus(true)).mockResolvedValueOnce(makeStatus(true)).mockResolvedValue(makeStatus(false))
+    const { scope, api } = setup()
+    await api.load()
+    expect(socket.listener).not.toBeNull()
+
+    await push(false)
     expect(mocks.fetchStatus).toHaveBeenCalledTimes(2)
 
-    await vi.advanceTimersByTimeAsync(EDITION_SYNC_ADMIN_POLL_MS * 3)
+    await push(true)
+    expect(mocks.fetchStatus).toHaveBeenCalledTimes(3)
+    expect(api.runActive.value).toBe(false)
+    expect(socket.stop).toHaveBeenCalledOnce()
+    expect(socket.listener).toBeNull()
+
+    await push(true)
+    expect(mocks.fetchStatus).toHaveBeenCalledTimes(3)
+    scope.stop()
+  })
+
+  it('follows after a run is started and stops after it is stopped', async () => {
+    mocks.start.mockResolvedValue(makeStatus(true))
+    mocks.stop.mockResolvedValue(makeStatus(false))
+    const { scope, api } = setup()
+    await api.load()
+    expect(socket.listener).toBeNull()
+
+    await api.runNow()
+    expect(socket.listener).not.toBeNull()
+
+    await api.stop()
+    expect(socket.stop).toHaveBeenCalledOnce()
+    expect(socket.listener).toBeNull()
+    scope.stop()
+  })
+
+  it('stops following when its scope ends', async () => {
+    mocks.fetchStatus.mockResolvedValue(makeStatus(true))
+    const { scope, api } = setup()
+    await api.load()
+    scope.stop()
+    expect(socket.stop).toHaveBeenCalledOnce()
+
+    await push(true)
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_FALLBACK_POLL_MS * 2)
+    expect(mocks.fetchStatus).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to the slow poll while the jobs socket is not live', async () => {
+    socket.live = false
+    mocks.fetchStatus.mockResolvedValue(makeStatus(true))
+    const { scope, api } = setup()
+    await api.load()
+
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_FALLBACK_POLL_MS - 1)
+    expect(mocks.fetchStatus).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1 + JOB_TYPE_REFRESH_GAP_MS)
     expect(mocks.fetchStatus).toHaveBeenCalledTimes(2)
     scope.stop()
   })

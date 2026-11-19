@@ -492,14 +492,14 @@ export class MetadataService {
         );
         return false;
       }
-      const data = await this.extractionService.extract(absolutePath, format);
-      if (!data?.cover) {
+      const cover = await this.readCoverToRefresh(absolutePath, format, medium);
+      if (!cover) {
         this.logger.debug(
           `[${event}] [end] bookId=${bookId} format=${format} durationMs=${Date.now() - startedAt} refreshed=false coverFound=false - cover refresh skipped`,
         );
         return false;
       }
-      if (!(await this.persistCover(bookId, medium, data.cover, false, 'embedded'))) return false;
+      if (!(await this.persistCover(bookId, medium, cover, false, 'embedded'))) return false;
     } catch (error) {
       const errorClass = error instanceof Error ? error.name : 'Error';
       const errorMessage = sanitizeLogValue(error instanceof Error ? error.message : String(error));
@@ -569,6 +569,12 @@ export class MetadataService {
   async getCoverSource(bookId: number): Promise<string | null> {
     const [row] = await this.db.select({ coverSource: bookMetadata.coverSource }).from(bookMetadata).where(eq(bookMetadata.bookId, bookId)).limit(1);
     return row?.coverSource ?? null;
+  }
+
+  /** An EPUB's audio slot refreshes from the audiobook cover it declares; its book cover belongs to the ebook slot. */
+  private async readCoverToRefresh(absolutePath: string, format: string, medium: CoverMedium): Promise<Buffer | null> {
+    if (medium === 'audio' && format.toLowerCase() === 'epub') return this.extractionService.extractEmbeddedCover(absolutePath, format, 'audio');
+    return (await this.extractionService.extract(absolutePath, format))?.cover ?? null;
   }
 
   // ── Audio helpers ────────────────────────────────────────────────────────────

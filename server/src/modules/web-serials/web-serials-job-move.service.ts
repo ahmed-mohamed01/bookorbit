@@ -11,7 +11,7 @@ import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import type { EngineSeries } from './engines/web-serial-engine';
 import { WebSerialsCatalogService } from './web-serials-catalog.service';
-import { WebSerialJobsService } from './web-serials-jobs.service';
+import { MAX_ACTIVE_JOBS_PER_USER, tooManyJobs, WebSerialJobsService } from './web-serials-jobs.service';
 import { WebSerialsJobRunnerService } from './web-serials-job-runner.service';
 import { describeError } from './web-serials-log.utils';
 import { resolveWebSerialAuthors } from './web-serials-metadata.utils';
@@ -155,34 +155,37 @@ export class WebSerialJobMoveService {
         throw new ConflictException(codedError('That source does not have any remaining chapters.', WebSerialErrorCode.MoveNoChapters));
       const metadata = job.metadata;
       const finalAuthors = resolveWebSerialAuthors(targetSeries, metadata);
-      const target = await this.repo.moveJob({
-        sourceJobId: id,
-        sourceExpectedStatus: settledStatus,
-        movedItemIds: movedUnits.map((unit) => unit.id),
-        missingItemIds: missingUnits.map((unit) => unit.id),
-        sourceMessage: `Remaining chapters moved to ${targetSource}.`,
-        movedError: `Moved to ${targetSource}.`,
-        missingError: `Not available on ${targetSource}.`,
-        targetJob: {
-          userId: job.userId,
-          kind: 'manga',
-          seriesKey: input.seriesKey,
-          seriesUrl: targetSeries.sourceUrl,
-          title: targetSeries.title.slice(0, 1000),
-          author: finalAuthors.join(', ').slice(0, 1000) || null,
-          sourceName: targetSource.slice(0, 255),
-          packaging: job.packaging,
-          selection: { mode: 'list', sequences },
-          skipImported: true,
-          targetLibraryId: job.targetLibraryId,
-          targetFolderId: job.targetFolderId,
-          status: 'queued',
-          engineState: { hasCover: targetSeries.remoteCoverPath !== null, units: selectedUnits },
-          metadata,
-        },
-      });
+      const target = await this.repo.withUserJobQuota(job.userId, MAX_ACTIVE_JOBS_PER_USER, tooManyJobs, (repo) =>
+        repo.moveJob({
+          sourceJobId: id,
+          sourceExpectedStatus: settledStatus,
+          movedItemIds: movedUnits.map((unit) => unit.id),
+          missingItemIds: missingUnits.map((unit) => unit.id),
+          sourceMessage: `Remaining chapters moved to ${targetSource}.`,
+          movedError: `Moved to ${targetSource}.`,
+          missingError: `Not available on ${targetSource}.`,
+          targetJob: {
+            userId: job.userId,
+            kind: 'manga',
+            seriesKey: input.seriesKey,
+            seriesUrl: targetSeries.sourceUrl,
+            title: targetSeries.title.slice(0, 1000),
+            author: finalAuthors.join(', ').slice(0, 1000) || null,
+            sourceName: targetSource.slice(0, 255),
+            packaging: job.packaging,
+            selection: { mode: 'list', sequences },
+            skipImported: true,
+            targetLibraryId: job.targetLibraryId,
+            targetFolderId: job.targetFolderId,
+            status: 'queued',
+            engineState: { hasCover: targetSeries.remoteCoverPath !== null, units: selectedUnits },
+            metadata,
+          },
+        }),
+      );
       if (!target) throw new ConflictException(codedError('The download is busy; try again in a moment.', WebSerialErrorCode.MoveBusy));
       pausedByMove = false;
+      this.jobs.changed(job.userId);
       await this.jobs.discardWorkDir(id);
       const result = { from: await this.jobs.requireJob(id, user), to: await this.jobs.requireJob(target.id, user) };
       this.logger.log(
@@ -190,7 +193,10 @@ export class WebSerialJobMoveService {
       );
       return result;
     } catch (error) {
-      if (pausedByMove) await this.repo.restoreAfterMove(id, queueOrder).catch(() => undefined);
+      if (pausedByMove) {
+        await this.repo.restoreAfterMove(id, queueOrder).catch(() => undefined);
+        this.jobs.changed(null);
+      }
       const { errorClass, message } = describeError(error);
       this.logger.error(
         `[${MOVE_EVENT}] [fail] jobId=${id} targetSource="${sanitizeLogValue(targetSource)}" durationMs=${Date.now() - startedAt} moved=${moved} missing=${missing} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - job move failed`,

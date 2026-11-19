@@ -254,7 +254,7 @@ describe('WebSerialsRepository jobs', () => {
     await new WebSerialsRepository(db as never).restoreAfterMove(3, 1234);
 
     const builder = builderAt(db.update);
-    expect(builder.set!.mock.calls[0]![0]).toMatchObject({ status: 'queued', queueOrder: 1234, heartbeatAt: null });
+    expect(builder.set!.mock.calls[0]![0]).toMatchObject({ status: 'queued', queueOrder: 1234 });
     expect(whereSql(builder).params).toEqual([3, 'paused']);
   });
 
@@ -275,7 +275,7 @@ describe('WebSerialsRepository jobs', () => {
 
     const builder = builderAt(db.update);
     const set = builder.set!.mock.calls[0]![0];
-    expect(set).toMatchObject({ status: 'queued', heartbeatAt: null });
+    expect(set).toMatchObject({ status: 'queued' });
     expect(render(set.queueOrder).sql).toContain('extract(epoch from now())');
     expect(whereSql(builder).params).toEqual([3, 'paused']);
   });

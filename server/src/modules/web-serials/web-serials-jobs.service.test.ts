@@ -490,3 +490,33 @@ it.each([ADMIN, { ...USER, isSuperuser: true }])('allows global priority for an 
   await service.moveJobToTop(11, user);
   expect(repo.moveJobToTop).toHaveBeenCalledWith(11, null);
 });
+
+describe('WebSerialJobsService Jobs area changes', () => {
+  it('tells the Jobs area when a download changes status, naming its owner', async () => {
+    const { service, repo, jobChanges } = setup();
+    repo.findJobById.mockResolvedValue(jobRow({ userId: USER.id, status: 'running' }));
+
+    await service.pauseJob(11, USER);
+    await service.cancelJob(11, USER);
+
+    expect(jobChanges.notify).toHaveBeenCalledTimes(2);
+    expect(jobChanges.notify).toHaveBeenCalledWith({ type: 'web-serial', ownerId: USER.id, state: true });
+  });
+
+  it('says nothing when the action was refused or changed nothing', async () => {
+    const { service, repo, jobChanges } = setup();
+    repo.findJobById.mockResolvedValue(jobRow({ userId: 8 }));
+    await expect(service.pauseJob(11, USER)).rejects.toBeInstanceOf(ForbiddenException);
+    repo.findJobById.mockResolvedValue(jobRow({ userId: USER.id }));
+    repo.cancelJob.mockResolvedValueOnce(undefined);
+    await service.cancelJob(11, USER);
+    expect(jobChanges.notify).not.toHaveBeenCalled();
+  });
+  it('tells every queue page when an admin pauses or resumes the whole queue', async () => {
+    const { service, jobChanges } = setup();
+    await service.pauseQueue(ADMIN);
+    expect(jobChanges.notify).toHaveBeenLastCalledWith({ type: 'web-serial', ownerId: null, state: true });
+    await service.resumeQueue(ADMIN);
+    expect(jobChanges.notify).toHaveBeenCalledTimes(2);
+  });
+});

@@ -1,6 +1,8 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import type { ConfigType } from '@nestjs/config';
 
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
+import { appConfig } from '../../config/config';
 import {
   ACHIEVEMENT_EVENT_AUDIO_POSITION_DERIVED,
   ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED,
@@ -51,6 +53,7 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
     private readonly repo: ReadingAlignmentRepository,
     private readonly bookReadService: BookReadService,
     private readonly libraryService: LibraryService,
+    @Inject(appConfig.KEY) private readonly config: ConfigType<typeof appConfig>,
   ) {}
 
   onModuleInit(): void {
@@ -62,6 +65,8 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
   }
 
   private async handleProgressChanged(payload: BookProgressChangedPayload): Promise<void> {
+    if (!this.config.readingAlignmentEnabled) return;
+
     const startedAt = Date.now();
     try {
       await this.project(payload, startedAt);
@@ -74,6 +79,9 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
   }
 
   private async project(payload: BookProgressChangedPayload, startedAt: number): Promise<void> {
+    const alignment = await this.repo.getAlignmentByPair(payload.bookId, payload.bookId);
+    if (alignment?.status !== 'ready') return;
+
     const pair = await this.pairService.resolveAlignmentPair(payload.bookId, payload.userId);
     if (!pair) return;
 

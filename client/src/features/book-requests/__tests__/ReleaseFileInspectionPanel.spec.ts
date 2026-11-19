@@ -302,7 +302,7 @@ describe('ReleaseFileInspectionPanel', () => {
       data.selection!.alreadyImported = [0]
       const wrapper = mountPanel({ inspection: data, clients: clientList(true), ...identity })
       await flushPromises()
-      expect(wrapper.text()).toContain('This release holds 2 books. 1 already in Book Dock; select more to download.')
+      expect(wrapper.text()).toContain('This release holds 2 books. 1 already in Library Dock; select more to download.')
       expect(wrapper.text()).toContain('100 byte in this release')
     })
 
@@ -313,7 +313,7 @@ describe('ReleaseFileInspectionPanel', () => {
       await flushPromises()
       expect(wrapper.get('[role="alert"], [role="status"]').text()).toBe('This release holds 2 books.')
       expect(wrapper.text()).not.toContain('select more to download')
-      expect(wrapper.text()).toContain('Every book in this release is already in Book Dock.')
+      expect(wrapper.text()).toContain('Every book in this release is already in Library Dock.')
       expect(wrapper.findAll('button').some((button) => button.text().includes('download'))).toBe(false)
     })
 

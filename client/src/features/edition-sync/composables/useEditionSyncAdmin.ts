@@ -1,6 +1,7 @@
 import { invalidateEditionSyncSettings } from './useEditionSyncSettings'
-import { computed, inject, onScopeDispose, provide, ref, type InjectionKey } from 'vue'
+import { computed, inject, onScopeDispose, provide, ref, watch, type InjectionKey } from 'vue'
 import type { EditionSyncAdminSettings, EditionSyncAdminStatus, UpdateEditionSyncAdminSettingsPayload } from '@bookorbit/types'
+import { followJobType } from '@/features/jobs/lib/follow-job-type'
 import {
   clearUnusedEditionSyncData,
   fetchEditionSyncAdminSettings,
@@ -9,8 +10,6 @@ import {
   stopEditionSyncRun,
   updateEditionSyncAdminSettings,
 } from '../api/edition-sync.api'
-
-export const EDITION_SYNC_ADMIN_POLL_MS = 5_000
 
 function messageOf(err: unknown): string | null {
   return err instanceof Error && err.message ? err.message : null
@@ -24,12 +23,16 @@ export function useEditionSyncAdmin() {
   const acting = ref(false)
   const error = ref<string | null>(null)
   const runActive = computed(() => status.value?.run.active === true)
-  let pollTimer: ReturnType<typeof setTimeout> | null = null
+  let stopFollowing: (() => void) | null = null
   let disposed = false
 
-  function stopPolling(): void {
-    if (pollTimer) clearTimeout(pollTimer)
-    pollTimer = null
+  function unfollow(): void {
+    stopFollowing?.()
+    stopFollowing = null
+  }
+
+  function isRunActive(): boolean {
+    return runActive.value
   }
 
   async function refreshStatus(): Promise<void> {
@@ -40,14 +43,13 @@ export function useEditionSyncAdmin() {
     }
   }
 
-  function schedulePoll(): void {
-    stopPolling()
-    if (disposed || !runActive.value) return
-    pollTimer = setTimeout(() => {
-      pollTimer = null
-      void refreshStatus().finally(schedulePoll)
-    }, EDITION_SYNC_ADMIN_POLL_MS)
+  /** While a run is active, the Jobs push for edition sync keeps the status current. */
+  function followWhileActive(): void {
+    if (disposed || !runActive.value) return unfollow()
+    stopFollowing ??= followJobType('edition-sync', refreshStatus, isRunActive)
   }
+
+  watch(runActive, followWhileActive)
 
   async function load(): Promise<void> {
     loading.value = true
@@ -60,7 +62,7 @@ export function useEditionSyncAdmin() {
       error.value = messageOf(err)
     } finally {
       loading.value = false
-      schedulePoll()
+      followWhileActive()
     }
   }
 
@@ -85,7 +87,7 @@ export function useEditionSyncAdmin() {
     error.value = null
     try {
       status.value = await call()
-      schedulePoll()
+      followWhileActive()
       return true
     } catch (err) {
       error.value = messageOf(err)
@@ -120,7 +122,7 @@ export function useEditionSyncAdmin() {
 
   onScopeDispose(() => {
     disposed = true
-    stopPolling()
+    unfollow()
   })
 
   return { status, settings, loading, saving, acting, error, runActive, load, refreshStatus, saveSchedule, runNow, stop, clearUnused }
@@ -128,7 +130,7 @@ export function useEditionSyncAdmin() {
 
 export type EditionSyncAdmin = ReturnType<typeof useEditionSyncAdmin>
 
-/** One admin state per page, so the Indexing card and the Server section share a single status poll. */
+/** One admin state per page, so the Indexing card and the Server section share a single status follow. */
 export const EDITION_SYNC_ADMIN_KEY: InjectionKey<EditionSyncAdmin> = Symbol('editionSyncAdmin')
 
 export function provideEditionSyncAdmin(): EditionSyncAdmin {

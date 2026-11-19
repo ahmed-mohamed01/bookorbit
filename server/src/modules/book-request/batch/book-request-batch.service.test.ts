@@ -56,6 +56,7 @@ function makeService(options: { inspection?: ReleaseFileInspection; adapterType?
     updateIf: vi.fn().mockResolvedValue({ id: 11 }),
     setFilesPendingSince: vi.fn().mockResolvedValue(undefined),
     findUnsettledByClientKey: vi.fn().mockResolvedValue(undefined),
+    failInFlightForRequest: vi.fn().mockResolvedValue(1),
   };
   const adapter = { status: vi.fn().mockResolvedValue([]) };
   const registry = { require: vi.fn().mockReturnValue(adapter) };
@@ -75,6 +76,22 @@ function makeService(options: { inspection?: ReleaseFileInspection; adapterType?
 }
 
 describe('BookRequestBatchService.create', () => {
+  it('refuses a source request without a destination library before creating or grabbing the batch', async () => {
+    const { service, requests, batches, fulfillment } = makeService();
+    requests.findById.mockResolvedValue({
+      request: { id: 7, title: 'Source', authors: ['Ann Author'], targetLibraryId: null, targetFolderId: null },
+    });
+
+    await expect(service.create(user(), DTO)).rejects.toThrow(
+      new BadRequestException('Set a destination library on this request before grabbing a release'),
+    );
+
+    expect(requests.create).not.toHaveBeenCalled();
+    expect(batches.insertUnits).not.toHaveBeenCalled();
+    expect(fulfillment.inspectRelease).not.toHaveBeenCalled();
+    expect(fulfillment.grabSelection).not.toHaveBeenCalled();
+  });
+
   it('creates a batch request with one unit row per ticked unit and grabs only their files', async () => {
     const { service, requests, batches, fulfillment } = makeService();
 
@@ -126,10 +143,12 @@ describe('BookRequestBatchService.create', () => {
     expect(requests.create).not.toHaveBeenCalled();
   });
 
-  it('refuses a unit an earlier batch already placed in Book Dock', async () => {
+  it('refuses a unit an earlier batch already placed in the Library Dock', async () => {
     const { service, requests, fulfillment } = makeService({ inspection: inspection({ selection: { ...selection(), alreadyImported: [2] } }) });
 
-    await expect(service.create(user(), DTO)).rejects.toThrow(new BadRequestException('These books are already in Book Dock from an earlier batch.'));
+    await expect(service.create(user(), DTO)).rejects.toThrow(
+      new BadRequestException('These books are already in the Library Dock from an earlier batch.'),
+    );
     expect(requests.create).not.toHaveBeenCalled();
     expect(fulfillment.grabSelection).not.toHaveBeenCalled();
   });
@@ -299,10 +318,26 @@ describe('BookRequestBatchService.retry', () => {
       failureMeta: null,
     });
     expect(batches.resetUnitsForRetry).toHaveBeenCalledWith(21);
-    expect(downloads.updateIf).toHaveBeenCalledWith(11, ['failed', 'imported'], { status: 'completed', errorMessage: null });
+    expect(downloads.updateIf).toHaveBeenCalledWith(11, ['failed', 'imported'], {
+      status: 'completed',
+      errorMessage: null,
+      failureCode: null,
+    });
     expect(downloads.setFilesPendingSince).toHaveBeenCalledWith(11, null);
     expect(downloads.updateIf).not.toHaveBeenCalledWith(11, expect.anything(), expect.objectContaining({ bookDockFileId: expect.anything() }));
     expect(gateway.emitChanged).toHaveBeenCalled();
+  });
+
+  it('clears the removed failure code when reopening an attempt', async () => {
+    const { service, downloads } = retryHarness({ download: { failureCode: 'removed', errorMessage: 'Settled by hand' } });
+
+    await service.retry(user(), 21);
+
+    expect(downloads.updateIf).toHaveBeenCalledExactlyOnceWith(11, ['failed', 'imported'], {
+      status: 'completed',
+      errorMessage: null,
+      failureCode: null,
+    });
   });
 
   it.each([
@@ -396,8 +431,8 @@ function makeSeamService(overrides: { repo?: Record<string, unknown>; batches?: 
   return { ...harness, repo, batches };
 }
 describe('BookRequestBatchService system seams', () => {
-  it('settleAvailable moves an approved request to available and returns true', async () => {
-    const { service, repo, gateway } = makeSeamService();
+  it('settleAvailable moves a request to available before failing its in-flight attempts', async () => {
+    const { service, repo, downloads, gateway } = makeSeamService();
     await expect(service.settleAvailable(10, 'serial complete')).resolves.toBe(true);
     expect(repo.updateIf).toHaveBeenCalledExactlyOnceWith(
       10,
@@ -407,11 +442,14 @@ describe('BookRequestBatchService system seams', () => {
         statusReason: 'serial complete',
       },
     );
+    expect(downloads.failInFlightForRequest).toHaveBeenCalledExactlyOnceWith(10, 'serial complete');
+    expect(repo.updateIf).toHaveBeenCalledBefore(downloads.failInFlightForRequest);
+    expect(downloads.failInFlightForRequest).toHaveBeenCalledBefore(gateway.emitChanged);
     expect(gateway.emitChanged).toHaveBeenCalledOnce();
   });
 
   it('settleAvailable leaves a cancelled request alone and returns false', async () => {
-    const { service, repo, gateway } = makeSeamService({
+    const { service, repo, downloads, gateway } = makeSeamService({
       repo: {
         updateIf: vi
           .fn()
@@ -420,7 +458,17 @@ describe('BookRequestBatchService system seams', () => {
     });
     await expect(service.settleAvailable(10, 'serial complete')).resolves.toBe(false);
     expect(repo.updateIf).toHaveBeenCalledOnce();
+    expect(downloads.failInFlightForRequest).not.toHaveBeenCalled();
     expect(gateway.emitChanged).not.toHaveBeenCalled();
+  });
+
+  it('announces the available request even if settling its attempts fails', async () => {
+    const { service, downloads, gateway } = makeSeamService();
+    downloads.failInFlightForRequest.mockRejectedValueOnce(new Error('database unavailable'));
+
+    await expect(service.settleAvailable(10, 'serial complete')).rejects.toThrow('database unavailable');
+
+    expect(gateway.emitChanged).toHaveBeenCalledOnce();
   });
 
   it('findBatchUnits groups units by request id', async () => {

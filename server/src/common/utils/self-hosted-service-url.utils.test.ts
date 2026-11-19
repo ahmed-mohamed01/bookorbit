@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { lookup } from 'dns/promises';
-import { PrivateAddressException } from './ssrf.utils';
+import { LinkLocalAddressException } from './ssrf.utils';
 import { ensureSafeSelfHostedUrl, parseAndNormalizeSelfHostedUrl, selfHostedSafeRemoteHostOptions } from './self-hosted-service-url.utils';
 
 vi.mock('dns/promises', () => ({ lookup: vi.fn() }));
@@ -40,8 +40,14 @@ describe('ensureSafeSelfHostedUrl mDNS link-local guard', () => {
   it('rejects a .local name that resolves to a link-local address', async () => {
     mockedLookup.mockResolvedValue([{ address: '169.254.10.10', family: 4 }] as never);
 
-    await expect(ensureSafeSelfHostedUrl('http://service.local:8080/api')).rejects.toBeInstanceOf(PrivateAddressException);
+    await expect(ensureSafeSelfHostedUrl('http://service.local:8080/api')).rejects.toBeInstanceOf(LinkLocalAddressException);
     expect(mockedLookup).toHaveBeenCalledWith('service.local', { all: true, verbatim: true });
+  });
+
+  it('rejects a .local name that resolves to the AWS IPv6 metadata address', async () => {
+    mockedLookup.mockResolvedValue([{ address: 'fd00:ec2::254', family: 6 }] as never);
+
+    await expect(ensureSafeSelfHostedUrl('http://service.local:8080/api')).rejects.toBeInstanceOf(LinkLocalAddressException);
   });
 
   it('accepts a .local name that resolves to an ordinary private LAN address', async () => {

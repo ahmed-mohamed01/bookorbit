@@ -134,6 +134,7 @@ export function createProgressSaver({ fileId, isEnabled, buildRecord, source, be
 
   function cancelScheduled() {
     if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = null
   }
 
   function discardPending() {

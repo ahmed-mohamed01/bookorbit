@@ -82,6 +82,7 @@ function request(overrides: Partial<BookRequestItem> = {}): BookRequestItem {
     targetFolderId: null,
     decidedByUserId: null,
     decidedByUsername: null,
+    decidedByName: null,
     decidedAt: null,
     decisionNote: null,
     matchedBookId: null,

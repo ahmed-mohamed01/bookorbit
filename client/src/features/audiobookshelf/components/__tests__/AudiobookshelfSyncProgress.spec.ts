@@ -34,7 +34,7 @@ const cleanupError = ref<string | null>(null)
 const rescanning = ref(false)
 
 const mocks = vi.hoisted(() => ({
-  fetchSettings: vi.fn<() => Promise<void>>(),
+  fetchSettings: vi.fn<(options?: { force?: boolean }) => Promise<void>>(),
   cleanupStale: vi.fn<(payload?: { includeManuallyUnlinked?: boolean }) => Promise<AudiobookshelfCleanupResult | null>>(),
 }))
 
@@ -131,6 +131,7 @@ describe('AudiobookshelfSyncProgress stale entries', () => {
     expect(mocks.cleanupStale).toHaveBeenCalledTimes(1)
     expect(mocks.cleanupStale).toHaveBeenCalledWith({ includeManuallyUnlinked: false })
     expect(mocks.fetchSettings).toHaveBeenCalledTimes(1)
+    expect(mocks.fetchSettings).toHaveBeenCalledWith({ force: true })
     expect(toastSuccess).toHaveBeenCalledWith('Removed 4,930 stale entries')
     expect(wrapper.get('[data-testid="abs-cleanup-summary"]').text()).toBe('Removed 4,930 stale entries')
   })

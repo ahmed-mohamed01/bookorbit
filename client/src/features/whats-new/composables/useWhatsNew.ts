@@ -36,7 +36,7 @@ export function resetWhatsNew(): void {
 }
 
 export function useWhatsNew() {
-  const { version, loadAppInfo, error: appInfoError } = useAppInfo()
+  const { version, ensureAppInfo, error: appInfoError } = useAppInfo()
 
   const hasUnseen = computed(() => releases.value.length > 0)
 
@@ -71,7 +71,7 @@ export function useWhatsNew() {
     loading.value = true
     error.value = null
     try {
-      await loadAppInfo()
+      await ensureAppInfo()
       if (appInfoError?.value) throw new Error(appInfoError.value)
       await loadPrefs()
 
@@ -125,7 +125,7 @@ export function useWhatsNew() {
   }
 
   async function markArchiveSeen(): Promise<void> {
-    await loadAppInfo()
+    await ensureAppInfo()
     await loadPrefs().catch(() => {})
     const current = version.value
     if (isSemverTag(current) && (lastSeenVersion.value === null || isNewer(current, lastSeenVersion.value))) {

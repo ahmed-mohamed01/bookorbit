@@ -207,7 +207,7 @@ it('renders imported files and folders as inert muted checks', async () => {
     expect(row.classes()).not.toContain('group')
     await row.trigger('click')
   }
-  expect(wrapper.text()).toContain('In Book Dock')
+  expect(wrapper.text()).toContain('In Library Dock')
   expect(wrapper.emitted('toggle-unit')).toBeUndefined()
   expect(wrapper.emitted('toggle-dir')).toBeUndefined()
 })

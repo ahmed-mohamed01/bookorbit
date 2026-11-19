@@ -45,7 +45,7 @@ function setup(row: { enabled: boolean; bookSyncMode: 'all_eligible' | 'selected
       }),
     ),
   };
-  const scheduler = { stop: vi.fn().mockResolvedValue({}), syncSchedule: vi.fn().mockReturnValue(true) };
+  const scheduler = { stop: vi.fn().mockResolvedValue({}), syncSchedule: vi.fn().mockReturnValue(true), changed: vi.fn() };
   const overlaySource = { invalidate: vi.fn() };
   const service = new EditionSyncSettingsService(repo as never, new PermissionService(), scheduler as never, overlaySource as never);
   return { service, repo, scheduler, overlaySource };
@@ -73,10 +73,11 @@ describe('EditionSyncSettingsService', () => {
   });
 
   it('saves user settings and drops cached sync decisions', async () => {
-    const { service, repo, overlaySource } = setup();
+    const { service, repo, overlaySource, scheduler } = setup();
     await expect(service.upsertSettings(permitted, { enabled: true })).resolves.toMatchObject({ enabled: true, effectiveEnabled: true });
     expect(repo.upsertUserSettings).toHaveBeenCalledWith(7, { enabled: true, bookSyncMode: undefined });
     expect(overlaySource.invalidate).toHaveBeenCalledWith(7);
+    expect(scheduler.changed).toHaveBeenCalled();
   });
 
   it('saves the schedule and re-registers the cron job; null means Never', async () => {
@@ -135,6 +136,7 @@ it('disables scheduling, stops work and invalidates every overlay decision', asy
   await expect(service.updateAdminSettings(permitted, { enabled: false })).resolves.toMatchObject({ enabled: false });
   expect(scheduler.syncSchedule).toHaveBeenCalledWith('0 2 * * *', false);
   expect(scheduler.stop).toHaveBeenCalled();
+  expect(scheduler.changed).toHaveBeenCalled();
   expect(overlaySource.invalidate).toHaveBeenCalledWith();
   repo.isServerEnabled.mockResolvedValue(false);
   await expect(service.getSettings(unpermitted)).resolves.toMatchObject({
@@ -155,6 +157,7 @@ it('leaves the overlay cache and running work alone when the switch did not chan
   const { service, scheduler, overlaySource, repo } = setup();
   await service.updateAdminSettings(permitted, { runHours: 4 });
   expect(overlaySource.invalidate).not.toHaveBeenCalled();
+  expect(scheduler.changed).not.toHaveBeenCalled();
   expect(scheduler.stop).not.toHaveBeenCalled();
   repo.findAdminSettings.mockResolvedValue({ enabled: false } as never);
   repo.updateAdminSettings.mockResolvedValueOnce({

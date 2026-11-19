@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 
 import { BookConsolidationModule } from '../book-consolidation/book-consolidation.module';
 import { BookRequestModule } from '../book-request/book-request.module';
+import { JobsModule } from '../jobs/jobs.module';
 import { SeriesModule } from '../series/series.module';
 import { UserModule } from '../user/user.module';
 import { WebSerialsPrintService } from './web-serials-print.service';
@@ -31,6 +32,8 @@ import { WebSerialsIllustratorBackfillService } from './web-serials-illustrator-
 import { WebSerialsImportService } from './web-serials-import.service';
 import { WebSerialsJobRunnerService } from './web-serials-job-runner.service';
 import { WebSerialJobsService } from './web-serials-jobs.service';
+import { WebSerialsJobPageRepository } from './web-serials-job-page.repository';
+import { WebSerialsJobSource } from './web-serials-job-source';
 import { WebSerialsNovelCandidatesService } from './web-serials-novel-candidates.service';
 import { WebSerialsNovelIndexFillerService } from './web-serials-novel-index-filler.service';
 import { WebSerialsNovelIndexService } from './web-serials-novel-index.service';
@@ -50,6 +53,7 @@ import { WebSerialsRepository } from './web-serials.repository';
   imports: [
     BookConsolidationModule,
     BookRequestModule,
+    JobsModule,
     SeriesModule,
     UserModule,
     ConfigModule.forFeature(webSerialsConfig),
@@ -91,6 +95,8 @@ import { WebSerialsRepository } from './web-serials.repository';
     WebSerialsNovelIndexService,
     WebSerialsNovelIndexFillerService,
     WebSerialJobsService,
+    WebSerialsJobPageRepository,
+    WebSerialsJobSource,
     WebSerialJobMoveService,
     WebSerialsIllustratorBackfillService,
   ],

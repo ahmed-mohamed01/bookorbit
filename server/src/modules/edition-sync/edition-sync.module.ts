@@ -6,6 +6,7 @@ import { AudiobookChaptersModule } from '../audiobook-chapters/audiobook-chapter
 import { BookConsolidationModule } from '../book-consolidation/book-consolidation.module';
 import { BookCoverStoreModule } from '../book-cover-store/book-cover-store.module';
 import { BookModule } from '../book/book.module';
+import { JobsModule } from '../jobs/jobs.module';
 import { OVERLAY_SOURCE_RESOLVER } from '../book/overlay-source-provider';
 import { LibraryModule } from '../library/library.module';
 import { EPUB_DOM_SOURCE_RESOLVER } from '../position-converter/epub-dom-source-provider';
@@ -20,6 +21,8 @@ import { EditionSyncBookStateService } from './edition-sync-book-state.service';
 import { EditionSyncFallbackService } from './edition-sync-fallback.service';
 import { EditionSyncIndexStoreService } from './edition-sync-index-store.service';
 import { EditionSyncIndexerService } from './edition-sync-indexer.service';
+import { EditionSyncJobPageRepository } from './edition-sync-job-page.repository';
+import { EditionSyncJobSource } from './edition-sync-job-source';
 import { EditionSyncOverlaySourceService } from './edition-sync-overlay-source.service';
 import { EditionSyncQueueService } from './edition-sync-queue.service';
 import { EditionSyncReadAloudHooksService } from './edition-sync-read-aloud-hooks.service';
@@ -40,6 +43,7 @@ import { EditionSyncRepository } from './edition-sync.repository';
     BookCoverStoreModule,
     BookModule,
     CommonModule,
+    JobsModule,
     LibraryModule,
     ReadAloudModule,
     ReadingAlignmentModule,
@@ -61,6 +65,8 @@ import { EditionSyncRepository } from './edition-sync.repository';
     EditionSyncReadAloudHooksService,
     EditionSyncOverlaySourceService,
     EditionSyncFallbackService,
+    EditionSyncJobPageRepository,
+    EditionSyncJobSource,
     { provide: READ_ALOUD_HOOKS, useExisting: EditionSyncReadAloudHooksService },
     { provide: OVERLAY_SOURCE_RESOLVER, useExisting: EditionSyncOverlaySourceService },
     { provide: EPUB_DOM_SOURCE_RESOLVER, useExisting: EditionSyncOverlaySourceService },

@@ -1,9 +1,10 @@
-import { Inject, Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 
 import { LibraryOperationGate } from '../../common/services/library-operation-gate.service';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { appConfig } from '../../config/config';
+import { JobChangesService } from '../jobs/job-changes.service';
 import { FfmpegCancelledError } from './audio-convert-ffmpeg';
 import { AudioConvertConverterService, ConvertCancelledError, ConvertDeferredError, ConvertError } from './audio-convert-converter.service';
 import { AudioConvertRepository } from './audio-convert.repository';
@@ -37,6 +38,7 @@ export class AudioConvertQueueService implements OnModuleInit, OnModuleDestroy {
     private readonly converter: AudioConvertConverterService,
     private readonly gate: LibraryOperationGate,
     @Inject(appConfig.KEY) private readonly app: ConfigType<typeof appConfig>,
+    @Optional() private readonly jobChanges?: JobChangesService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -87,6 +89,7 @@ export class AudioConvertQueueService implements OnModuleInit, OnModuleDestroy {
             finishedAt: new Date(),
           });
         }
+        this.changed(job.userId);
         this.logger.log(
           `[audio_convert.recover] [end] jobId=${job.id} bookId=${job.bookId} durationMs=${Date.now() - startedAt} outcome=${outcome.status} - interrupted conversion recovered`,
         );
@@ -114,6 +117,7 @@ export class AudioConvertQueueService implements OnModuleInit, OnModuleDestroy {
         if (!settings.enabled) return;
         const job = await this.repo.claim();
         if (!job) return;
+        this.changed(job.userId);
         await this.run(job, settings);
       } catch (error) {
         this.logger.error(
@@ -140,6 +144,7 @@ export class AudioConvertQueueService implements OnModuleInit, OnModuleDestroy {
     const early = await this.deferUntil(job);
     if (early) {
       await this.repo.defer(job.id, early);
+      this.changed(job.userId);
       return;
     }
 
@@ -154,7 +159,10 @@ export class AudioConvertQueueService implements OnModuleInit, OnModuleDestroy {
         onProgress: (progress) => {
           if (Date.now() - lastWrite < PROGRESS_WRITE_MS) return;
           lastWrite = Date.now();
-          void this.repo.updateJob(job.id, { progress }).catch(() => undefined);
+          void this.repo
+            .updateJob(job.id, { progress })
+            .then(() => this.changed(job.userId, false))
+            .catch(() => undefined);
         },
         readyToSwap: () => this.deferUntil(job),
         enterSwap: () => {
@@ -164,6 +172,7 @@ export class AudioConvertQueueService implements OnModuleInit, OnModuleDestroy {
         },
         onSwapping: async () => {
           await this.repo.updateJob(job.id, { stage: 'swapping', progress: 100 });
+          this.changed(job.userId, false);
         },
       });
       await this.repo.updateJob(job.id, {
@@ -175,6 +184,7 @@ export class AudioConvertQueueService implements OnModuleInit, OnModuleDestroy {
         backupPath,
         finishedAt: new Date(),
       });
+      this.changed(job.userId);
       this.logger.log(
         `[${EVENT}] [end] jobId=${job.id} bookId=${job.bookId} durationMs=${Date.now() - startedAt} files=${result.filesMerged} codec=${result.codec} outcome=success - conversion finished`,
       );
@@ -191,6 +201,7 @@ export class AudioConvertQueueService implements OnModuleInit, OnModuleDestroy {
     if (error instanceof ConvertDeferredError || (aborted && signal.reason === SHUTDOWN)) {
       const until = error instanceof ConvertDeferredError ? error.until : new Date();
       await this.repo.defer(job.id, until);
+      this.changed(job.userId);
       const outcome = error instanceof ConvertDeferredError ? 'deferred' : 'requeued_on_shutdown';
       this.logger.log(
         `[${EVENT}] [end] jobId=${job.id} bookId=${job.bookId} durationMs=${durationMs} outcome=${outcome} - conversion put back in the queue`,
@@ -206,6 +217,7 @@ export class AudioConvertQueueService implements OnModuleInit, OnModuleDestroy {
         errorMessage: null,
         finishedAt: new Date(),
       });
+      this.changed(job.userId);
       this.logger.log(`[${EVENT}] [end] jobId=${job.id} bookId=${job.bookId} durationMs=${durationMs} outcome=cancelled - conversion cancelled`);
       return;
     }
@@ -219,9 +231,15 @@ export class AudioConvertQueueService implements OnModuleInit, OnModuleDestroy {
       errorMessage: message.slice(0, 2000),
       finishedAt: new Date(),
     });
+    this.changed(job.userId);
     this.logger.error(
       `[${EVENT}] [fail] jobId=${job.id} bookId=${job.bookId} durationMs=${durationMs} errorClass=${errorClass(error)} errorCode=${code} error="${sanitizeLogValue(message)}" - conversion failed`,
     );
+  }
+
+  /** Tells the Jobs area; `state` false when only progress moved. */
+  private changed(ownerId: number | null, state = true): void {
+    this.jobChanges?.notify({ type: 'audio-convert', ownerId, state });
   }
 
   /** Deletes backups past their keep time and forgets old jobs. */

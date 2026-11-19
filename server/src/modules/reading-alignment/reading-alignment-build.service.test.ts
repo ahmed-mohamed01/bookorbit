@@ -106,8 +106,16 @@ function createService(overrides: Overrides = {}) {
       .mockResolvedValue(overrides.pair === undefined ? { textBookId: TEXT_BOOK_ID, audioBookId: AUDIO_BOOK_ID } : overrides.pair),
   };
 
-  const service = new ReadingAlignmentBuildService(config as never, repo as never, whisper as never, epub as never, pairService as never);
-  return { service, repo, whisper, epub, pairService, config };
+  const jobChanges = { notify: vi.fn() };
+  const service = new ReadingAlignmentBuildService(
+    config as never,
+    repo as never,
+    whisper as never,
+    epub as never,
+    pairService as never,
+    jobChanges as never,
+  );
+  return { service, repo, whisper, epub, pairService, config, jobChanges };
 }
 
 const USER = { id: 42, isSuperuser: false } as unknown as RequestUser;
@@ -145,6 +153,16 @@ describe('ReadingAlignmentBuildService', () => {
     expect(repo.upsertAlignment).toHaveBeenCalledWith(TEXT_BOOK_ID, AUDIO_BOOK_ID, expect.objectContaining({ status: 'building', samplesTotal: 5 }));
     expect(epub.extractSpineText).toHaveBeenCalledWith(TEXT_BOOK_ID, EBOOK.id, USER);
     expect(repo.setAlignmentStatus).toHaveBeenCalledWith(1, 'ready', expect.objectContaining({ anchorCount: 3 }));
+  });
+
+  it('tells the Jobs area when the build starts, after each sample, and when it ends', async () => {
+    const { service, jobChanges } = createService();
+
+    await service.buildAlignment(TEXT_BOOK_ID, USER);
+
+    const states = jobChanges.notify.mock.calls.map(([change]) => (change as { state: boolean }).state);
+    expect(states).toEqual([true, false, false, false, false, false, true]);
+    expect(jobChanges.notify).toHaveBeenCalledWith({ type: 'whisper-alignment', ownerId: null, state: true });
   });
 
   it('skips a sample whose transcription fails and still completes the build', async () => {

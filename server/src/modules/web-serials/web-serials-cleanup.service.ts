@@ -1,7 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 
 import { SystemCron } from '../../common/decorators/system-cron.decorator';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
+import { JobChangesService } from '../jobs/job-changes.service';
 import { WebSerialsPrintService } from './web-serials-print.service';
 import { WebSerialsImportService } from './web-serials-import.service';
 import { WebSerialsJobRunnerService } from './web-serials-job-runner.service';
@@ -22,6 +23,7 @@ export class WebSerialsCleanupService {
     private readonly importer: WebSerialsImportService,
     private readonly runner: WebSerialsJobRunnerService,
     private readonly print: WebSerialsPrintService,
+    @Optional() private readonly jobChanges?: JobChangesService,
   ) {}
 
   @SystemCron('*/30 * * * *')
@@ -47,6 +49,7 @@ export class WebSerialsCleanupService {
     this.logger.log(`[${CLEANUP_EVENT}] [start] retentionDays=${RETENTION_DAYS} - finished job cleanup started`);
     try {
       const removed = await this.repo.deleteFinishedJobsBefore(new Date(Date.now() - RETENTION_DAYS * DAY_MS));
+      if (removed > 0) this.jobChanges?.notify({ type: 'web-serial', ownerId: null, state: true });
       await this.sweepWorkDirs();
       this.logger.log(
         `[${CLEANUP_EVENT}] [end] retentionDays=${RETENTION_DAYS} durationMs=${Date.now() - startedAt} removed=${removed} - finished job cleanup completed`,

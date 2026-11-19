@@ -173,4 +173,6 @@ FOR EACH ROW EXECUTE FUNCTION edition_sync_book_files_changed();
 ALTER TABLE "edition_sync_settings" ADD COLUMN IF NOT EXISTS "enabled" boolean DEFAULT false NOT NULL;
 --> statement-breakpoint
 ALTER TABLE "edition_sync_user_settings" ALTER COLUMN "enabled" SET DEFAULT true;
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "edition_sync_book_index_jobs_finish_idx" ON "edition_sync_book_index" USING btree ((coalesce(CASE WHEN "status" = 'ready' THEN "indexed_at" ELSE "failed_at" END, "created_at")), "book_id") WHERE "status" IN ('ready', 'failed');
 `;

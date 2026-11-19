@@ -75,7 +75,7 @@ export class BatchUnitFilingService implements OnModuleInit {
     };
     try {
       const row = await this.dockRepo.findById(fileId);
-      if (!row) return await hold('The Book Dock entry disappeared');
+      if (!row) return await hold('The Library Dock entry disappeared');
       let resolved: SeriesMetadata | null = null;
       let ignoreFetched = false;
       for (const resolver of this.resolvers) {
@@ -126,7 +126,7 @@ export class BatchUnitFilingService implements OnModuleInit {
       const folderId = request.targetFolderId ?? (await this.requests.findFirstFolderId(request.targetLibraryId!));
       if (folderId === null) return await hold('The destination library has no folder to file the book into');
       const result = await this.finalizeService.finalizeManagedFile(fileId, { libraryId: request.targetLibraryId!, folderId });
-      if (!result.success) return await hold(result.message ?? 'The Book Dock could not file this book');
+      if (!result.success) return await hold(result.message ?? 'The Library Dock could not file this book');
       await this.batches.markFiled(unit.id, result.bookId ?? null);
       this.gateway.emitChanged();
       return finish('filed');

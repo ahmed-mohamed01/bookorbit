@@ -19,10 +19,6 @@ import {
 export const FALLBACK_ENCODER_OPTIONS: AudioConvertEncoderOptions = { codec: 'auto', bitrate: '128k', channels: null }
 export const FALLBACK_BACKUP_DAYS = AUDIO_CONVERT_DEFAULT_BACKUP_DAYS
 
-/** Polling cadence while a job is queued or running. */
-export const AUDIO_CONVERT_POLL_MS = 2000
-/** Polling cadence while only waiting jobs remain: the automatic pipeline can hold one for up to a day. */
-export const AUDIO_CONVERT_WAITING_POLL_MS = 30_000
 /** Query flag that opens the book's convert dialog on the Files tab (set by the ⋮ menus). */
 export const AUDIO_CONVERT_OPEN_QUERY = 'convert'
 
@@ -32,22 +28,10 @@ export function isJobActive(job: Pick<AudioConvertJob, 'status'> | null | undefi
   return !!job && ACTIVE.has(job.status)
 }
 
-/** Queued or running: what the run bar follows. Waiting jobs belong to the automatic pipeline and can sit for minutes. */
-export function isJobInFlight(job: Pick<AudioConvertJob, 'status'> | null | undefined): boolean {
-  return !!job && (job.status === 'queued' || job.status === 'running')
-}
-
 const FINISHED = new Set<AudioConvertJobStatus>(['success', 'failed', 'skipped', 'cancelled'])
 
 export function isJobFinished(job: Pick<AudioConvertJob, 'status'> | null | undefined): boolean {
   return !!job && FINISHED.has(job.status)
-}
-
-/** How long to wait before polling again for these jobs, or `null` when nothing is active. */
-export function pollDelay(jobs: readonly Pick<AudioConvertJob, 'status'>[]): number | null {
-  if (jobs.some(isJobInFlight)) return AUDIO_CONVERT_POLL_MS
-  if (jobs.some((job) => job.status === 'waiting')) return AUDIO_CONVERT_WAITING_POLL_MS
-  return null
 }
 
 /** `<select>` values are strings, so channels travel as `keep`, `1` or `2`. */

@@ -418,7 +418,7 @@ describe('MonitoredBookPanel search replacement', () => {
 
     expect(slot(wrapper, 'ebook').get('[data-testid="owned-releases-toggle"]').text()).toBe('Hide releases')
     expect(slot(wrapper, 'ebook').get('[data-testid="owned-releases-note"]').text()).toBe(
-      'You already have this ebook. A grab is imported next to it in Book Dock.',
+      'You already have this ebook. A grab is imported next to it in Library Dock.',
     )
     expect(slot(wrapper, 'ebook').findComponent(MonitoredSlotReleases).exists()).toBe(true)
     await slot(wrapper, 'ebook').get('[data-testid="owned-releases-toggle"]').trigger('click')

@@ -38,7 +38,7 @@ describe('BatchUnitList', () => {
     expect(rows[0]!.text()).toContain('Mort')
     expect(rows[0]!.text()).toContain('Waiting for download')
     expect(rows[1]!.text()).toContain('Placing')
-    expect(rows[2]!.text()).toContain('In Book Dock')
+    expect(rows[2]!.text()).toContain('In Library Dock')
     expect(rows[3]!.text()).toContain('Pack/Eric.epub')
     expect(rows[3]!.text()).toContain('Failed')
     expect(rows[3]!.text()).toContain('Disk full')

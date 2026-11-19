@@ -70,6 +70,7 @@ function joined(overrides: Partial<BookRequestWithAutoGrab> = {}) {
     requesterUsername: 'bob',
     requesterName: 'Bob',
     decidedByUsername: null,
+    decidedByName: null,
     targetLibraryName: 'Books',
   };
 }

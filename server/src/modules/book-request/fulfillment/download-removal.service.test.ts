@@ -71,6 +71,21 @@ async function makeService(
   return { service, downloads, clients, adapter, registry, direct, appDataPath };
 }
 
+describe('DownloadRemovalService.removeAttempt', () => {
+  /** A person stopped it, so the Jobs area reads it as cancelled; the English message stays for the request page. */
+  it('fails the attempt with the removed code beside the message', async () => {
+    const { service, downloads } = await makeService();
+
+    await expect(service.removeAttempt(7, 11, false, 'ann')).resolves.toMatchObject({ wasInFlight: true });
+
+    expect(downloads.updateIf).toHaveBeenCalledWith(11, expect.arrayContaining(['downloading']), {
+      status: 'failed',
+      errorMessage: 'Removed from the download client by ann',
+      failureCode: 'removed',
+    });
+  });
+});
+
 describe('DownloadRemovalService.removeLatestForRequest', () => {
   it('hands the torrent to the client and fails the attempt behind it', async () => {
     const { service, downloads, adapter } = await makeService();
@@ -81,6 +96,7 @@ describe('DownloadRemovalService.removeLatestForRequest', () => {
     expect(downloads.updateIf).toHaveBeenCalledWith(11, expect.arrayContaining(['downloading']), {
       status: 'failed',
       errorMessage: expect.stringContaining('ann'),
+      failureCode: 'removed',
     });
   });
 
@@ -125,6 +141,7 @@ describe('DownloadRemovalService.removeLatestForRequest', () => {
     expect(downloads.updateIf).toHaveBeenCalledWith(11, expect.arrayContaining(['completed']), {
       status: 'failed',
       errorMessage: expect.stringContaining('left seeding'),
+      failureCode: 'removed',
     });
   });
 
@@ -200,6 +217,7 @@ describe('DownloadRemovalService.removeLatestForRequest', () => {
     expect(downloads.updateIf).toHaveBeenCalledWith(11, expect.arrayContaining(['downloading']), {
       status: 'failed',
       errorMessage: expect.stringContaining('connection refused'),
+      failureCode: 'removed',
     });
   });
 });
@@ -242,7 +260,7 @@ describe('DownloadRemovalService with a download that extended an existing torre
 
     expect(adapter.remove).not.toHaveBeenCalled();
     expect(clients.resolveConfig).not.toHaveBeenCalled();
-    expect(downloads.updateIf).toHaveBeenCalledWith(11, expect.anything(), { status: 'failed', errorMessage: LEFT });
+    expect(downloads.updateIf).toHaveBeenCalledWith(11, expect.anything(), { status: 'failed', errorMessage: LEFT, failureCode: 'removed' });
   });
 
   it('remove-from-client and cancel-download path: never removes or deletes files', async () => {
@@ -251,7 +269,7 @@ describe('DownloadRemovalService with a download that extended an existing torre
     await expect(service.removeAttempt(7, 11, true, 'ann')).resolves.toEqual({ wasInFlight: true, leftInClient: true, leftMessage: LEFT });
 
     expect(adapter.remove).not.toHaveBeenCalled();
-    expect(downloads.updateIf).toHaveBeenCalledWith(11, expect.anything(), { status: 'failed', errorMessage: LEFT });
+    expect(downloads.updateIf).toHaveBeenCalledWith(11, expect.anything(), { status: 'failed', errorMessage: LEFT, failureCode: 'removed' });
   });
 
   it('user cleanup path: detachAttempt leaves the torrent and reports no refusal', async () => {
@@ -282,7 +300,7 @@ describe('DownloadRemovalService when another attempt uses the same torrent', ()
 
     expect(downloads.existsOtherForClientKey).toHaveBeenCalledWith(11, 7, 4, INFO_HASH);
     expect(adapter.remove).not.toHaveBeenCalled();
-    expect(downloads.updateIf).toHaveBeenCalledWith(11, expect.anything(), { status: 'failed', errorMessage: LEFT });
+    expect(downloads.updateIf).toHaveBeenCalledWith(11, expect.anything(), { status: 'failed', errorMessage: LEFT, failureCode: 'removed' });
   });
 
   it('leaves the torrent in place on remove-from-client (removeAttempt) with delete-files', async () => {
@@ -298,7 +316,7 @@ describe('DownloadRemovalService when another attempt uses the same torrent', ()
     await expect(service.removeLatestForRequest(7, false, 'ann')).resolves.toEqual({ removed: false, error: null });
 
     expect(adapter.remove).not.toHaveBeenCalled();
-    expect(downloads.updateIf).toHaveBeenCalledWith(11, expect.anything(), { status: 'failed', errorMessage: LEFT });
+    expect(downloads.updateIf).toHaveBeenCalledWith(11, expect.anything(), { status: 'failed', errorMessage: LEFT, failureCode: 'removed' });
   });
 
   it('logs the skipped removal with the shared_torrent reason', async () => {

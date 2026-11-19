@@ -1,9 +1,10 @@
 import { randomUUID } from 'crypto';
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import type { EditionSyncClearUnusedResult } from '@bookorbit/types';
 
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
+import { JobChangesService } from '../jobs/job-changes.service';
 import { ReadAloudWorkspace } from '../read-aloud/read-aloud-workspace.service';
 import { EDITION_SYNC_CLEAR_BATCH_SIZE, EDITION_SYNC_FILE_CHANGE_REASONS } from './edition-sync.constants';
 import { EditionSyncIndexStoreService } from './edition-sync-index-store.service';
@@ -25,6 +26,7 @@ export class EditionSyncQueueService {
     private readonly indexStore: EditionSyncIndexStoreService,
     private readonly workspace: ReadAloudWorkspace,
     private readonly overlaySource: EditionSyncOverlaySourceService,
+    @Optional() private readonly jobChanges?: JobChangesService,
   ) {}
 
   /**
@@ -46,6 +48,7 @@ export class EditionSyncQueueService {
     const claimed = await this.repo.claimIndexRow(next.bookId, workerJobId, new Date(), existing?.filesChangedAt ?? null);
     if (!claimed) return null;
     this.overlaySource.invalidateBook(next.bookId);
+    this.changed();
     return { bookId: next.bookId, workerJobId, pinned: next.pinned };
   }
 
@@ -78,6 +81,7 @@ export class EditionSyncQueueService {
     }
     const stale = await this.repo.markStale(bookId, verification.reason, row.provenance ?? undefined);
     this.overlaySource.invalidateBook(bookId);
+    if (stale) this.changed();
     this.logger.log(
       `[edition_sync.invalidate] [end] bookId=${bookId} durationMs=${Date.now() - started} reason=${verification.reason} stale=${stale} - timing index invalidation completed`,
     );
@@ -119,6 +123,7 @@ export class EditionSyncQueueService {
         }
         if (batch.length < EDITION_SYNC_CLEAR_BATCH_SIZE) break;
       }
+      if (deleted > 0) this.changed();
       this.logger.log(
         `[${event}] [end] durationMs=${Date.now() - startedAt} deleted=${deleted} failed=${failed} freedBytes=${freedBytes} - unused timing data cleared`,
       );
@@ -130,6 +135,10 @@ export class EditionSyncQueueService {
       );
       throw err;
     }
+  }
+
+  private changed(): void {
+    this.jobChanges?.notify({ type: 'edition-sync', ownerId: null, state: true });
   }
 
   private async hasWorkFolder(workerJobId: string): Promise<boolean> {

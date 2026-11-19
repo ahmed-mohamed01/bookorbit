@@ -63,6 +63,12 @@ ALTER TABLE "audiobookshelf_user_settings" ADD COLUMN IF NOT EXISTS "stale_count
 --> statement-breakpoint
 ALTER TABLE "audiobookshelf_user_settings" ADD COLUMN IF NOT EXISTS "push_position" boolean DEFAULT false NOT NULL;
 --> statement-breakpoint
+ALTER TABLE "audiobookshelf_user_settings" ADD COLUMN IF NOT EXISTS "last_run_finished_at" timestamp with time zone;
+--> statement-breakpoint
+ALTER TABLE "audiobookshelf_user_settings" ADD COLUMN IF NOT EXISTS "last_run_kind" varchar(16);
+--> statement-breakpoint
+ALTER TABLE "audiobookshelf_user_settings" ADD COLUMN IF NOT EXISTS "last_run_error" text;
+--> statement-breakpoint
 ALTER TABLE "audiobookshelf_book_state" ADD COLUMN IF NOT EXISTS "push_pending_at" timestamp with time zone;
 --> statement-breakpoint
 ALTER TABLE "audiobookshelf_book_state" ADD COLUMN IF NOT EXISTS "abs_series_name" varchar(1000);
@@ -109,12 +115,23 @@ CREATE INDEX IF NOT EXISTS "audiobookshelf_book_state_user_book_idx" ON "audiobo
 CREATE INDEX IF NOT EXISTS "audiobookshelf_book_state_user_push_pending_idx" ON "audiobookshelf_book_state" USING btree ("user_id","push_pending_at") WHERE "push_pending_at" IS NOT NULL;
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "books_library_updated_at_idx" ON "books" USING btree ("library_id","updated_at");
-
+--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "bm_audible_id_norm_idx" ON "book_metadata" USING btree (upper(trim("audible_id")));
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "bm_isbn10_norm_idx" ON "book_metadata" USING btree (upper(trim("isbn10")));
 --> statement-breakpoint
-DROP INDEX IF EXISTS "bm_audible_id_idx";
+-- Restore the upstream index on databases where an earlier fork bootstrap dropped it.
+DO $$ BEGIN
+	IF EXISTS (
+		SELECT 1 FROM pg_indexes
+		WHERE schemaname = 'public' AND tablename = 'book_metadata' AND indexname = 'bm_google_books_id_idx'
+	) AND NOT EXISTS (
+		SELECT 1 FROM pg_indexes
+		WHERE schemaname = 'public' AND tablename = 'book_metadata' AND indexname = 'bm_audible_id_idx'
+	) THEN
+		CREATE INDEX "bm_audible_id_idx" ON "book_metadata" USING btree ("audible_id") WHERE "book_metadata"."audible_id" is not null;
+	END IF;
+END $$;
 --> statement-breakpoint
 DO $$ BEGIN
 	IF NOT EXISTS (

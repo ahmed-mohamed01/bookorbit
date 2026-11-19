@@ -8,6 +8,7 @@ import { BookConsolidationModule } from '../book-consolidation/book-consolidatio
 import { BookRequestModule } from '../book-request/book-request.module';
 import { CoverModule } from '../cover/cover.module';
 import { HardcoverModule } from '../hardcover/hardcover.module';
+import { JobsModule } from '../jobs/jobs.module';
 import { LibraryModule } from '../library/library.module';
 import { MetadataFetchModule } from '../metadata-fetch/metadata-fetch.module';
 import { MetadataPreferencesModule } from '../metadata-preferences/metadata-preferences.module';
@@ -15,7 +16,9 @@ import { NotificationModule } from '../notification/notification.module';
 import { UserModule } from '../user/user.module';
 import { MonitoredBookConsolidationParticipant } from './monitored-book-consolidation.participant';
 import { MonitoredFetchCoordinator } from './fetch/monitored-fetch-coordinator.service';
+import { MonitoredFetchJobPageRepository } from './fetch/monitored-fetch-job-page.repository';
 import { MonitoredFetchJobService } from './fetch/monitored-fetch-job.service';
+import { MonitoredFetchJobSource } from './fetch/monitored-fetch-job-source';
 import { MONITORED_FETCH_REQUESTS } from './fetch/monitored-fetch-requests';
 import { MonitoredGateway } from './monitored.gateway';
 import { MonitoredCatalogService } from './monitored-catalog.service';
@@ -51,6 +54,7 @@ import { AmazonProductPageClient } from './release-probe/amazon-product-page.cli
     BookRequestModule,
     CoverModule,
     HardcoverModule,
+    JobsModule,
     LibraryModule,
     MetadataFetchModule,
     MetadataPreferencesModule,
@@ -63,6 +67,8 @@ import { AmazonProductPageClient } from './release-probe/amazon-product-page.cli
     MonitoredGateway,
     MonitoredFetchJobService,
     MonitoredFetchCoordinator,
+    MonitoredFetchJobPageRepository,
+    MonitoredFetchJobSource,
     { provide: MONITORED_FETCH_REQUESTS, useExisting: MonitoredFetchCoordinator },
     MonitoredStoreService,
     MonitoredAuthorStoreService,

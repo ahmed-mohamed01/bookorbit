@@ -161,6 +161,7 @@ export function setupServices(options: { settings?: Record<string, unknown>; lib
       operation(repo),
     ),
   });
+  const jobChanges = { notify: vi.fn() };
   const jobs = new WebSerialJobsService(
     repo as never,
     settings as never,
@@ -170,7 +171,8 @@ export function setupServices(options: { settings?: Record<string, unknown>; lib
     lookupService as never,
     runner as never,
     importer as never,
+    jobChanges as never,
   );
   const move = new WebSerialJobMoveService(repo as never, catalog, jobs, runner as never);
-  return { catalog, jobs, move, client, engines, repo, settings, covers, libraryService, lookupService, runner, importer };
+  return { catalog, jobs, move, client, engines, repo, settings, covers, libraryService, lookupService, runner, importer, jobChanges };
 }

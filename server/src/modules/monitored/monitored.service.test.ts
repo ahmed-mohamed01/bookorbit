@@ -959,6 +959,34 @@ describe('MonitoredService', () => {
     ]);
   });
 
+  it('matches a list card by name through internal whitespace, preferring the exactly named author', async () => {
+    const aggregate = { counts: { total: 0, ebookOwned: 0, audioOwned: 0, hidden: 0 }, nextReleaseAt: null };
+    const spaced = author({ id: 'spaced', localAuthorId: null, authorName: 'Alexander Olson' });
+    const exact = author({ id: 'exact', localAuthorId: null, authorName: 'Robin Hobb' });
+    const store = {
+      findAuthorPage: vi.fn().mockResolvedValue({ items: [spaced, exact].map((item) => ({ author: item, aggregate })), total: 2, page: 0, size: 50 }),
+    };
+    const instance = service(
+      store,
+      {},
+      {
+        authorsRepository: {
+          findPortraitCandidates: vi.fn().mockResolvedValue([
+            { id: 9, name: 'robin  hobb', hasPhoto: true },
+            { id: 12, name: 'Alexander   Olson', hasPhoto: true },
+            { id: 15, name: 'Robin Hobb', hasPhoto: true },
+          ]),
+          findCoverBookIds: vi.fn().mockResolvedValue(new Map()),
+        },
+        libraryService: { findAccessibleLibraryIds: vi.fn().mockResolvedValue([4]) },
+      },
+    );
+
+    const { items } = await instance.listAuthors(viewer, { page: 0, size: 50, sort: 'name', order: 'asc' });
+
+    expect(items.map(({ portraitAuthorId }) => portraitAuthorId)).toEqual([12, 15]);
+  });
+
   it('returns author profile metadata after updating monitor settings', async () => {
     const monitor = author({ localAuthorId: 7 });
     const updated = { ...monitor, paused: true };

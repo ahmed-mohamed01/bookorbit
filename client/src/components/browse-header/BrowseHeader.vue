@@ -27,20 +27,23 @@ const props = defineProps<{
 const FOLD_AT = 64
 const UNFOLD_AT = 8
 const TITLE_ROW_GAP = 12
+const BELOW_STRIP_GAP = 10
 
 const barRef = ref<HTMLElement | null>(null)
 const titleRowRef = ref<HTMLElement | null>(null)
+const belowRef = ref<HTMLElement | null>(null)
 provide(BROWSE_BAR_KEY, barRef)
 
 const folded = ref(false)
 let listening: HTMLElement | null = null
 
-// Folding hands the title row's height to the scroller, shrinking its scroll range. Folding a page
+// Folding hands the title row's height, and the strip below it, to the scroller, shrinking its scroll range. Folding a page
 // that would be left with less than FOLD_AT of range clamps scrollTop under UNFOLD_AT, which
 // unfolds it again and loops.
 function canFold(el: HTMLElement) {
   const titleRowHeight = (titleRowRef.value?.offsetHeight ?? 0) + TITLE_ROW_GAP
-  return el.scrollHeight - el.clientHeight - titleRowHeight > FOLD_AT
+  const belowHeight = belowRef.value ? belowRef.value.offsetHeight + BELOW_STRIP_GAP : 0
+  return el.scrollHeight - el.clientHeight - titleRowHeight - belowHeight > FOLD_AT
 }
 
 function handleScroll() {
@@ -74,13 +77,19 @@ onBeforeUnmount(detach)
        keeping the title row's offset. -->
   <header class="mb-3 flex shrink-0 flex-col" :class="folded ? 'mt-0' : 'mt-2'">
     <div
-      class="grid transition-opacity duration-200 ease-out motion-reduce:transition-none"
+      class="grid grid-cols-[minmax(0,1fr)] transition-opacity duration-200 ease-out motion-reduce:transition-none"
       :class="folded ? 'mb-0 grid-rows-[0fr] opacity-0' : 'mb-3 grid-rows-[1fr] opacity-100'"
       :inert="folded || undefined"
     >
       <div ref="titleRowRef" class="min-h-0 overflow-hidden">
         <PageTitleRow :eyebrow="eyebrow" :title="title" :icon="icon" :fallback-icon="fallbackIcon">
-          <template v-if="switcher" #title>
+          <template v-if="$slots.eyebrow" #eyebrow>
+            <slot name="eyebrow" />
+          </template>
+          <template v-if="$slots.title" #title>
+            <slot name="title" />
+          </template>
+          <template v-else-if="switcher" #title>
             <BrowseTitleSwitcher :place="switcher" :title="title" />
           </template>
           <template v-if="$slots.facts" #facts>
@@ -90,6 +99,19 @@ onBeforeUnmount(detach)
             <slot name="actions" />
           </template>
         </PageTitleRow>
+      </div>
+    </div>
+
+    <!-- A strip that belongs with the title, folding away with it. It clips only vertically, so a
+         phone strip can bleed into the page gutter while it scrolls sideways. -->
+    <div
+      v-if="$slots.below"
+      class="grid grid-cols-[minmax(0,1fr)] transition-opacity duration-200 ease-out motion-reduce:transition-none"
+      :class="folded ? 'mb-0 grid-rows-[0fr] opacity-0' : '-mt-0.5 mb-3 grid-rows-[1fr] opacity-100'"
+      :inert="folded || undefined"
+    >
+      <div ref="belowRef" class="min-h-0 min-w-0 [overflow-y:clip]">
+        <slot name="below" />
       </div>
     </div>
 

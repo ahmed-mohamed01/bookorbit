@@ -48,7 +48,7 @@ describe('CoverThumbnailBackfillService', () => {
     };
     service = new CoverThumbnailBackfillService(
       { getOrThrow: () => appDataPath } as unknown as ConfigService,
-      { servedSlotsAfter } as unknown as CoverThumbnailBackfillRepository,
+      { servedSlotsAfter, countServedSlots: () => Promise.resolve(slots.length) } as unknown as CoverThumbnailBackfillRepository,
       { ensureSlotThumbnail } as unknown as BookCoverStore,
       appSettings as unknown as AppSettingsService,
     );
@@ -203,6 +203,45 @@ describe('CoverThumbnailBackfillService', () => {
 
     expect(await run).toMatchObject({ outcome: 'stopped', scanned: 1, made: 1 });
     expect(ensureSlotThumbnail).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops a run on request without turning the switch off', async () => {
+    slots = [
+      { bookId: 1, medium: 'ebook' },
+      { bookId: 2, medium: 'ebook' },
+    ];
+    const release = blockFirstRepair();
+
+    const run = service.run('manual');
+    await vi.waitFor(() => expect(ensureSlotThumbnail).toHaveBeenCalledTimes(1));
+    expect((await service.getState()).running).toMatchObject({ total: 2, scanned: 1 });
+    expect(service.stopRun(admin)).toBe(true);
+    expect(service.stopRun(admin)).toBe(false);
+    release();
+
+    expect(await run).toMatchObject({ outcome: 'stopped', scanned: 1 });
+    expect((await service.getState()).enabled).toBe(true);
+    expect(service.stopRun(admin)).toBe(false);
+  });
+
+  it('tells the Jobs area when a run starts, moves on a page, and ends', async () => {
+    const notify = vi.fn();
+    const watched = new CoverThumbnailBackfillService(
+      { getOrThrow: () => appDataPath } as unknown as ConfigService,
+      { servedSlotsAfter, countServedSlots: () => Promise.resolve(1) } as unknown as CoverThumbnailBackfillRepository,
+      { ensureSlotThumbnail } as unknown as BookCoverStore,
+      { setValue: () => Promise.resolve() } as unknown as AppSettingsService,
+      { notify } as never,
+    );
+    slots = [{ bookId: 1, medium: 'ebook' }];
+
+    await watched.run('manual');
+
+    expect(notify.mock.calls.map(([change]) => change)).toEqual([
+      { type: 'cover-thumbnail-backfill', ownerId: null, state: true },
+      { type: 'cover-thumbnail-backfill', ownerId: null, state: false },
+      { type: 'cover-thumbnail-backfill', ownerId: null, state: true },
+    ]);
   });
 
   it('starts a short while after boot, and not at all once the module is destroyed', () => {

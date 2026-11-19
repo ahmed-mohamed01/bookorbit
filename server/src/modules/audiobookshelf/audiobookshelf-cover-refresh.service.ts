@@ -1,10 +1,12 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import type { RequestUser } from '../../common/types/request-user';
+import { BookMetadataLockService } from '../book-metadata-lock/book-metadata-lock.service';
 import { BookReadService } from '../book/book-read.service';
-import type { BulkCoverRefresher } from '../book/bulk-cover-refresher';
-import { BookService } from '../book/book.service';
+import type { BulkCoverRefresher, BulkCoverRunItem } from '../book/bulk-cover-refresher';
+import { BookService, type BulkReExtractCoverItem } from '../book/book.service';
+import { CoverSlotReconciler } from '../metadata/cover-slot-reconciler.service';
 import { MetadataService } from '../metadata/metadata.service';
 import { buildSidecarCoverPathByBookId, resolveCoverReadOrder, sidecarCoverRanksAboveEmbedded } from '../metadata/lib/cover-source-resolution';
 import { AudiobookshelfRepository } from './audiobookshelf.repository';
@@ -27,6 +29,8 @@ export class AudiobookshelfCoverRefreshService implements BulkCoverRefresher {
     private readonly bookReadService: BookReadService,
     private readonly repository: AudiobookshelfRepository,
     private readonly metadataService: MetadataService,
+    private readonly lockService: BookMetadataLockService,
+    @Optional() private readonly coverReconciler?: CoverSlotReconciler,
   ) {}
 
   async bulkReExtractCover(
@@ -63,6 +67,77 @@ export class AudiobookshelfCoverRefreshService implements BulkCoverRefresher {
     return { processed: upstream.processed + sidecar.processed, updated: upstream.updated + sidecar.updated };
   }
 
+  /**
+   * The bulk-run path: the sidecar-first books and their cover locks are read once per start in
+   * lookup batches, then each one the run reaches is applied here, answering as upstream's
+   * `reExtractCoverItem` would, and every other book is left to upstream's item.
+   */
+  async prepareBulkRun(bookIds: number[]): Promise<BulkCoverRunItem | null> {
+    const sidecarFirst = await this.findSidecarFirstCovers(bookIds);
+    if (sidecarFirst.size === 0) return null;
+    const fullyLocked = await this.findFullyCoverLocked([...sidecarFirst.keys()]);
+    return async (bookId, user) => {
+      const sidecarCoverPath = sidecarFirst.get(bookId);
+      if (!sidecarCoverPath) return null;
+      const access = await this.bookService.bulkItemAccess(bookId, user);
+      if (access !== 'ok') return { status: 'skipped', code: access };
+      if (fullyLocked.has(bookId)) return { status: 'locked' };
+      const [file] = await this.bookReadService.findPrimaryFilesByBookIds([bookId]);
+      let item: Exclude<BulkReExtractCoverItem, { status: 'skipped' }>;
+      try {
+        item = await this.reExtractSidecarFirstItem(bookId, sidecarCoverPath, file);
+      } catch (error) {
+        this.logSidecarFailure(bookId, error);
+        item = { status: 'attempted', updated: false };
+      }
+      if (item.status === 'attempted') await this.coverReconciler?.enqueue([bookId]);
+      return item;
+    };
+  }
+
+  /** Books whose every cover slot is locked; a sidecar image may land in either slot. */
+  private async findFullyCoverLocked(bookIds: number[]): Promise<Set<number>> {
+    const result = new Set<number>();
+    for (let index = 0; index < bookIds.length; index += COVER_LOOKUP_BATCH_SIZE) {
+      const batch = bookIds.slice(index, index + COVER_LOOKUP_BATCH_SIZE);
+      const [coverLocked, audioCoverLocked] = await Promise.all([
+        this.lockService.getCoverLockedBookIds(batch),
+        this.lockService.getBookIdsWithLockedField(batch, 'audioCover'),
+      ]);
+      for (const bookId of coverLocked) if (audioCoverLocked.has(bookId)) result.add(bookId);
+    }
+    return result;
+  }
+
+  /**
+   * Sidecar first, then embedded art, as `applyCoverFromSources` reads them. Like upstream, a book is
+   * attempted once it has something to read, and has no source only when the sidecar gave nothing
+   * and there is no embedded file to fall back to.
+   */
+  private async reExtractSidecarFirstItem(
+    bookId: number,
+    sidecarCoverPath: string,
+    file: { absolutePath: string; format: string | null } | undefined,
+  ): Promise<Exclude<BulkReExtractCoverItem, { status: 'skipped' | 'locked' }>> {
+    const readOrder = resolveCoverReadOrder({
+      precedence: ['sidecar', 'embedded'],
+      primaryFile: file ? { absolutePath: file.absolutePath, format: file.format } : null,
+      sidecarCoverPath,
+    });
+    let readable = false;
+    for (const source of readOrder) {
+      if (source.kind === 'embedded') {
+        readable = true;
+        if (await this.metadataService.refreshCoverForBook(bookId, source.absolutePath, source.format)) return { status: 'attempted', updated: true };
+        continue;
+      }
+      const outcome = await this.metadataService.applyCoverSource(bookId, source);
+      if (outcome === 'saved') return { status: 'attempted', updated: true };
+      if (outcome === 'locked') return { status: 'attempted', updated: false };
+    }
+    return readable ? { status: 'attempted', updated: false } : { status: 'no-source' };
+  }
+
   private async findSidecarFirstCovers(bookIds: number[]): Promise<Map<number, string>> {
     const result = new Map<number, string>();
     for (let index = 0; index < bookIds.length; index += COVER_LOOKUP_BATCH_SIZE) {
@@ -91,24 +166,14 @@ export class AudiobookshelfCoverRefreshService implements BulkCoverRefresher {
       const batch = bookIds.slice(index, index + COVER_APPLY_CONCURRENCY);
       const primaryFiles = new Map((await this.bookReadService.findPrimaryFilesByBookIds(batch)).map((file) => [file.bookId, file]));
       const results = await Promise.allSettled(
-        batch.map((bookId) => {
-          const file = primaryFiles.get(bookId);
-          const readOrder = resolveCoverReadOrder({
-            precedence: ['sidecar', 'embedded'],
-            primaryFile: file ? { absolutePath: file.absolutePath, format: file.format } : null,
-            sidecarCoverPath: sidecarCoverByBookId.get(bookId)!,
-          });
-          return this.metadataService.applyCoverFromSources(bookId, readOrder);
-        }),
+        batch.map((bookId) => this.applySidecarFirstCover(bookId, sidecarCoverByBookId.get(bookId)!, primaryFiles.get(bookId))),
       );
       for (let resultIndex = 0; resultIndex < results.length; resultIndex++) {
         const result = results[resultIndex]!;
         const bookId = batch[resultIndex]!;
         processed++;
         if (result.status === 'rejected') {
-          const errorClass = result.reason instanceof Error ? result.reason.name : 'Error';
-          const errorMessage = sanitizeLogValue(result.reason instanceof Error ? result.reason.message : String(result.reason));
-          this.logger.warn(`[${event}] [fail] bookId=${bookId} errorClass=${errorClass} error="${errorMessage}" - sidecar cover apply failed`);
+          this.logSidecarFailure(bookId, result.reason);
         } else if (result.value) {
           updated++;
         }
@@ -125,5 +190,26 @@ export class AudiobookshelfCoverRefreshService implements BulkCoverRefresher {
       `[${event}] [end] count=${bookIds.length} durationMs=${Date.now() - startedAt} processed=${processed} updated=${updated} callbackInterrupted=${stopped} - sidecar cover refresh completed`,
     );
     return { processed, updated };
+  }
+
+  private applySidecarFirstCover(
+    bookId: number,
+    sidecarCoverPath: string,
+    file: { absolutePath: string; format: string | null } | undefined,
+  ): Promise<boolean> {
+    const readOrder = resolveCoverReadOrder({
+      precedence: ['sidecar', 'embedded'],
+      primaryFile: file ? { absolutePath: file.absolutePath, format: file.format } : null,
+      sidecarCoverPath,
+    });
+    return this.metadataService.applyCoverFromSources(bookId, readOrder);
+  }
+
+  private logSidecarFailure(bookId: number, error: unknown): void {
+    const errorClass = error instanceof Error ? error.name : 'Error';
+    const errorMessage = sanitizeLogValue(error instanceof Error ? error.message : String(error));
+    this.logger.warn(
+      `[audiobookshelf.sidecar_cover_refresh] [fail] bookId=${bookId} errorClass=${errorClass} error="${errorMessage}" - sidecar cover apply failed`,
+    );
   }
 }

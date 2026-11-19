@@ -73,6 +73,8 @@ export const monitoredAuthors = pgTable(
     fetchErrorAt: timestamp('fetch_error_at', { withTimezone: true }),
     fetchRetryAt: timestamp('fetch_retry_at', { withTimezone: true }),
     fetchAttempts: smallint('fetch_attempts').notNull().default(0),
+    fetchQueuedAt: timestamp('fetch_queued_at', { withTimezone: true }),
+    fetchStartedAt: timestamp('fetch_started_at', { withTimezone: true }),
     lastSyncAttemptedAt: timestamp('last_sync_attempted_at', { withTimezone: true }),
     // Null means the release watcher has never looked at this monitor. The first pass seeds the
     // ledger silently instead of announcing every book that came out since the monitor was added.
@@ -82,6 +84,10 @@ export const monitoredAuthors = pgTable(
     index('monitored_authors_fetch_pending_idx')
       .on(t.fetchState, t.addedAt, t.id)
       .where(sql`${t.fetchState} <> 'idle'`),
+    index('monitored_authors_fetch_owner_idx')
+      .on(t.ownerUserId, t.fetchState)
+      .where(sql`${t.fetchState} <> 'idle'`),
+    index('monitored_authors_fetch_finish_idx').on(t.ownerUserId, sql`coalesce(${t.fetchErrorAt}, ${t.lastRefreshedAt})`, sql`${t.id} collate "C"`),
     check('monitored_authors_fetch_state_chk', sql`${t.fetchState} in ('idle', 'queued', 'fetching', 'failed')`),
     check(
       'monitored_authors_fetch_error_kind_chk',

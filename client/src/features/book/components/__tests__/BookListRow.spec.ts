@@ -1,8 +1,11 @@
 import { mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
+import { ref } from 'vue'
+import BookCoverArtwork from '../BookCoverArtwork.vue'
 import BookListRow from '../BookListRow.vue'
 import type { BookCard } from '@bookorbit/types'
 import { useDisplaySettings } from '@/composables/useDisplaySettings'
+import { COVER_ASPECT_RATIO_KEY } from '@/features/book/lib/cover-aspect-ratio'
 
 const routerPushMock = vi.hoisted(() => vi.fn<(...args: unknown[]) => unknown>())
 
@@ -38,13 +41,14 @@ const globalStubs = {
   },
 }
 
-const { bookSpineOverlay, thumbnailClickAction } = useDisplaySettings()
+const { bookCoverDisplayMode, bookSpineOverlay, thumbnailClickAction } = useDisplaySettings()
 
 beforeEach(() => {
   routerPushMock.mockClear()
 })
 
 afterEach(() => {
+  bookCoverDisplayMode.value = 'blurred-fit'
   bookSpineOverlay.value = 'off'
   thumbnailClickAction.value = 'reader'
 })
@@ -171,6 +175,16 @@ describe('BookListRow - missing state', () => {
 })
 
 describe('BookListRow - present state', () => {
+  it('passes the book aspect ratio to natural-bottom cover artwork in a square library', () => {
+    bookCoverDisplayMode.value = 'natural-bottom'
+    const wrapper = mount(BookListRow, {
+      props: { book: { ...presentBook, hasCover: true } },
+      global: { ...globalStubs, provide: { [COVER_ASPECT_RATIO_KEY]: ref('1/1') } },
+    })
+
+    expect(wrapper.getComponent(BookCoverArtwork).props('frameAspectRatio')).toBe('2/3')
+  })
+
   it('emits quick-view on row click by default', async () => {
     const wrapper = mount(BookListRow, { props: { book: presentBook }, global: globalStubs })
 

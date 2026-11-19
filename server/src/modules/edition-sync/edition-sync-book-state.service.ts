@@ -54,6 +54,7 @@ export class EditionSyncBookStateService {
     await this.repo.setOverride(user.id, bookId, resolveEditionSyncOverrideForToggle(settings.bookSyncMode, syncEnabled));
     this.overlaySource.invalidate(user.id, bookId);
     this.positionCache.clear();
+    this.scheduler.changed();
     if (syncEnabled && settings.effectiveEnabled) {
       const [eligibility, row] = await Promise.all([this.repo.findEligibility(bookId), this.repo.findIndexRow(bookId)]);
       if (eligibility?.eligible && (row === null || row.status === 'stale')) await this.pin(bookId, false);
@@ -105,6 +106,7 @@ export class EditionSyncBookStateService {
       const libraryIds = await this.libraryScope.visibleIdsOrAll(user);
       retried = await this.repo.retryFailedBooks(user, libraryIds, settings, new Date());
       this.positionCache.clear();
+      if (retried > 0) this.scheduler.changed();
       this.scheduler.poke();
       this.logger.log(
         `[edition_sync.retry_failed] [end] userId=${user.id} durationMs=${Date.now() - startedAt} retried=${retried} - retry failed books completed`,
@@ -123,6 +125,7 @@ export class EditionSyncBookStateService {
   private async pin(bookId: number, retry: boolean): Promise<void> {
     await this.repo.pinBook(bookId, new Date(), retry);
     this.positionCache.clear();
+    this.scheduler.changed();
     this.scheduler.poke();
   }
 

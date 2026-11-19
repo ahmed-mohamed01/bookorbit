@@ -1,15 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AudioConvertSettings } from '@bookorbit/types'
 
-import {
-  AUDIO_CONVERT_POLL_MS,
-  AUDIO_CONVERT_WAITING_POLL_MS,
-  isAlreadyM4b,
-  isJobFinished,
-  mergeSavedSettings,
-  pollDelay,
-  settingsToForm,
-} from '../audio-convert'
+import { isAlreadyM4b, isJobFinished, mergeSavedSettings, settingsToForm } from '../audio-convert'
 
 function saved(overrides: Partial<AudioConvertSettings> = {}): AudioConvertSettings {
   return {
@@ -25,16 +17,6 @@ function saved(overrides: Partial<AudioConvertSettings> = {}): AudioConvertSetti
     ...overrides,
   }
 }
-
-describe('pollDelay', () => {
-  it('polls fast while a job is queued or running, slowly while one only waits, and not at all otherwise', () => {
-    expect(pollDelay([{ status: 'waiting' }, { status: 'running' }])).toBe(AUDIO_CONVERT_POLL_MS)
-    expect(pollDelay([{ status: 'queued' }])).toBe(AUDIO_CONVERT_POLL_MS)
-    expect(pollDelay([{ status: 'waiting' }, { status: 'success' }])).toBe(AUDIO_CONVERT_WAITING_POLL_MS)
-    expect(AUDIO_CONVERT_WAITING_POLL_MS).toBeGreaterThanOrEqual(30_000)
-    expect(pollDelay([{ status: 'failed' }])).toBeNull()
-  })
-})
 
 describe('isJobFinished', () => {
   it('counts cancelled jobs as finished', () => {

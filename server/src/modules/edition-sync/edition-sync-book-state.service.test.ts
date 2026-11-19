@@ -46,7 +46,7 @@ function setup(
     }),
   };
   const queue = { ensureValid: vi.fn().mockResolvedValue(true) };
-  const scheduler = { poke: vi.fn(), nextRunAt: vi.fn().mockReturnValue(new Date('2026-11-02T02:00:00Z')) };
+  const scheduler = { poke: vi.fn(), changed: vi.fn(), nextRunAt: vi.fn().mockReturnValue(new Date('2026-11-02T02:00:00Z')) };
   const overlaySource = { invalidate: vi.fn(), invalidateBook: vi.fn() };
   const libraryScope = { visibleIdsOrAll: vi.fn().mockResolvedValue([2, 5]) };
   const alignmentStatus = { hasReadyAlignment: vi.fn().mockResolvedValue(options.readyAlignment ?? false) };
@@ -179,6 +179,7 @@ describe('EditionSyncBookStateService.setSyncEnabled', () => {
     expect(overlaySource.invalidate).toHaveBeenCalledWith(7, 10);
     expect(repo.pinBook).toHaveBeenCalledWith(10, expect.any(Date), false);
     expect(scheduler.poke).toHaveBeenCalled();
+    expect(scheduler.changed).toHaveBeenCalled();
   });
 
   it('does not pin a book that already has an index or failed', async () => {
@@ -217,10 +218,11 @@ describe('EditionSyncBookStateService run now and retry', () => {
     await expect(service.runNow(user, 10)).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('retry pins a failed book with the retry flag', async () => {
-    const { service, repo } = setup({ row: { bookId: 10, status: 'failed' } });
+  it('retry pins a failed book with the retry flag and tells the Jobs area', async () => {
+    const { service, repo, scheduler } = setup({ row: { bookId: 10, status: 'failed' } });
     await service.retry(user, 10);
     expect(repo.pinBook).toHaveBeenCalledWith(10, expect.any(Date), true);
+    expect(scheduler.changed).toHaveBeenCalledTimes(1);
   });
 
   it('retry refuses a book that did not fail', async () => {
@@ -239,6 +241,7 @@ describe('EditionSyncBookStateService.reindex', () => {
     expect(overlaySource.invalidateBook).toHaveBeenCalledWith(10);
     expect(repo.pinBook).toHaveBeenCalledWith(10, expect.any(Date), false);
     expect(scheduler.poke).toHaveBeenCalled();
+    expect(scheduler.changed).toHaveBeenCalled();
     expect(repo.markStale.mock.invocationCallOrder[0]).toBeLessThan(repo.pinBook.mock.invocationCallOrder[0]);
   });
 

@@ -144,7 +144,6 @@ export class WebSerialItemRetryPolicy {
       const step = Math.min(WAIT_CHECK_MS, remaining);
       await this.ops.sleep(step);
       remaining -= step;
-      await this.repo.heartbeat(jobId);
     }
     if (this.ops.isStopping()) throw new JobStopped();
     if (await this.ops.shouldStop(jobId)) throw new JobStopped();

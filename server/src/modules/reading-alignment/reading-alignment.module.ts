@@ -4,6 +4,7 @@ import { Module } from '@nestjs/common';
 import { AchievementModule } from '../achievement/achievement.module';
 import { BookConsolidationModule } from '../book-consolidation/book-consolidation.module';
 import { BookModule } from '../book/book.module';
+import { JobsModule } from '../jobs/jobs.module';
 import { LibraryModule } from '../library/library.module';
 import { EpubModule } from '../reader/epub/epub.module';
 import { ReadingAlignmentBookConsolidationParticipant } from './reading-alignment-book-consolidation.participant';
@@ -14,12 +15,14 @@ import { ReadingAlignmentSchemaBootstrapService } from './reading-alignment-sche
 import { ReadingAlignmentStatusService } from './reading-alignment-status.service';
 import { ReadingAlignmentSyncService } from './reading-alignment-sync.service';
 import { ReadingAlignmentController } from './reading-alignment.controller';
+import { ReadingAlignmentJobPageRepository } from './reading-alignment-job-page.repository';
+import { ReadingAlignmentJobSource } from './reading-alignment-job-source';
 import { ReadingAlignmentRepository } from './reading-alignment.repository';
 import { WhisperModelService } from './whisper-model.service';
 import { WhisperService } from './whisper.service';
 
 @Module({
-  imports: [AudiobookChaptersModule, BookConsolidationModule, EpubModule, BookModule, LibraryModule, AchievementModule],
+  imports: [AudiobookChaptersModule, BookConsolidationModule, EpubModule, BookModule, JobsModule, LibraryModule, AchievementModule],
   controllers: [ReadingAlignmentController],
   providers: [
     ReadingAlignmentBookConsolidationParticipant,
@@ -32,6 +35,8 @@ import { WhisperService } from './whisper.service';
     ReadingAlignmentResolveService,
     ReadingAlignmentStatusService,
     ReadingAlignmentSyncService,
+    ReadingAlignmentJobPageRepository,
+    ReadingAlignmentJobSource,
   ],
   exports: [ReadingAlignmentStatusService],
 })

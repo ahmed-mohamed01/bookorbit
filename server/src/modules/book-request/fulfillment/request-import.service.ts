@@ -40,7 +40,7 @@ import { stagedDownloadRoot } from '../download-clients/download-client-adapter'
 import { directDownloadRoot } from './direct-download.service';
 import { BookRequestDownloadRepository } from './book-request-download.repository';
 import { DownloadRemovalService } from './download-removal.service';
-import { RequestFulfillmentService } from './request-fulfillment.service';
+import { RequestFulfillmentService, type ClassifiedRequestFailure } from './request-fulfillment.service';
 
 /** A release folder is books plus artwork, not a filesystem. Depth and count stay bounded. */
 const MAX_SCAN_DEPTH = 4;
@@ -73,6 +73,16 @@ interface UnitPlacement {
   unitDirectory: string | null;
   primaryDestPath: string;
   files: PlacedFile[];
+}
+
+/** An import failure the request records with a stable code beside its English message. */
+class ClassifiedImportError extends Error {
+  constructor(
+    message: string,
+    readonly failure: ClassifiedRequestFailure,
+  ) {
+    super(message);
+  }
 }
 
 @Injectable()
@@ -125,8 +135,7 @@ export class RequestImportService implements OnApplicationBootstrap {
       await this.runImport(download, joined.request);
       return true;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      await this.fulfillment.failDownload(download, message);
+      await this.failImport(download, error);
       return false;
     }
   }
@@ -158,10 +167,16 @@ export class RequestImportService implements OnApplicationBootstrap {
     try {
       await this.runImport(download, joined.request, choice.primaryPath);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      await this.fulfillment.failDownload(download, message);
-      throw new BadRequestException(message);
+      throw new BadRequestException(await this.failImport(download, error));
     }
+  }
+
+  /** Records the failure, with its code where the import classified it, and returns its message. */
+  private async failImport(download: BookRequestDownloadRow, error: unknown): Promise<string> {
+    const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof ClassifiedImportError) await this.fulfillment.failDownload(download, message, error.failure);
+    else await this.fulfillment.failDownload(download, message);
+    return message;
   }
 
   private async runImport(download: BookRequestDownloadRow, request: BookRequestRow, chosenPrimaryPath?: string): Promise<void> {
@@ -218,8 +233,8 @@ export class RequestImportService implements OnApplicationBootstrap {
     if (await this.importHook?.importBatch(this, download, request, root, plan, contentContainmentRoot)) return;
 
     // The directory walk swallows read errors, so an unreadable folder would otherwise surface as "no supported book file".
-    await readdir(root).catch((error: NodeJS.ErrnoException) => {
-      throw new Error(unreadableDownloadMessage(root, download.contentPath ?? root, error.code), { cause: error });
+    await readdir(root).catch((error: unknown) => {
+      throw unreadableDownloadError(root, download.contentPath ?? root, error);
     });
 
     // Part of the release was never read, so what looks like a whole book may be the half of one
@@ -268,6 +283,7 @@ export class RequestImportService implements OnApplicationBootstrap {
       await this.downloads.updateIf(download.id, UNSETTLED_BOOK_REQUEST_DOWNLOAD_STATUSES, {
         status: 'failed',
         errorMessage: 'The request was settled while this download was finishing, so nothing was imported',
+        failureCode: 'removed',
       });
       this.logger.log(
         `[book_request.import] [end] requestId=${request.id} downloadId=${download.id} durationMs=${Date.now() - started} - the request was settled while the download finished, so nothing was imported`,
@@ -287,6 +303,7 @@ export class RequestImportService implements OnApplicationBootstrap {
         totalBytes: download.totalBytes,
       },
       (await this.requests.findRequestViewerIds([request.id])).get(request.id) ?? [],
+      true,
     );
     this.gateway.emitChanged();
 
@@ -308,6 +325,7 @@ export class RequestImportService implements OnApplicationBootstrap {
           await this.downloads.updateIf(download.id, UNSETTLED_BOOK_REQUEST_DOWNLOAD_STATUSES, {
             status: 'failed',
             errorMessage: 'The request was settled while this download was finishing, so nothing was imported',
+            failureCode: 'removed',
           });
           this.gateway.emitChanged();
           return;
@@ -368,7 +386,7 @@ export class RequestImportService implements OnApplicationBootstrap {
     try {
       info = await stat(localPath);
     } catch (error) {
-      throw new Error(unreadableDownloadMessage(localPath, clientPath, (error as NodeJS.ErrnoException).code), { cause: error });
+      throw unreadableDownloadError(localPath, clientPath, error);
     }
 
     const root = info.isDirectory() ? localPath : dirname(localPath);
@@ -662,7 +680,7 @@ export class RequestImportService implements OnApplicationBootstrap {
       if (!onDisk && !claimed) return candidate;
     }
 
-    throw new Error('Could not find a free destination filename in the Book Dock');
+    throw new Error('Could not find a free destination filename in the Library Dock');
   }
 
   /**
@@ -706,6 +724,11 @@ const UNREADABLE_REASONS: Record<string, string> = {
   EACCES: 'permission denied',
   ENOENT: 'not found',
 };
+
+function unreadableDownloadError(localPath: string, clientPath: string, error: unknown): ClassifiedImportError {
+  const message = unreadableDownloadMessage(localPath, clientPath, (error as NodeJS.ErrnoException).code);
+  return new ClassifiedImportError(message, { code: 'DOWNLOAD_UNREADABLE', meta: { path: localPath } });
+}
 
 export function unreadableDownloadMessage(localPath: string, clientPath: string, code: string | undefined): string {
   const reason = (code && UNREADABLE_REASONS[code]) ?? code ?? 'unknown error';

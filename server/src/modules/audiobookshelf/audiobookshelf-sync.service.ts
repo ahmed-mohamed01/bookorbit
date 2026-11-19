@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, Optional } from '@nestjs/common';
 import { isAudioFormat, type AudiobookshelfSyncResult, type ReadStatus } from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
@@ -6,6 +6,7 @@ import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { toDateKeyInTimeZone } from '../../common/utils/timezone.utils';
 import { ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, AchievementEventsService } from '../achievement/achievement-events.service';
 import { BookService } from '../book/book.service';
+import { JobChangesService } from '../jobs/job-changes.service';
 import { LibraryService } from '../library/library.service';
 import { ReadingAttemptService } from '../user-book-status/reading-attempt.service';
 import { UserBookStatusService } from '../user-book-status/user-book-status.service';
@@ -94,6 +95,14 @@ function msToDateKey(ms: number | null | undefined, timeZone: string): string | 
   return toDateKeyInTimeZone(new Date(ms), timeZone);
 }
 
+/** `full`: a full resync. `reconcile`: matches the Audiobookshelf inventory first. `poll`: progress only. */
+export type AudiobookshelfSyncKind = 'full' | 'reconcile' | 'poll';
+
+export interface AudiobookshelfActiveSync {
+  kind: AudiobookshelfSyncKind;
+  startedAt: Date;
+}
+
 interface AbsDueBook {
   mp: AbsMediaProgress;
   state: AudiobookshelfBookState;
@@ -129,6 +138,8 @@ export class AudiobookshelfSyncService {
   // Last warned position-skip signature per "userId:bookId", so the hot tier's 30s cadence doesn't
   // re-warn every tick for a book stuck out of tolerance. See `logDurationWarning`.
   private readonly durationWarningSignatures = new Map<string, string>();
+  // Runs the Jobs area shows, by user. The 30s hot tier is left out: it ends before a page could show it.
+  private readonly activeRuns = new Map<number, AudiobookshelfActiveSync>();
 
   constructor(
     private readonly repo: AudiobookshelfRepository,
@@ -142,7 +153,12 @@ export class AudiobookshelfSyncService {
     private readonly progressPush: AudiobookshelfProgressPushService,
     private readonly coordinator: AudiobookshelfSyncCoordinatorService,
     private readonly bookService: BookService,
+    @Optional() private readonly jobChanges?: JobChangesService,
   ) {}
+
+  activeRun(userId: number): AudiobookshelfActiveSync | null {
+    return this.activeRuns.get(userId) ?? null;
+  }
 
   /**
    * Full resync: re-baseline the user's read state from scratch. Bypasses the per-book
@@ -171,7 +187,12 @@ export class AudiobookshelfSyncService {
     const startedAt = Date.now();
     // The 30s hot tier is silent unless it changed something or failed; the full poll keeps start/end.
     const quiet = options.hotInProgressOnly === true;
+    const kind: AudiobookshelfSyncKind = options.force && options.deepSessions ? 'full' : reconcile ? 'reconcile' : 'poll';
+    // Only full, reconcile and poll runs record how they ended for the Jobs area; the hot tier leaves it alone.
+    const lastRun = (error: string | null) => (quiet ? {} : { lastRunFinishedAt: new Date(), lastRunKind: kind, lastRunError: error });
     if (!quiet) {
+      this.activeRuns.set(user.id, { kind, startedAt: new Date(startedAt) });
+      this.jobChanges?.notify({ type: 'audiobookshelf-sync', ownerId: user.id, state: true });
       this.logger.log(
         `[abs.sync] [start] userId=${user.id} syncStatus=${settings.syncStatus} syncPosition=${settings.syncPosition} force=${options.force === true} deepSessions=${options.deepSessions === true} reconcile=${reconcile} - sync started`,
       );
@@ -303,7 +324,7 @@ export class AudiobookshelfSyncService {
         }
       }
 
-      await this.repo.updateSettings(user.id, { lastSyncedAt: new Date(), lastSyncError: sessionsError });
+      await this.repo.updateSettings(user.id, { lastSyncedAt: new Date(), lastSyncError: sessionsError, ...lastRun(sessionsError) });
       const changed = result.statusApplied + result.positionApplied + result.sessionsApplied + result.failed > 0 || sessionsError != null;
       if (!quiet || changed) {
         this.logger.log(
@@ -319,11 +340,13 @@ export class AudiobookshelfSyncService {
         `[abs.sync] [fail] userId=${user.id} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${error}" tokenRejected=${tokenRejected} - sync failed${tokenRejected ? ', sync disabled' : ''}`,
       );
       await this.repo
-        .updateSettings(user.id, tokenRejected ? { enabled: false, lastSyncError: error } : { lastSyncError: error })
+        .updateSettings(user.id, { ...(tokenRejected ? { enabled: false } : {}), lastSyncError: error, ...lastRun(error) })
         .catch(() => undefined);
       throw err;
     } finally {
       this.coordinator.endSync(user.id);
+      this.activeRuns.delete(user.id);
+      if (!quiet) this.jobChanges?.notify({ type: 'audiobookshelf-sync', ownerId: user.id, state: true });
     }
   }
 

@@ -9,7 +9,7 @@ const { coverUrl } = useCoverVersions()
 const cache = new Map<string, CoverTint | null>()
 
 export function coverStackUrl(book: Pick<BookDetail, 'id' | 'covers' | 'coverVersion'>, medium: CoverMedium): string {
-  return coverUrl(book.id, 'thumbnail', book.covers[medium]?.updatedAt ?? book.coverVersion, medium)
+  return coverUrl(book.id, 'display', book.covers[medium]?.updatedAt ?? book.coverVersion, medium)
 }
 
 export function useCoverTint(src: Ref<string | null>) {

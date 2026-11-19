@@ -1,4 +1,4 @@
-import { rankFileRowsByBook } from '../../common/utils/primary-file-selection.utils';
+import { isReadAlongBookFile, rankFileRowsByBook } from '../../common/utils/primary-file-selection.utils';
 import { Inject, Injectable } from '@nestjs/common';
 import { AUDIO_FORMAT_LIST, isContentBookFile, type CoverMedia, type CoverMedium } from '@bookorbit/types';
 import { and, asc, eq, getTableName, getTableColumns, gt, inArray, isNotNull, lte, sql, type SQL } from 'drizzle-orm';
@@ -113,6 +113,8 @@ export type BookCoverFaceRow = {
   bookId: number;
   libraryCoverAspectRatio: string;
   primaryFormat: string | null;
+  /** The primary file is an EPUB with synced narration, which plays as audio and reads as an ebook. */
+  primaryReadAlong: boolean;
   media: CoverMedia;
   legacyVersion: string;
 };
@@ -273,15 +275,18 @@ export class BookCoverStoreRepository {
       list.push(file.id === primaryIds.get(file.bookId) ? { ...file, role: 'primary' } : file);
       filesByBook.set(file.bookId, list);
     }
-    return rows.map((row) => ({
-      bookId: row.bookId,
-      libraryCoverAspectRatio: row.coverAspectRatio,
-      primaryFormat:
-        ((filesByBook.get(row.bookId) ?? []).find((file) => file.role === 'primary') ?? (filesByBook.get(row.bookId) ?? []).find(isContentBookFile))
-          ?.format ?? null,
-      media: { hasEbook: row.hasEbook, hasAudio: row.hasAudio },
-      legacyVersion: (row.updatedAt ?? row.addedAt).toISOString(),
-    }));
+    return rows.map((row) => {
+      const bookFileRows = filesByBook.get(row.bookId) ?? [];
+      const primary = bookFileRows.find((file) => file.role === 'primary') ?? bookFileRows.find(isContentBookFile);
+      return {
+        bookId: row.bookId,
+        libraryCoverAspectRatio: row.coverAspectRatio,
+        primaryFormat: primary?.format ?? null,
+        primaryReadAlong: primary !== undefined && isReadAlongBookFile(primary),
+        media: { hasEbook: row.hasEbook, hasAudio: row.hasAudio },
+        legacyVersion: (row.updatedAt ?? row.addedAt).toISOString(),
+      };
+    });
   }
 
   async applySlotMutation(

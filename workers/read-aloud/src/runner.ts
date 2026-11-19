@@ -134,7 +134,7 @@ function send(message: RunnerToControl, callback?: () => void): void {
 async function run(job: RunnerJob): Promise<void> {
   const runStartedAt = Date.now();
   const signal = controller.signal;
-  const paths = workPaths(job.workDir);
+  const paths = workPaths(job);
   const reporter = new ProgressReporter();
   const clean = (text: string) => cleanMessage(text, job.redactions, MAX_EVENT_MESSAGE_LENGTH);
   let currentStage: ReadAloudWorkerStage | null = null;
@@ -373,13 +373,13 @@ function dependentsOf(stage: MarkerStage): MarkerStage[] {
   return [...result];
 }
 
-function workPaths(workDir: string): WorkPaths {
+function workPaths({ workDir, scratchDir }: Pick<RunnerJob, "workDir" | "scratchDir">): WorkPaths {
   return {
     workDir,
     sourceAudioDir: join(workDir, "source-audio"),
     processedAudioDir: join(workDir, "processed-audio"),
     emissionsDir: join(workDir, "emissions"),
-    scratchDir: join(workDir, "scratch"),
+    scratchDir,
     upgradedEpubPath: join(workDir, "upgraded.epub"),
     markedEpubPath: join(workDir, "marked.epub"),
     outputPath: join(workDir, "output.epub"),

@@ -1,4 +1,5 @@
-import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { basename } from 'path';
+import { Inject, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { Permission } from '@bookorbit/types';
 import type { AlignmentBuildResponse, AlignmentStatusResponse } from '@bookorbit/types';
 import type { ConfigType } from '@nestjs/config';
@@ -9,10 +10,12 @@ import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { alignmentContentChanged } from './reading-alignment-content-hash.util';
 import { describeError } from './reading-alignment-error.util';
 import { BookService } from '../book/book.service';
+import { JobChangesService } from '../jobs/job-changes.service';
 import { ReadingAlignmentBuildService } from './reading-alignment-build.service';
 import { ReadingAlignmentPairService } from './reading-alignment-pair.service';
 import { ReadingAlignmentRepository } from './reading-alignment.repository';
 import { WhisperService } from './whisper.service';
+import type { AudiobookAlignment } from './schema/reading-alignment.schema';
 
 const REQUEST_EVENT = 'reading_alignment.request_build';
 const CANCEL_EVENT = 'reading_alignment.cancel_build';
@@ -29,6 +32,7 @@ export class ReadingAlignmentStatusService {
     private readonly whisper: WhisperService,
     private readonly bookService: BookService,
     private readonly pairService: ReadingAlignmentPairService,
+    @Optional() private readonly jobChanges?: JobChangesService,
   ) {}
 
   // Kicks off a build WITHOUT awaiting it (a build can run for minutes) and reports the status the UI
@@ -87,6 +91,7 @@ export class ReadingAlignmentStatusService {
       const alignment = await this.repo.getAlignmentByPair(pair.textBookId, pair.audioBookId);
       const cancellable = alignment?.status === 'pending' || alignment?.status === 'building';
       const deleted = alignment && cancellable ? await this.repo.deleteAlignment(alignment.id) : false;
+      if (deleted) this.jobChanges?.notify({ type: 'whisper-alignment', ownerId: null, state: true });
       this.logger.log(
         `[${CANCEL_EVENT}] [end] bookId=${bookId} userId=${user.id} alignmentId=${alignment?.id ?? 'none'} durationMs=${Date.now() - startedAt} inFlight=${inFlight} deleted=${deleted} - alignment build cancel completed`,
       );
@@ -124,6 +129,27 @@ export class ReadingAlignmentStatusService {
     if (!pair) return false;
     const alignment = await this.repo.getAlignmentByPair(pair.textBookId, pair.audioBookId);
     return alignment?.status === 'ready';
+  }
+
+  /**
+   * Whether rebuilding an alignment that settled as unalignable could end differently: its files, or the
+   * whisper model, sample interval or clip length it was built with, changed since. Two indexed reads.
+   */
+  async rebuildCouldChange(
+    alignment: Pick<
+      AudiobookAlignment,
+      'textBookId' | 'audioBookId' | 'audioContentHash' | 'epubContentHash' | 'whisperModel' | 'sampleIntervalSec' | 'clipSeconds'
+    >,
+  ): Promise<boolean> {
+    const whisperModel = this.config.whisperModel ? basename(this.config.whisperModel) : null;
+    if (
+      alignment.whisperModel !== whisperModel ||
+      alignment.sampleIntervalSec !== this.config.readingAlignmentSampleIntervalSec ||
+      alignment.clipSeconds !== this.config.readingAlignmentClipSeconds
+    ) {
+      return true;
+    }
+    return await alignmentContentChanged(this.repo, alignment, alignment);
   }
 
   private canBuild(user: RequestUser): boolean {

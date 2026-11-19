@@ -1,6 +1,6 @@
 import { lookup } from 'dns/promises';
 
-import { PrivateAddressException, ensureSafeUrl, isLinkLocalAddress, type SafeRemoteHostOptions } from './ssrf.utils';
+import { LinkLocalAddressException, ensureSafeUrl, isLinkLocalOrMetadataAddress, type SafeRemoteHostOptions } from './ssrf.utils';
 
 export interface SelfHostedUrlOptions {
   allowedProtocols: ReadonlySet<string>;
@@ -70,7 +70,7 @@ async function assertLocalNameIsNotLinkLocal(rawUrl: string): Promise<void> {
   } catch {
     return;
   }
-  if (resolved.some((entry) => isLinkLocalAddress(entry.address))) {
-    throw new PrivateAddressException();
+  if (resolved.some((entry) => isLinkLocalOrMetadataAddress(entry.address))) {
+    throw new LinkLocalAddressException();
   }
 }

@@ -33,7 +33,7 @@ it('renders acquisition states and emits controlled interactions', async () => {
   const rows = wrapper.findAll('[data-testid="tree-file"]')
   expect(rows[0]!.text()).toContain('In library')
   expect(rows[1]!.text()).toContain('Downloading')
-  expect(rows[3]!.text()).toContain('In Book Dock')
+  expect(rows[3]!.text()).toContain('In Library Dock')
   await rows[0]!.trigger('click')
   expect(wrapper.emitted('change')).toHaveLength(1)
 })

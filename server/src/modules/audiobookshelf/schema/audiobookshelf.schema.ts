@@ -31,6 +31,10 @@ export const audiobookshelfUserSettings = pgTable('audiobookshelf_user_settings'
   sessionBackfillCursorPage: integer('session_backfill_cursor_page'),
   sessionBackfillMaxUpdated: bigint('session_backfill_max_updated', { mode: 'number' }),
   initialReconcileCompletedAt: timestamp('initial_reconcile_completed_at', { withTimezone: true }),
+  // How the last full, reconcile or poll run ended, for the Jobs area. The 30s hot tier never writes these.
+  lastRunFinishedAt: timestamp('last_run_finished_at', { withTimezone: true }),
+  lastRunKind: varchar('last_run_kind', { length: 16 }),
+  lastRunError: text('last_run_error'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true })
     .defaultNow()

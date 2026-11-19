@@ -2,8 +2,10 @@
 import { computed, onUnmounted, ref, watch, type Ref } from 'vue'
 import type { AudioConvertEncoderOptions, AudioConvertJob, AudioConvertPlan } from '@bookorbit/types'
 
+import { followJobType } from '@/features/jobs/lib/follow-job-type'
+
 import * as audioConvertApi from '../api/audio-convert'
-import { isJobActive, pollDelay } from '../lib/audio-convert'
+import { isJobActive } from '../lib/audio-convert'
 
 export interface BookAudioConvertOptions {
   /** Called once when a job this page watched ends in success, so the book can refetch its files. */
@@ -13,9 +15,8 @@ export interface BookAudioConvertOptions {
 }
 
 /**
- * Loads the plan for one book, starts or stops its conversion, and polls the plan (which carries
- * the latest job) every two seconds while that job is queued or running, and every thirty seconds
- * while it waits in the automatic pipeline.
+ * Loads the plan for one book, starts or stops its conversion, and while its latest job is active
+ * reloads the plan (which carries that job) when a convert job changes, from the Jobs push.
  */
 export function useBookAudioConvert(bookId: Ref<number | null>, options: BookAudioConvertOptions = {}) {
   const plan = ref<AudioConvertPlan | null>(null)
@@ -26,25 +27,24 @@ export function useBookAudioConvert(bookId: Ref<number | null>, options: BookAud
   const actionError = ref<number | null>(null)
 
   let token = 0
-  let pollTimer: ReturnType<typeof setTimeout> | null = null
+  let stopFollowing: (() => void) | null = null
   let disposed = false
 
   const job = computed<AudioConvertJob | null>(() => plan.value?.latestJob ?? null)
   const active = computed(() => isJobActive(job.value))
 
-  function clearPoll(): void {
-    if (pollTimer) clearTimeout(pollTimer)
-    pollTimer = null
+  function unfollow(): void {
+    stopFollowing?.()
+    stopFollowing = null
   }
 
-  function schedulePoll(): void {
-    clearPoll()
-    const delay = job.value ? pollDelay([job.value]) : null
-    if (disposed || delay === null) return
-    pollTimer = setTimeout(() => {
-      pollTimer = null
-      void load()
-    }, delay)
+  function running(): boolean {
+    return job.value?.status === 'running'
+  }
+
+  function followWhileActive(): void {
+    if (disposed || !active.value) return unfollow()
+    stopFollowing ??= followJobType('audio-convert', load, running)
   }
 
   async function load(): Promise<void> {
@@ -69,7 +69,7 @@ export function useBookAudioConvert(bookId: Ref<number | null>, options: BookAud
     } finally {
       if (current === token) loading.value = false
     }
-    if (current === token) schedulePoll()
+    if (current === token) followWhileActive()
   }
 
   /** `encoder` carries only the fields the user changed; the server uses saved settings for the rest. */
@@ -82,7 +82,7 @@ export function useBookAudioConvert(bookId: Ref<number | null>, options: BookAud
       const started = await audioConvertApi.convertBook(id, encoder)
       if (plan.value) {
         plan.value = { ...plan.value, latestJob: started }
-        schedulePoll()
+        followWhileActive()
       } else {
         void load()
       }
@@ -114,7 +114,7 @@ export function useBookAudioConvert(bookId: Ref<number | null>, options: BookAud
     bookId,
     () => {
       token++
-      clearPoll()
+      unfollow()
       plan.value = null
       loadFailed.value = false
     },
@@ -123,7 +123,7 @@ export function useBookAudioConvert(bookId: Ref<number | null>, options: BookAud
 
   onUnmounted(() => {
     disposed = true
-    clearPoll()
+    unfollow()
   })
 
   return { plan, job, active, loading, loadFailed, starting, stopping, actionError, load, convert, stop }

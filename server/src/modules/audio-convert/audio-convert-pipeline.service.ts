@@ -6,6 +6,7 @@ import { orderAudiobookTracks } from '../../common/utils/audiobook-chapters.util
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { appConfig } from '../../config/config';
 import { BOOK_DOCK_BOOKS_FILED, BookDockEventsService } from '../book-dock/book-dock-events.service';
+import { JobChangesService } from '../jobs/job-changes.service';
 import { ChapterEditorService } from '../chapter-editor/chapter-editor.service';
 import { AudioConvertConverterService } from './audio-convert-converter.service';
 import { AudioConvertRepository } from './audio-convert.repository';
@@ -45,6 +46,7 @@ export class AudioConvertPipelineService implements OnModuleInit, OnModuleDestro
     private readonly converter: AudioConvertConverterService,
     @Inject(appConfig.KEY) private readonly app: ConfigType<typeof appConfig>,
     @Optional() private readonly dockEvents?: BookDockEventsService,
+    @Optional() private readonly jobChanges?: JobChangesService,
   ) {}
 
   /** `admitFiledBooks` catches everything, so the dock's emit can never see a throw from here. */
@@ -98,6 +100,7 @@ export class AudioConvertPipelineService implements OnModuleInit, OnModuleDestro
         // them waiting forever. The tool being off only pauses them.
         if (!settings.autoConvert) {
           const skipped = await this.repo.skipWaitingJobs('disabled');
+          if (skipped > 0) this.changed(null);
           if (skipped > 0)
             this.logger.log(
               `[${EVENT}] [end] durationMs=${Date.now() - startedAt} skipped=${skipped} - waiting books skipped, automatic conversion is off`,
@@ -152,6 +155,7 @@ export class AudioConvertPipelineService implements OnModuleInit, OnModuleDestro
       result: { warnings: [] },
     });
     if (!job) return false;
+    this.changed(job.userId);
     if (via === 'filed') await this.repo.unwatch(bookId);
     this.logger.log(`[${EVENT}] [start] jobId=${job.id} bookId=${bookId} via=${via} - new MP3 book entered the pipeline`);
     return true;
@@ -160,13 +164,14 @@ export class AudioConvertPipelineService implements OnModuleInit, OnModuleDestro
   async step(job: AudioConvertJobRow, settings: AudioConvertSettingsRow): Promise<void> {
     if (job.stage === 'metadata') return this.metadataStep(job);
     if (job.stage === 'chapters') return this.chaptersStep(job, settings);
-    await this.repo.transition(job.id, ['waiting'], { status: 'queued', stage: 'ready', nextStepAt: null });
+    if (await this.repo.transition(job.id, ['waiting'], { status: 'queued', stage: 'ready', nextStepAt: null })) this.changed(job.userId);
   }
 
   private async metadataStep(job: AudioConvertJobRow): Promise<void> {
     const book = await this.repo.findBook(job.bookId);
     if (!book) {
-      await this.repo.transition(job.id, ['waiting'], { status: 'skipped', stage: null, errorCode: 'book_missing', finishedAt: new Date() });
+      if (await this.repo.transition(job.id, ['waiting'], { status: 'skipped', stage: null, errorCode: 'book_missing', finishedAt: new Date() }))
+        this.changed(job.userId);
       return;
     }
     const state = await this.repo.metadataFetchState(job.bookId);
@@ -198,6 +203,7 @@ export class AudioConvertPipelineService implements OnModuleInit, OnModuleDestro
       nextStepAt: new Date(),
       result: { ...(job.result ?? {}), metadata: outcome },
     });
+    this.changed(job.userId);
   }
 
   /**
@@ -229,7 +235,7 @@ export class AudioConvertPipelineService implements OnModuleInit, OnModuleDestro
         outcome = 'failed';
       }
     }
-    await this.repo.transition(job.id, ['waiting'], {
+    const queued = await this.repo.transition(job.id, ['waiting'], {
       status: 'queued',
       stage: 'ready',
       attempts: 0,
@@ -237,5 +243,11 @@ export class AudioConvertPipelineService implements OnModuleInit, OnModuleDestro
       nextStepAt: null,
       result: { ...(job.result ?? {}), chaptersLookup: outcome },
     });
+    if (queued) this.changed(job.userId);
+  }
+
+  /** Tells the Jobs area; `state` false when only progress moved. */
+  private changed(ownerId: number | null, state = true): void {
+    this.jobChanges?.notify({ type: 'audio-convert', ownerId, state });
   }
 }

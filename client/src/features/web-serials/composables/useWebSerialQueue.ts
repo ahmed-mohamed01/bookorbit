@@ -1,5 +1,6 @@
 import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue'
 import type { WebSerialJob, WebSerialJobItem, WebSerialJobList, WebSerialJobScope } from '@bookorbit/types'
+import { followJobType } from '@/features/jobs/lib/follow-job-type'
 import {
   cancelSerialJob,
   clearFinishedSerialJobs,
@@ -17,8 +18,6 @@ import {
 import type { SerialJobAction } from '../lib/serialJobStatus'
 import { messageOf } from '../lib/messageOf'
 
-export const ACTIVE_POLL_MS = 3000
-export const IDLE_POLL_MS = 30000
 export const QUEUE_PAGE_SIZE = 50
 
 export interface SerialJobDetailState {
@@ -28,11 +27,10 @@ export interface SerialJobDetailState {
   retryingItemIds: ReadonlySet<number>
 }
 
-export function nextPollDelay(activeCount: number, pageVisible: boolean): number {
-  return activeCount > 0 && pageVisible ? ACTIVE_POLL_MS : IDLE_POLL_MS
-}
-
-/** `detailsShown`: whether the job list is on screen. Expanded jobs' item lists are only refetched while it is. */
+/**
+ * `detailsShown`: whether the job list is on screen. Expanded jobs' item lists are only refetched while it is.
+ * While started, the list follows the Jobs area's push for web serial jobs, with its slow poll as the fallback.
+ */
 export function useWebSerialQueue(detailsShown: Ref<boolean> = ref(true)) {
   const jobs = ref<WebSerialJob[]>([])
   const activeCount = ref(0)
@@ -51,8 +49,7 @@ export function useWebSerialQueue(detailsShown: Ref<boolean> = ref(true)) {
   const loadingMore = ref(false)
 
   const detailStamps = new Map<number, string>()
-  let timer: ReturnType<typeof setTimeout> | null = null
-  let running = false
+  let stopFollowing: (() => void) | null = null
   let current: Promise<void> | null = null
   let rerun = false
   let rerunFull = false
@@ -141,49 +138,29 @@ export function useWebSerialQueue(detailsShown: Ref<boolean> = ref(true)) {
     }
   }
 
-  function clearTimer(): void {
-    if (timer !== null) clearTimeout(timer)
-    timer = null
+  function hasRunningJob(): boolean {
+    return jobs.value.some((job) => job.status === 'running' || job.status === 'importing')
   }
 
-  function schedule(): void {
-    clearTimer()
-    if (!running) return
-    timer = setTimeout(
-      () => {
-        void tick()
-      },
-      nextPollDelay(activeCount.value, pageVisible()),
-    )
-  }
-
-  async function tick(): Promise<void> {
-    await refresh(false)
-    schedule()
-  }
-
-  function handleVisibilityChange(): void {
-    if (!running || !pageVisible()) return
-    void tick()
+  /** A pushed change rereads the first page only; pages loaded further down keep their last state until a full refresh. */
+  function refreshHead(): Promise<void> {
+    return refresh(false)
   }
 
   function start(): void {
-    if (running) return
-    running = true
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-    void tick()
+    if (stopFollowing) return
+    stopFollowing = followJobType('web-serial', refreshHead, hasRunningJob)
+    void refreshHead()
   }
 
   function stop(): void {
-    running = false
-    clearTimer()
-    document.removeEventListener('visibilitychange', handleVisibilityChange)
+    stopFollowing?.()
+    stopFollowing = null
   }
 
-  /** Called after a job is created or acted on, so the new state and the faster cadence show up without waiting out the idle delay. */
+  /** Called after a job is created or acted on, so the new state shows up without waiting for the push. */
   async function refreshNow(): Promise<void> {
     await refresh()
-    schedule()
   }
 
   async function setScope(next: WebSerialJobScope): Promise<void> {

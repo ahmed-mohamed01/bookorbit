@@ -12,6 +12,23 @@ const mocks = vi.hoisted(() => ({
   fetchSettings: vi.fn<() => Promise<EditionSyncSettings>>(),
 }))
 
+const socket = vi.hoisted(() => ({
+  listener: null as null | { changed: (event: { type: string; state: boolean }) => void; live: (live: boolean) => void },
+  live: true,
+  stop: vi.fn<() => void>(),
+}))
+
+vi.mock('@/features/jobs/lib/jobs-socket', () => ({
+  listenToJobs: (listener: NonNullable<typeof socket.listener>) => {
+    socket.listener = listener
+    if (socket.live) listener.live(true)
+    return () => {
+      socket.listener = null
+      socket.stop()
+    }
+  },
+}))
+
 vi.mock('@/features/auth/composables/usePermissions', () => ({ usePermissions: () => ({ hasPermission: mocks.hasPermission }) }))
 vi.mock('../../api/edition-sync.api', () => ({
   fetchEditionSyncSettings: mocks.fetchSettings,
@@ -22,7 +39,8 @@ vi.mock('../../api/edition-sync.api', () => ({
   retryEditionSyncBook: mocks.retry,
 }))
 
-import { EDITION_SYNC_POLL_MS, EDITION_SYNC_QUEUED_POLL_MS, EDITION_SYNC_VIEW_REFRESH_MS, useEditionSyncBookState } from '../useEditionSyncBookState'
+import { JOB_TYPE_FALLBACK_POLL_MS, JOB_TYPE_REFRESH_GAP_MS } from '@/features/jobs/lib/follow-job-type'
+import { EDITION_SYNC_VIEW_REFRESH_MS, useEditionSyncBookState } from '../useEditionSyncBookState'
 
 function makeState(status: EditionSyncBookState['index']['status'] = 'ready', overrides: Partial<EditionSyncBookState> = {}): EditionSyncBookState {
   return {
@@ -68,6 +86,12 @@ async function settle() {
   await nextTick()
 }
 
+async function push(state: boolean, type = 'edition-sync'): Promise<void> {
+  socket.listener?.changed({ type, state })
+  await vi.advanceTimersByTimeAsync(JOB_TYPE_REFRESH_GAP_MS)
+  await settle()
+}
+
 function setup(bookId = 1) {
   const scope = effectScope()
   const id = ref(bookId)
@@ -81,6 +105,9 @@ describe('useEditionSyncBookState', () => {
     invalidateEditionSyncSettings()
     vi.useFakeTimers()
     Object.values(mocks).forEach((mock) => mock.mockReset())
+    socket.listener = null
+    socket.live = true
+    socket.stop.mockReset()
     mocks.hasPermission.mockReturnValue(true)
     mocks.fetchSettings.mockResolvedValue(SETTINGS)
     mocks.fetchState.mockResolvedValue(makeState())
@@ -232,52 +259,101 @@ describe('useEditionSyncBookState', () => {
     scope.stop()
   })
 
-  it('polls while the index is queued or running and stops once it is ready', async () => {
-    mocks.fetchState.mockResolvedValueOnce(makeState('running')).mockResolvedValueOnce(makeState('running')).mockResolvedValue(makeState('ready'))
+  it('does not follow the jobs push while the index is ready', async () => {
     const { scope } = setup()
     await settle()
+    expect(socket.listener).toBeNull()
+
+    await push(true)
+    expect(mocks.fetchState).toHaveBeenCalledTimes(1)
+    scope.stop()
+  })
+
+  it('refreshes on a state push and stops following once the index is ready', async () => {
+    mocks.fetchState.mockResolvedValueOnce(makeState('running')).mockResolvedValue(makeState('ready'))
+    const { scope, api } = setup()
+    await settle()
+    expect(socket.listener).not.toBeNull()
+
+    await push(true)
+    expect(mocks.fetchState).toHaveBeenCalledTimes(2)
+    expect(api.state.value?.index.status).toBe('ready')
+    expect(socket.stop).toHaveBeenCalledOnce()
+    expect(socket.listener).toBeNull()
+
+    await push(true)
+    expect(mocks.fetchState).toHaveBeenCalledTimes(2)
+    scope.stop()
+  })
+
+  it('ignores pushes for other job types', async () => {
+    mocks.fetchState.mockResolvedValue(makeState('running'))
+    const { scope } = setup()
+    await settle()
+
+    await push(true, 'audio-convert')
+    expect(mocks.fetchState).toHaveBeenCalledTimes(1)
+    scope.stop()
+  })
+
+  it('refreshes on a progress push only while the index is running', async () => {
+    mocks.fetchState.mockResolvedValueOnce(makeState('queued')).mockResolvedValue(makeState('running'))
+    const { scope } = setup()
+    await settle()
+
+    await push(false)
     expect(mocks.fetchState).toHaveBeenCalledTimes(1)
 
-    await vi.advanceTimersByTimeAsync(EDITION_SYNC_POLL_MS)
-    await settle()
+    await push(true)
     expect(mocks.fetchState).toHaveBeenCalledTimes(2)
 
-    await vi.advanceTimersByTimeAsync(EDITION_SYNC_POLL_MS)
-    await settle()
-    expect(mocks.fetchState).toHaveBeenCalledTimes(3)
-
-    await vi.advanceTimersByTimeAsync(EDITION_SYNC_POLL_MS * 3)
+    await push(false)
     expect(mocks.fetchState).toHaveBeenCalledTimes(3)
     scope.stop()
   })
 
-  it('stops polling when its scope ends', async () => {
+  it('stops following when its scope ends', async () => {
     mocks.fetchState.mockResolvedValue(makeState('queued', { pinned: true }))
     const { scope } = setup()
     await settle()
     scope.stop()
-    await vi.advanceTimersByTimeAsync(EDITION_SYNC_POLL_MS * 3)
+    expect(socket.stop).toHaveBeenCalledOnce()
 
+    await push(true)
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_FALLBACK_POLL_MS * 2)
     expect(mocks.fetchState).toHaveBeenCalledTimes(1)
   })
 
-  it('polls a queued book every 10 s while it is pinned or a run is active, and every 60 s otherwise', async () => {
-    mocks.fetchState.mockResolvedValue(makeState('queued', { runActive: true }))
-    const active = setup()
-    await settle()
-    await vi.advanceTimersByTimeAsync(EDITION_SYNC_POLL_MS)
-    expect(mocks.fetchState).toHaveBeenCalledTimes(2)
-    active.scope.stop()
-
-    mocks.fetchState.mockReset()
+  it('falls back to the slow poll while the jobs socket is not live', async () => {
+    socket.live = false
     mocks.fetchState.mockResolvedValue(makeState('queued'))
-    const idle = setup()
+    const { scope } = setup()
     await settle()
-    await vi.advanceTimersByTimeAsync(EDITION_SYNC_POLL_MS * 5)
+
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_FALLBACK_POLL_MS - 1)
     expect(mocks.fetchState).toHaveBeenCalledTimes(1)
-    await vi.advanceTimersByTimeAsync(EDITION_SYNC_QUEUED_POLL_MS - EDITION_SYNC_POLL_MS * 5)
+    await vi.advanceTimersByTimeAsync(1)
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_REFRESH_GAP_MS)
     expect(mocks.fetchState).toHaveBeenCalledTimes(2)
-    idle.scope.stop()
+    scope.stop()
+  })
+
+  it('restarts following cleanly when the book changes', async () => {
+    mocks.fetchState.mockResolvedValue(makeState('running'))
+    const { scope, id } = setup()
+    await settle()
+    expect(socket.listener).not.toBeNull()
+
+    id.value = 2
+    expect(socket.stop).toHaveBeenCalledOnce()
+    await settle()
+    expect(mocks.fetchState).toHaveBeenLastCalledWith(2)
+    expect(socket.listener).not.toBeNull()
+
+    await push(true)
+    expect(mocks.fetchState).toHaveBeenCalledTimes(3)
+    expect(mocks.fetchState).toHaveBeenLastCalledWith(2)
+    scope.stop()
   })
 
   it('refetches the state when the book files change', async () => {
@@ -326,11 +402,11 @@ describe('useEditionSyncBookState', () => {
     scope.stop()
   })
 
-  it('polls a stale book', async () => {
+  it('follows a stale book', async () => {
     mocks.fetchState.mockResolvedValue(makeState('stale'))
     const { scope } = setup()
     await settle()
-    await vi.advanceTimersByTimeAsync(EDITION_SYNC_POLL_MS)
+    await push(true)
     expect(mocks.fetchState).toHaveBeenCalledTimes(2)
     scope.stop()
   })
@@ -352,20 +428,21 @@ describe('useEditionSyncBookState', () => {
     scope.stop()
   })
 
-  it('does not poll again after disposal while a refresh is pending', async () => {
+  it('does not follow again after disposal while a refresh is pending', async () => {
     mocks.fetchState.mockResolvedValueOnce(makeState('queued', { pinned: true }))
     const { scope, api } = setup()
     await settle()
 
     let resolvePending: (value: EditionSyncBookState) => void = () => undefined
     mocks.fetchState.mockImplementationOnce(() => new Promise<EditionSyncBookState>((resolve) => (resolvePending = resolve)))
-    await vi.advanceTimersByTimeAsync(EDITION_SYNC_POLL_MS)
+    await push(true)
     expect(mocks.fetchState).toHaveBeenCalledTimes(2)
 
     scope.stop()
     resolvePending(makeState('queued'))
     await settle()
-    await vi.advanceTimersByTimeAsync(EDITION_SYNC_POLL_MS * 3)
+    expect(socket.listener).toBeNull()
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_FALLBACK_POLL_MS * 2)
 
     expect(mocks.fetchState).toHaveBeenCalledTimes(2)
     expect(api.state.value?.index.status).toBe('queued')

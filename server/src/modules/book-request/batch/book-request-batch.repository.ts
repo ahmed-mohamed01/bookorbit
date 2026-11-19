@@ -43,7 +43,7 @@ export class BookRequestBatchRepository {
   }
 
   /**
-   * Units of one torrent that an earlier batch already placed in Book Dock. `ownerUserId` null
+   * Units of one torrent that an earlier batch already placed in the Library Dock. `ownerUserId` null
    * means the viewer sees every batch; otherwise only that user's own.
    */
   async findImportedUnitIndexes(clientKey: string, ownerUserId: number | null): Promise<number[]> {
@@ -92,7 +92,7 @@ export class BookRequestBatchRepository {
   }
 
   /**
-   * Gives failed units another go. A unit whose Book Dock row still exists goes to 'placing' with
+   * Gives failed units another go. A unit whose Library Dock row still exists goes to 'placing' with
    * its id kept, so the import's adoption logic decides rather than placing it a second time.
    * 'placing', 'in_dock' and 'filed' units are left alone.
    */

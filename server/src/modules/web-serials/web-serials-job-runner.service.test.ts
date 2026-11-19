@@ -147,7 +147,6 @@ function setup(
       return reasons;
     }),
     getJobStatus: vi.fn().mockResolvedValue('running'),
-    heartbeat: vi.fn().mockResolvedValue(undefined),
     setCurrentUnit: vi.fn().mockResolvedValue(undefined),
     transitionJob: vi.fn().mockResolvedValue({ id: 1 }),
     findQueuedJobs: vi.fn().mockResolvedValue([]),
@@ -486,7 +485,6 @@ describe('WebSerialsJobRunnerService.runJob', () => {
       const messages = repo.transitionJob.mock.calls.map((call) => (call[2] as { message?: string | null }).message).filter((m) => m);
       expect(messages[0]).toMatch(/^Waiting to retry 1 chapter: .* Next try in 2 minutes\.$/);
       expect(repo.setCurrentUnit).not.toHaveBeenCalledWith(1, expect.objectContaining({ label: 'Chapter 2', stage: 'fetching' }));
-      expect(repo.heartbeat).toHaveBeenCalled();
     });
 
     it('resumes a restarted job with the stored attempts and only the remaining retries', async () => {
@@ -595,7 +593,6 @@ describe('WebSerialsJobRunnerService.runJob', () => {
     await runner.runJob(job({ selection: { mode: 'range', fromSequence: '1', toSequence: '1' } }));
 
     expect(client.pollUnit.mock.calls.length).toBeGreaterThanOrEqual(4);
-    expect(repo.heartbeat).toHaveBeenCalled();
     expect(finalTransition(repo)[2]).toMatchObject({ status: 'completed' });
   });
 
@@ -1385,12 +1382,12 @@ describe('WebSerialsJobRunnerService review fixes', () => {
 
   it('classifies a filing failure as unknown, so it never reads as the source missing the chapter', async () => {
     const { runner, client, importer, items } = setup();
-    importer.importUnit.mockRejectedValue(new ImportStageError('Book Dock file not found', new Error('x')));
+    importer.importUnit.mockRejectedValue(new ImportStageError('Library Dock file not found', new Error('x')));
 
     await runner.runJob(oneChapter());
 
     expect(client.startUnit).toHaveBeenCalledTimes(1);
-    expect(items[0]).toMatchObject({ status: 'failed', error: 'Chapter 1: Book Dock file not found' });
+    expect(items[0]).toMatchObject({ status: 'failed', error: 'Chapter 1: Library Dock file not found' });
   });
 
   it('polls quickly at first and backs off to the steady interval', async () => {
@@ -1670,6 +1667,46 @@ describe('WebSerialsJobRunnerService engine integration', () => {
 });
 
 describe('WebSerialsJobRunnerService.tick', () => {
+  it('cleans up an active job when both the work and the failure transition reject', async () => {
+    const { runner, repo, engines, notifications } = setup();
+    const claimed = job();
+    repo.findQueuedJobs.mockResolvedValue([claimed]);
+    repo.claimQueuedJob.mockResolvedValue(claimed);
+    engines.getConfig.mockRejectedValue(new Error('work failed'));
+    repo.transitionJob.mockRejectedValue(new Error('database failed'));
+    const log = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      await runner.tick();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(repo.transitionJob).toHaveBeenCalledWith(1, ['running', 'importing'], expect.objectContaining({ status: 'failed' }));
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('error="work failed" - job failed'));
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('error="database failed" - failed job state could not be saved'));
+      expect(notifications.upsertByGroupKey).not.toHaveBeenCalled();
+      expect(unhandled).not.toHaveBeenCalled();
+      expect(runner.isJobActive(1)).toBe(false);
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
+  });
+
+  it('logs an unexpected runner rejection and releases the slot', async () => {
+    const { runner, repo } = setup();
+    const claimed = job();
+    repo.findQueuedJobs.mockResolvedValue([claimed]);
+    repo.claimQueuedJob.mockResolvedValue(claimed);
+    vi.spyOn(runner, 'runJob').mockRejectedValue(new Error('runner failed'));
+    const log = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    await runner.tick();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('error="runner failed" - job runner failed'));
+    expect(runner.isJobActive(1)).toBe(false);
+  });
+
   it('claims queued jobs up to the free capacity and runs each once', async () => {
     const { runner, repo } = setup();
     repo.findQueuedJobs.mockResolvedValue([job({ id: 1 }), job({ id: 2 })]);

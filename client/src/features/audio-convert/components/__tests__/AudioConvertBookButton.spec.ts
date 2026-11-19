@@ -15,10 +15,18 @@ const mocks = vi.hoisted(() => ({
     error: vi.fn<(...args: unknown[]) => void>(),
     info: vi.fn<(...args: unknown[]) => void>(),
   },
+  jobsListener: null as null | { changed: (event: { type: string; state: boolean }) => void; live: (live: boolean) => void },
 }))
 
 vi.mock('vue-router', () => ({ useRoute: () => mocks.route, useRouter: () => ({ replace: mocks.replace }) }))
 vi.mock('vue-sonner', () => ({ toast: mocks.toast }))
+vi.mock('@/features/jobs/lib/jobs-socket', () => ({
+  listenToJobs: (listener: NonNullable<typeof mocks.jobsListener>) => {
+    mocks.jobsListener = listener
+    listener.live(true)
+    return () => undefined
+  },
+}))
 vi.mock('@/features/auth/composables/usePermissions', () => ({ usePermissions: () => ({ hasPermission: () => false }) }))
 vi.mock('../../api/audio-convert', () => {
   class AudioConvertHttpError extends Error {
@@ -198,6 +206,7 @@ describe('AudioConvertBookButton', () => {
     mountButton()
     await flushPromises()
 
+    mocks.jobsListener?.changed({ type: 'audio-convert', state: true })
     await vi.advanceTimersByTimeAsync(2000)
     expect(mocks.toast.error).toHaveBeenCalledTimes(1)
     expect(mocks.toast.error.mock.calls[0]![0]).toBe('Conversion to M4B failed.')

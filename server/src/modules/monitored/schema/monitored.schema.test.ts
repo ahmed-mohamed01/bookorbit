@@ -309,6 +309,29 @@ describe('monitored_authors duplicate guard', () => {
   });
 });
 
+describe('monitored_authors Watchlist update jobs', () => {
+  it('keeps when the latest fetch was queued and started on both schema copies, nullable for existing rows', () => {
+    const columns = getTableConfig(monitoredAuthors).columns.filter((column) => ['fetch_queued_at', 'fetch_started_at'].includes(column.name));
+    expect(columns.map((column) => [column.name, column.notNull])).toEqual([
+      ['fetch_queued_at', false],
+      ['fetch_started_at', false],
+    ]);
+    expect(MONITORED_SCHEMA_SQL).toContain('ALTER TABLE "monitored_authors" ADD COLUMN IF NOT EXISTS "fetch_queued_at" timestamp with time zone;');
+    expect(MONITORED_SCHEMA_SQL).toContain('ALTER TABLE "monitored_authors" ADD COLUMN IF NOT EXISTS "fetch_started_at" timestamp with time zone;');
+  });
+
+  it('indexes the owner queue and the owner finish order on both schema copies', () => {
+    const names = getTableConfig(monitoredAuthors).indexes.map((candidate) => candidate.config.name);
+    expect(names).toEqual(expect.arrayContaining(['monitored_authors_fetch_owner_idx', 'monitored_authors_fetch_finish_idx']));
+    expect(MONITORED_SCHEMA_SQL).toContain(
+      `CREATE INDEX IF NOT EXISTS "monitored_authors_fetch_owner_idx" ON "monitored_authors" ("owner_user_id","fetch_state") WHERE "fetch_state" <> 'idle';`,
+    );
+    expect(MONITORED_SCHEMA_SQL).toContain(
+      'CREATE INDEX IF NOT EXISTS "monitored_authors_fetch_finish_idx" ON "monitored_authors" ("owner_user_id",(coalesce("fetch_error_at", "last_refreshed_at")),"id" COLLATE "C");',
+    );
+  });
+});
+
 describe('monitored_books duplicate guard', () => {
   it('carries a unique index per owner, monitor and work', () => {
     const index = getTableConfig(monitoredBooks).indexes.find((candidate) => candidate.config.name === 'monitored_books_owner_monitor_work_uidx');

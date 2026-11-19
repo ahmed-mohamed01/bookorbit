@@ -142,7 +142,7 @@ export class GroupedMangaFetcher {
       throw error;
     }
     if (await this.ops.shouldStop(job.id)) return null;
-    if (!(await this.repo.transitionJob(job.id, ['running', 'importing'], { status: 'importing', heartbeatAt: new Date() }))) {
+    if (!(await this.repo.transitionJob(job.id, ['running', 'importing'], { status: 'importing' }))) {
       await this.repo.releaseItem(item.id);
       return null;
     }
@@ -159,7 +159,7 @@ export class GroupedMangaFetcher {
       targetFolderId: await this.ops.resolveTargetFolder(job),
     });
     await this.importer.cleanupUnitWorkDir(job.id, item.id);
-    await this.repo.transitionJob(job.id, ['importing'], { status: 'running', heartbeatAt: new Date() });
+    await this.repo.transitionJob(job.id, ['importing'], { status: 'running' });
     return bookId;
   }
 }

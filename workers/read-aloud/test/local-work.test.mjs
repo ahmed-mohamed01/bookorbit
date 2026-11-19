@@ -200,7 +200,7 @@ describe("a job with local work", () => {
     assert.equal(readFileSync(join(request.workDir, "output.epub"), "utf8"), "output-epub-bytes");
     assert.ok(existsSync(join(localDir, ".done-aligning")), "stage markers stay with the local cache");
     assert.ok(existsSync(join(localDir, "source-audio", "0001.mp3")));
-    assert.equal(stagesRun(sandbox, request.jobId)[0].scratch, join(localDir, "scratch"));
+    assert.equal(stagesRun(sandbox, request.jobId)[0].scratch, join(sandbox.tmpDir, "read-aloud-worker", "scratch", request.jobId));
   });
 
   test("a repeat run reuses the local cache", async () => {

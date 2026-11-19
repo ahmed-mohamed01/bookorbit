@@ -254,6 +254,7 @@ async function run(sandbox, request, mode = "ok") {
     dtype: null,
     batchSize: null,
     redactions: [],
+    scratchDir: join(request.workDir, "scratch"),
   };
   return new Promise((resolve, reject) => {
     const child = fork(fileURLToPath(new URL("../dist/runner.js", import.meta.url)), [], {

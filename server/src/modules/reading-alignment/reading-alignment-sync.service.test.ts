@@ -44,6 +44,7 @@ function playOrder() {
 }
 
 interface Overrides {
+  enabled?: boolean;
   pair?: { textBookId: number; audioBookId: number } | null;
   ready?: unknown;
   ebookProgress?: { percentage: number; updatedAt: Date; lastReadAt?: Date; alignmentProjectedAt?: Date | null } | undefined;
@@ -63,6 +64,7 @@ function build(overrides: Overrides = {}) {
   };
   const ready = 'ready' in overrides ? overrides.ready : { alignment: { id: 3, ebookFileId: EBOOK_FILE_ID, ...FRESH_HASHES }, anchors: anchors() };
   const repo = {
+    getAlignmentByPair: vi.fn().mockResolvedValue({ status: 'ready' }),
     getReadyAlignmentWithAnchors: vi.fn().mockResolvedValue(ready),
     findEbookFile: vi.fn().mockResolvedValue('ebookFile' in overrides ? overrides.ebookFile : EBOOK_FILE),
     resolveAudioFilesWithPaths: vi.fn().mockResolvedValue(overrides.audioFilesWithPaths ?? AUDIO_FILES_WITH_PATHS),
@@ -85,6 +87,7 @@ function build(overrides: Overrides = {}) {
     repo as never,
     bookReadService as never,
     libraryService as never,
+    { readingAlignmentEnabled: overrides.enabled ?? true } as never,
   );
   return { service, pairService, repo, achievementEvents, bookReadService, libraryService };
 }
@@ -119,12 +122,17 @@ describe('ReadingAlignmentSyncService', () => {
 
   describe('ebook advance projects to audio', () => {
     it('maps the ebook percentage to an audio file position and writes it', async () => {
-      const { service, repo, achievementEvents } = build({
+      const { service, repo, pairService, achievementEvents } = build({
         ebookProgress: { percentage: 50, updatedAt: NEWER },
         audioProgress: undefined,
       });
 
       await dispatch(service, ebookEvent());
+
+      expect(repo.getAlignmentByPair).toHaveBeenCalledExactlyOnceWith(TEXT_BOOK_ID, TEXT_BOOK_ID);
+      expect(pairService.resolveAlignmentPair).toHaveBeenCalledWith(TEXT_BOOK_ID, USER_ID);
+      expect(repo.getAlignmentByPair.mock.invocationCallOrder[0]).toBeLessThan(pairService.resolveAlignmentPair.mock.invocationCallOrder[0]!);
+      expect(repo.getReadyAlignmentWithAnchors).toHaveBeenCalledWith(TEXT_BOOK_ID, AUDIO_BOOK_ID);
 
       // fraction 0.5 -> 100s absolute -> second file (start 100s) offset 0s; 100/200 -> 50%.
       expect(repo.projectAudiobookProgress).toHaveBeenCalledWith(USER_ID, AUDIO_BOOK_ID, AUDIO_FILE_B, 0, 50, NEWER);
@@ -294,6 +302,27 @@ describe('ReadingAlignmentSyncService', () => {
   });
 
   describe('no projection targets', () => {
+    it('does no queries when reading alignment is disabled', async () => {
+      const { service, repo, pairService } = build({ enabled: false });
+
+      await dispatch(service, ebookEvent());
+
+      expect(pairService.resolveAlignmentPair).not.toHaveBeenCalled();
+      for (const query of Object.values(repo)) expect(query).not.toHaveBeenCalled();
+    });
+
+    it.each([undefined, { status: 'building' }])('runs only the indexed pair probe when the alignment is %j', async (alignment) => {
+      const { service, repo, pairService } = build();
+      const { getAlignmentByPair, ...otherQueries } = repo;
+      getAlignmentByPair.mockResolvedValue(alignment);
+
+      await dispatch(service, ebookEvent());
+
+      expect(getAlignmentByPair).toHaveBeenCalledExactlyOnceWith(TEXT_BOOK_ID, TEXT_BOOK_ID);
+      expect(pairService.resolveAlignmentPair).not.toHaveBeenCalled();
+      for (const query of Object.values(otherQueries)) expect(query).not.toHaveBeenCalled();
+    });
+
     it('does nothing when the book has no alignment pair', async () => {
       const { service, repo } = build({ pair: null });
 

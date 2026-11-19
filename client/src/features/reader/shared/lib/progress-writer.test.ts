@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const apiMock = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<unknown>>())
 vi.mock('@/lib/api', () => ({ api: apiMock }))
 
-import { createNarrationProgressWriter } from './progress-writer'
+import { createNarrationProgressWriter, createProgressSaver, parseProgressRecord } from './progress-writer'
 
 function postedWrite(callIndex: number): Record<string, unknown> {
   const [, init] = apiMock.mock.calls[callIndex]!
@@ -65,5 +65,38 @@ describe('createNarrationProgressWriter', () => {
 
     expect(apiMock).toHaveBeenCalledTimes(1)
     expect(postedWrite(0).narration).toMatchObject({ fragment: 'c1.xhtml#s3' })
+  })
+})
+
+describe('createProgressSaver', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    apiMock.mockReset()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('arms a new save after a cancel during narration', async () => {
+    apiMock.mockResolvedValue({ ok: true })
+    const saver = createProgressSaver({
+      fileId: 5,
+      isEnabled: () => true,
+      buildRecord: () => parseProgressRecord({}),
+      source: () => 'narration',
+    })
+
+    saver.noteNarration()
+    saver.schedule()
+    saver.cancelScheduled()
+    expect(saver.isBusy()).toBe(false)
+
+    saver.schedule()
+    expect(saver.isBusy()).toBe(true)
+    await vi.advanceTimersByTimeAsync(15_000)
+
+    expect(apiMock).toHaveBeenCalledTimes(1)
+    expect(saver.isBusy()).toBe(false)
   })
 })

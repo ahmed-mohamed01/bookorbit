@@ -19,6 +19,8 @@ import { readingProgressProjection } from './schema/reading-progress-projection.
 
 type Db = NodePgDatabase<typeof schema>;
 
+export const INTERRUPTED_BUILD_ERROR = 'build interrupted by a server restart';
+
 const TEXT_FILE_FORMATS = new Set(['epub', 'kepub']);
 
 // A ready alignment paired with its anchors in ascending audio order, the shape the
@@ -170,7 +172,7 @@ export class ReadingAlignmentRepository {
   async failInterruptedBuilds(): Promise<number> {
     const rows = await this.db
       .update(audiobookAlignment)
-      .set({ status: 'failed', error: 'build interrupted by a server restart', updatedAt: new Date() })
+      .set({ status: 'failed', error: INTERRUPTED_BUILD_ERROR, updatedAt: new Date() })
       .where(eq(audiobookAlignment.status, 'building'))
       .returning({ id: audiobookAlignment.id });
     return rows.length;

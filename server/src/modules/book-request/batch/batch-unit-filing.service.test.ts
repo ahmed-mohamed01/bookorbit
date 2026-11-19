@@ -76,7 +76,7 @@ describe('BatchUnitFilingService', () => {
     expect(await h.service.fileUnit(2)).toBe('skipped');
     expect(h.finalize.finalizeManagedFile).not.toHaveBeenCalled();
   });
-  it('holds an unverified unit in Book Dock with the reason', async () => {
+  it('holds an unverified unit in the Library Dock with the reason', async () => {
     const h = await setup();
     h.row.fetchedMetadata.title = 'Different book';
     expect(await h.service.fileUnit(1)).toBe('held');

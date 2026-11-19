@@ -61,11 +61,10 @@ import CbzReaderView from './cbz/CbzReaderView.vue'
 import AudiobookReaderView from './audiobook/AudiobookReaderView.vue'
 import type { ReaderState } from './epub/composables/useReaderState'
 import type { FoliateLocationContext, FoliateRenderer } from './epub/composables/useFoliate'
-import type { AudioReaderSettings, BookDetail, EpubMediaOverlayPlaylist, EpubReaderSettings } from '@bookorbit/types'
+import type { AudioReaderSettings, EpubMediaOverlayPlaylist, EpubReaderSettings } from '@bookorbit/types'
 import { findMatchingCfiRange } from './epub/utils'
 import { getFormatGroup } from '@bookorbit/types'
 import { resolveReaderResumeTarget } from '@/lib/reading-checkpoint'
-import { api } from '@/lib/api'
 import { useCoverVersions } from '@/features/book/composables/useCoverVersions'
 
 const PdfV4ReaderView = defineAsyncComponent(() => import('./pdf-v4/PdfV4ReaderView.vue'))
@@ -77,7 +76,7 @@ const { coverUrl } = useCoverVersions()
 const bookId = Number(route.params.bookId)
 const fileId = Number(route.params.fileId)
 const fileFormat = (route.query.format as string) || 'epub'
-useReaderPageTitle(bookId)
+const bookMeta = useReaderPageTitle(bookId)
 const normalizedFileFormat = fileFormat.toLowerCase()
 const isAudioFormat = getFormatGroup(fileFormat) === 'audio'
 const isPdfFormat = fileFormat === 'pdf'
@@ -273,7 +272,6 @@ function handleTranslate() {
   showTranslation.value = true
 }
 
-const bookMeta = ref<BookDetail | null>(null)
 const initialNavigationPending = ref(true)
 
 const {
@@ -1150,6 +1148,24 @@ onUnmounted(clearFoliateSource)
 
 let bookDetailsLoaded: Promise<void> = Promise.resolve()
 
+// The page title fetches the book; a failed fetch leaves it null, so the wait is bounded.
+const BOOK_DETAILS_WAIT_MS = 5_000
+
+function whenBookMetaLoaded(): Promise<void> {
+  if (bookMeta.value) return Promise.resolve()
+  return new Promise((resolve) => {
+    const timer = setTimeout(finish, BOOK_DETAILS_WAIT_MS)
+    const stop = watch(bookMeta, (value) => {
+      if (value) finish()
+    })
+    function finish() {
+      clearTimeout(timer)
+      stop()
+      resolve()
+    }
+  })
+}
+
 const { resumeHandedOffNarration } = useReaderNarrationHandoff({
   fileId,
   trackingEnabled,
@@ -1171,15 +1187,7 @@ onMounted(async () => {
   // Specialized readers own their own progress/settings/loading lifecycle.
   if (isAudioFormat || isPdfFormat || isComicFormat) return
 
-  bookDetailsLoaded = Promise.all([
-    api(`/api/v1/books/${bookId}`)
-      .then((r) => r.json() as Promise<BookDetail>)
-      .then((b) => {
-        bookMeta.value = b
-      })
-      .catch(() => {}),
-    ...(isTtsAvailable ? [loadUserPreferences().catch(() => {})] : []),
-  ]).then(() => undefined)
+  bookDetailsLoaded = Promise.all([whenBookMetaLoaded(), ...(isTtsAvailable ? [loadUserPreferences().catch(() => {})] : [])]).then(() => undefined)
 
   await customFonts.fetchAllFonts()
   await refreshFontFaces()

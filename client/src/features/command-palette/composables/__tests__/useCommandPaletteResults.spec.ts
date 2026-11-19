@@ -931,7 +931,8 @@ describe('round three regressions', () => {
     await vi.runAllTimersAsync()
     expect(state.sections.value.some((section) => section.id === tab)).toBe(false)
     expect(state.tabs.value.find((option) => option.id === tab)?.count).toBe(1)
-    expect(state.tabs.value.find((option) => option.id === 'all')?.count).toBe(0)
+    const settingsCount = state.tabs.value.find((option) => option.id === 'settings')?.count ?? 0
+    expect(state.tabs.value.find((option) => option.id === 'all')?.count).toBe(settingsCount)
     state.tab.value = tab
     await vi.runAllTimersAsync()
     expect(state.sections.value[0]?.items[0]).toMatchObject({ entry: { inLibrary: true } })

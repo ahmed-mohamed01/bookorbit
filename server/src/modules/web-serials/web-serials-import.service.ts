@@ -53,7 +53,7 @@ function sizeCap(limit: number): Transform {
   });
 }
 
-/** Files one downloaded unit through the Book Dock, the same way an upload does. */
+/** Files one downloaded unit through the Library Dock, the same way an upload does. */
 @Injectable()
 export class WebSerialsImportService implements OnApplicationBootstrap {
   private readonly logger = new Logger(WebSerialsImportService.name);
@@ -173,7 +173,7 @@ export class WebSerialsImportService implements OnApplicationBootstrap {
         if (result.existingBookId !== undefined) throw new DuplicateBookError(result.existingBookId);
         throw new BadGatewayException('This book is already in the library');
       }
-      throw new BadGatewayException(`The book could not be filed: ${result.message ?? 'the Book Dock could not file it'}`);
+      throw new BadGatewayException(`The book could not be filed: ${result.message ?? 'the Library Dock could not file it'}`);
     } catch (error) {
       if (error instanceof DuplicateBookError) throw error;
       throw new ImportStageError(describeError(error).message, error);

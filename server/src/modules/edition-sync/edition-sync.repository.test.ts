@@ -1,3 +1,4 @@
+import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it, vi } from 'vitest';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { PgDialect } from 'drizzle-orm/pg-core';
@@ -52,6 +53,58 @@ describe('EditionSyncRepository write guards', () => {
     expect(query).toContain('pinned_at');
     expect(query).toContain('IS NOT DISTINCT FROM');
     expect(chain.returning).toHaveBeenCalled();
+  });
+});
+
+describe('upstream read-aloud activity', () => {
+  function upstreamProbe() {
+    const chain = { from: vi.fn(), where: vi.fn(), limit: vi.fn().mockResolvedValue([]) };
+    chain.from.mockReturnValue(chain);
+    chain.where.mockReturnValue(chain);
+    const repo = new EditionSyncRepository({ select: vi.fn().mockReturnValue(chain) } as never);
+    return { repo, chain };
+  }
+
+  it('yields only to processing jobs and claimable queued jobs', async () => {
+    const { repo, chain } = upstreamProbe();
+    const now = new Date('2026-11-19T10:00:00Z');
+    vi.useFakeTimers({ toFake: ['Date'] }).setSystemTime(now);
+    try {
+      await expect(repo.hasUpstreamActiveJobs()).resolves.toBe(false);
+
+      const query = new PgDialect().sqlToQuery(chain.where.mock.calls[0][0]);
+      expect(query.sql).toBe(
+        '("read_aloud_jobs"."status" = $1 or ("read_aloud_jobs"."status" = $2 and "read_aloud_jobs"."paused_at" is null and "read_aloud_jobs"."cancel_requested" = $3 and "read_aloud_jobs"."next_attempt_at" <= $4))',
+      );
+      expect(query.params).toEqual(['processing', 'queued', false, now.toISOString()]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('lets edition sync work during a queued retry backoff and yields once the retry is due', async () => {
+    const { repo, chain } = upstreamProbe();
+    const db = new DatabaseSync(':memory:');
+    const retryAt = new Date('2026-11-19T10:30:00Z');
+    vi.useFakeTimers({ toFake: ['Date'] }).setSystemTime(new Date('2026-11-19T10:00:00Z'));
+    try {
+      db.exec('CREATE TABLE read_aloud_jobs (id INTEGER, status TEXT, paused_at TEXT, cancel_requested INTEGER, next_attempt_at TEXT)');
+      db.prepare('INSERT INTO read_aloud_jobs VALUES (1, ?, NULL, 0, ?)').run('queued', retryAt.toISOString());
+      chain.limit.mockImplementation((limit: number) => {
+        const { sql, params } = new PgDialect().sqlToQuery(chain.where.mock.lastCall![0]);
+        const bindings = Object.fromEntries(
+          params.map((param, index) => [`$${index + 1}`, typeof param === 'boolean' ? Number(param) : String(param)]),
+        );
+        return Promise.resolve(db.prepare(`SELECT id FROM read_aloud_jobs WHERE ${sql} LIMIT ?`).all(bindings, limit));
+      });
+
+      await expect(repo.hasUpstreamActiveJobs()).resolves.toBe(false);
+      vi.setSystemTime(retryAt);
+      await expect(repo.hasUpstreamActiveJobs()).resolves.toBe(true);
+    } finally {
+      vi.useRealTimers();
+      db.close();
+    }
   });
 });
 

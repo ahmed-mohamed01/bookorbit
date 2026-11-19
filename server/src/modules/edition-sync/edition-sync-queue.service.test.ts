@@ -30,8 +30,9 @@ function setup() {
     inspect: vi.fn().mockResolvedValue(null),
   };
   const overlaySource = { invalidateBook: vi.fn() };
-  const service = new EditionSyncQueueService(repo as never, indexStore as never, workspace as never, overlaySource as never);
-  return { service, repo, indexStore, workspace, overlaySource };
+  const jobChanges = { notify: vi.fn() };
+  const service = new EditionSyncQueueService(repo as never, indexStore as never, workspace as never, overlaySource as never, jobChanges as never);
+  return { service, repo, indexStore, workspace, overlaySource, jobChanges };
 }
 
 describe('EditionSyncQueueService.claimNext', () => {
@@ -42,6 +43,22 @@ describe('EditionSyncQueueService.claimNext', () => {
     expect(claim).toMatchObject({ bookId: 4, pinned: true });
     expect(claim?.workerJobId).toMatch(/^[0-9a-f-]{36}$/);
     expect(repo.claimIndexRow).toHaveBeenCalledWith(4, claim?.workerJobId, expect.any(Date), null);
+  });
+
+  it('tells the Jobs area a build started, and nothing when the claim lost the race', async () => {
+    const { service, repo, jobChanges } = setup();
+    await service.claimNext({ pinnedOnly: true });
+    expect(jobChanges.notify).toHaveBeenCalledWith({ type: 'edition-sync', ownerId: null, state: true });
+    jobChanges.notify.mockClear();
+    repo.claimIndexRow.mockResolvedValue(null);
+    await service.claimNext({ pinnedOnly: true });
+    expect(jobChanges.notify).not.toHaveBeenCalled();
+  });
+
+  it('claims without the Jobs area', async () => {
+    const { repo, indexStore, workspace, overlaySource } = setup();
+    const service = new EditionSyncQueueService(repo as never, indexStore as never, workspace as never, overlaySource as never);
+    await expect(service.claimNext({ pinnedOnly: true })).resolves.toMatchObject({ bookId: 4 });
   });
 
   it('reuses the previous job id while its work folder exists, so the worker resumes', async () => {
@@ -90,12 +107,13 @@ describe('EditionSyncQueueService.ensureValid', () => {
   });
 
   it('marks a changed book stale so it is queued again', async () => {
-    const { service, repo, overlaySource } = setup();
+    const { service, repo, overlaySource, jobChanges } = setup();
     repo.findIndexRow.mockResolvedValue({ bookId: 4, status: 'ready', invalidatedAt: null });
     vi.mocked(checkEditionSyncSources).mockResolvedValue({ valid: false, reason: 'audio_changed' });
     await expect(service.ensureValid(4)).resolves.toBe(false);
     expect(repo.markStale).toHaveBeenCalledWith(4, 'audio_changed', undefined);
     expect(overlaySource.invalidateBook).toHaveBeenCalledWith(4);
+    expect(jobChanges.notify).toHaveBeenCalledWith({ type: 'edition-sync', ownerId: null, state: true });
   });
 
   it('is false without a ready row and does not verify', async () => {
@@ -107,7 +125,7 @@ describe('EditionSyncQueueService.ensureValid', () => {
 
 describe('EditionSyncQueueService.clearUnused', () => {
   it('deletes files and rows in batches that advance by book id, counting freed bytes', async () => {
-    const { service, repo, indexStore } = setup();
+    const { service, repo, indexStore, jobChanges } = setup();
     const fullBatch = Array.from({ length: EDITION_SYNC_CLEAR_BATCH_SIZE }, (_, i) => ({
       bookId: i + 1,
       status: 'ready',
@@ -127,6 +145,7 @@ describe('EditionSyncQueueService.clearUnused', () => {
     expect(indexStore.removeIndexFile).toHaveBeenCalledTimes(EDITION_SYNC_CLEAR_BATCH_SIZE);
     expect(repo.deleteUnusedIndexRow.mock.invocationCallOrder[0]).toBeLessThan(indexStore.removeIndexFile.mock.invocationCallOrder[0]);
     expect(repo.deleteUnusedIndexRow).toHaveBeenCalledWith(900, { status: 'failed', indexPath: null });
+    expect(jobChanges.notify).toHaveBeenCalledTimes(1);
   });
 
   it('keeps going after a file removal fails following row deletion', async () => {
@@ -142,13 +161,14 @@ describe('EditionSyncQueueService.clearUnused', () => {
     expect(repo.deleteUnusedIndexRow).toHaveBeenCalledWith(2, { status: 'ready', indexPath: '/b' });
   });
   it('does not count or invalidate a row that was claimed or pinned during deletion', async () => {
-    const { service, repo, indexStore, overlaySource } = setup();
+    const { service, repo, indexStore, overlaySource, jobChanges } = setup();
     repo.findUnused.mockResolvedValueOnce([{ bookId: 1, status: 'ready', indexPath: '/a' }]);
     indexStore.removeIndexFile.mockResolvedValue(0);
     repo.deleteUnusedIndexRow.mockResolvedValue(false);
     expect(await service.clearUnused()).toEqual({ deleted: 0, freedBytes: 0 });
     expect(overlaySource.invalidateBook).not.toHaveBeenCalled();
     expect(indexStore.removeIndexFile).not.toHaveBeenCalled();
+    expect(jobChanges.notify).not.toHaveBeenCalled();
   });
 });
 

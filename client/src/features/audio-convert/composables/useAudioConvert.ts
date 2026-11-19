@@ -1,5 +1,5 @@
-// Fork: Convert to M4B. The batch tool's data: paged preview per library, job status polling,
-// run/stop, and the waiting pipeline's Skip / Convert now.
+// Fork: Convert to M4B. The batch tool's data: paged preview per library, job status following the
+// Jobs push, run/stop, and the waiting pipeline's Skip / Convert now.
 import { computed, onActivated, onDeactivated, onUnmounted, ref } from 'vue'
 import type {
   AudioConvertEncoderOptions,
@@ -12,8 +12,10 @@ import type {
   AudioConvertStatus,
 } from '@bookorbit/types'
 
+import { followJobType } from '@/features/jobs/lib/follow-job-type'
+
 import * as audioConvertApi from '../api/audio-convert'
-import { AUDIO_CONVERT_WAITING_POLL_MS, isJobFinished, pollDelay } from '../lib/audio-convert'
+import { isJobFinished } from '../lib/audio-convert'
 
 /** Why a request failed, as a stable code; the UI owns the wording. */
 export interface AudioConvertFailure {
@@ -68,26 +70,35 @@ export function useAudioConvert() {
   let loadToken = 0
   let statusToken = 0
   let searchTimer: ReturnType<typeof setTimeout> | null = null
-  let pollTimer: ReturnType<typeof setTimeout> | null = null
+  let stopFollowing: (() => void) | null = null
   let paused = false
   /** False until the first status answer for this library, which only seeds what counts as already finished. */
   let statusLoaded = false
 
   const hasMore = computed(() => items.value.length < total.value)
 
-  function clearPoll(): void {
-    if (pollTimer) clearTimeout(pollTimer)
-    pollTimer = null
+  function hasRunningJob(): boolean {
+    return status.value.jobs.some((job) => job.status === 'running')
+  }
+
+  function follow(): void {
+    if (paused || stopFollowing) return
+    stopFollowing = followJobType('audio-convert', refreshStatus, hasRunningJob)
+  }
+
+  function unfollow(): void {
+    stopFollowing?.()
+    stopFollowing = null
   }
 
   onUnmounted(() => {
-    clearPoll()
+    unfollow()
     if (searchTimer) clearTimeout(searchTimer)
   })
-  // The Tools view keeps tabs alive; a hidden tab should not keep polling.
+  // The Tools view keeps tabs alive; a hidden tab should not keep following.
   onDeactivated(() => {
     paused = true
-    clearPoll()
+    unfollow()
   })
   onActivated(() => {
     if (!paused) return
@@ -140,24 +151,15 @@ export function useAudioConvert() {
     return fetchPage(Math.floor(items.value.length / AUDIO_CONVERT_PAGE_SIZE) + 1)
   }
 
-  function schedulePoll(): void {
-    clearPoll()
-    if (paused || status.value.active <= 0) return
-    // Two seconds while a job is queued or running; waiting jobs can sit for a day, so slowly then.
-    const delay = pollDelay(status.value.jobs) ?? AUDIO_CONVERT_WAITING_POLL_MS
-    pollTimer = setTimeout(() => {
-      pollTimer = null
-      void refreshStatus()
-    }, delay)
-  }
-
   /**
-   * Polls while anything is active (see {@link schedulePoll}) and stops once the server reports idle. A job
-   * finishing changes which scope its book belongs to, so the preview reloads when one does.
+   * Reloads when a convert job changes status, or on progress while one runs, and on the Jobs area's
+   * slow poll while its socket is down. A job finishing changes which scope its book belongs to, so
+   * the preview reloads when one does.
    */
   async function refreshStatus(): Promise<void> {
     const libraryId = selectedLibraryId.value
     if (libraryId === null) return
+    follow()
     const token = ++statusToken
     const before = finishedIds(status.value.jobs)
     try {
@@ -171,10 +173,9 @@ export function useAudioConvert() {
       }
       statusLoaded = true
     } catch {
-      // A failed poll keeps the last known state; the next tick tries again while anything was active.
+      // A failed refresh keeps the last known state; the next push or fallback poll tries again.
     }
     if (token === statusToken && libraryId === selectedLibraryId.value) statusReady.value = true
-    if (token === statusToken) schedulePoll()
   }
 
   /** A finished job changes a book's files, so its cached plan no longer describes it. */
@@ -200,7 +201,6 @@ export function useAudioConvert() {
     dismissedJobIds.value = new Set()
     plans.value = new Map()
     runError.value = null
-    clearPoll()
     statusToken++
     statusLoaded = false
     statusReady.value = false

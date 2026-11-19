@@ -1,7 +1,8 @@
-import { Injectable, Logger, type OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, Optional, type OnModuleDestroy } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 
 import type { WebSerialChapterRange, WebSerialJobCurrentUnit } from '@bookorbit/types';
+import { JobChangesService } from '../jobs/job-changes.service';
 import { NotificationService } from '../notification/notification.service';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { UnitDownloadStopped, type EngineDownload, type EngineSeries, type EngineUnitHandle, type EngineUnitSpec } from './engines/web-serial-engine';
@@ -46,7 +47,6 @@ import {
 const TICK_MS = 3000;
 const POLL_FIRST_MS = 250;
 const POLL_INTERVAL_MS = 5000;
-const HEARTBEAT_MS = 5000;
 const REARMED_PAUSE_MS = 1000;
 const MAX_CONSECUTIVE_POLL_ERRORS = 10;
 const STALL_TIMEOUT_MS = 6 * 60 * 60_000;
@@ -57,6 +57,8 @@ export class WebSerialsJobRunnerService implements OnModuleDestroy {
   private readonly logger = new Logger(WebSerialsJobRunnerService.name);
   private readonly active = new Map<number, Promise<void>>();
   private readonly currentSignatures = new Map<number, string>();
+  /** Who each running job belongs to, so a progress change reaches its owner. */
+  private readonly owners = new Map<number, number>();
   private readonly shutdown = new AbortController();
   private readonly cancellations = new Map<number, AbortController>();
   private readonly chapterFetches = new Map<number, AbortController>();
@@ -73,6 +75,7 @@ export class WebSerialsJobRunnerService implements OnModuleDestroy {
     private readonly engines: WebSerialsEngineRegistry,
     private readonly importer: WebSerialsImportService,
     private readonly notifications: NotificationService,
+    @Optional() private readonly jobChanges?: JobChangesService,
   ) {
     const ops: RunnerOps = {
       now: () => this.now(),
@@ -142,7 +145,11 @@ export class WebSerialsJobRunnerService implements OnModuleDestroy {
         if (this.active.has(queued.id)) continue;
         const claimed = await this.repo.claimQueuedJob(queued.id);
         if (!claimed) continue;
-        const run = this.runJob(claimed).finally(() => this.active.delete(claimed.id));
+        this.changed(claimed.userId);
+        const jobStartedAt = Date.now();
+        const run = this.runJob(claimed)
+          .catch((err: unknown) => this.logJobFailure(claimed, jobStartedAt, err, 'job runner failed'))
+          .finally(() => this.active.delete(claimed.id));
         this.active.set(claimed.id, run);
       }
     } catch (err) {
@@ -162,6 +169,7 @@ export class WebSerialsJobRunnerService implements OnModuleDestroy {
     );
     const cancellation = new AbortController();
     this.cancellations.set(job.id, cancellation);
+    this.owners.set(job.id, job.userId);
     try {
       const context = await this.prepareWithRetry(job, startedAt);
       if (!context) return;
@@ -173,28 +181,38 @@ export class WebSerialsJobRunnerService implements OnModuleDestroy {
       }
     } catch (err) {
       if (err instanceof JobStopped) return;
-      const { errorClass, message } = describeError(err);
-      this.logger.error(
-        `[${JOB_EVENT}] [fail] jobId=${job.id} userId=${job.userId} kind=${job.kind} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message.slice(0, ERROR_MAX_LENGTH))}" - job failed`,
-      );
+      this.logJobFailure(job, startedAt, err, 'job failed');
       await this.repo.refreshCounters(job.id).catch(() => undefined);
       const failureMessage =
         failureReasonOf(err) === 'engine_credentials'
           ? failureText('engine_credentials', job.sourceName)!
           : `The download from ${job.sourceName} could not be completed.`;
-      const failed = await this.repo.transitionJob(job.id, ['running', 'importing'], {
-        status: 'failed',
-        message: failureMessage,
-        currentUnit: null,
-        finishedAt: new Date(),
-      });
-      if (failed) await this.announce(job, 'failed', failureMessage);
+      const failed = await this.repo
+        .transitionJob(job.id, ['running', 'importing'], {
+          status: 'failed',
+          message: failureMessage,
+          currentUnit: null,
+          finishedAt: new Date(),
+        })
+        .catch((error: unknown) => this.logJobFailure(job, startedAt, error, 'failed job state could not be saved'));
+      if (failed) {
+        this.changed(job.userId);
+        await this.announce(job, 'failed', failureMessage);
+      }
     } finally {
       this.cancellations.delete(job.id);
+      this.owners.delete(job.id);
       this.currentSignatures.delete(job.id);
       await this.releasePausedItems(job.id);
       await this.removeWorkDirOfFinishedJob(job.id);
     }
+  }
+
+  private logJobFailure(job: WebSerialJobRow, startedAt: number, error: unknown, action: string): void {
+    const { errorClass, message } = describeError(error);
+    this.logger.error(
+      `[${JOB_EVENT}] [fail] jobId=${job.id} userId=${job.userId} kind=${job.kind} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message.slice(0, ERROR_MAX_LENGTH))}" - ${action}`,
+    );
   }
 
   /** Fetched chapters are kept while the job can still resume, Retry included; a completed or cancelled job has no use for them. */
@@ -239,7 +257,10 @@ export class WebSerialsJobRunnerService implements OnModuleDestroy {
     if (!config) {
       const message = 'This download source is not available right now.';
       const failed = await this.repo.transitionJob(job.id, ['running', 'importing'], { status: 'failed', message, finishedAt: new Date() });
-      if (failed) await this.announce(job, 'failed', message);
+      if (failed) {
+        this.changed(job.userId);
+        await this.announce(job, 'failed', message);
+      }
       return null;
     }
     const client = this.engines.client(job.kind, remoteId, config.engine);
@@ -271,7 +292,10 @@ export class WebSerialsJobRunnerService implements OnModuleDestroy {
   private async failDisabledSource(job: WebSerialJobRow): Promise<void> {
     const message = `${job.sourceName} is no longer an enabled source. Ask an admin to enable it, then retry.`;
     const failed = await this.repo.transitionJob(job.id, ['running', 'importing'], { status: 'failed', message, finishedAt: new Date() });
-    if (failed) await this.announce(job, 'failed', message);
+    if (failed) {
+      this.changed(job.userId);
+      await this.announce(job, 'failed', message);
+    }
   }
 
   /** Expands the selection once; a resumed or retried job keeps the items it already has. */
@@ -324,6 +348,7 @@ export class WebSerialsJobRunnerService implements OnModuleDestroy {
       }
       await this.processItem(context, item);
       await this.repo.refreshCounters(job.id);
+      this.changed(job.userId, false);
     }
   }
 
@@ -350,7 +375,7 @@ export class WebSerialsJobRunnerService implements OnModuleDestroy {
     }
   }
 
-  /** The Book Dock already holds this unit's book (an overlapping job, or a restart after filing): count it as owned. */
+  /** The Library Dock already holds this unit's book (an overlapping job, or a restart after filing): count it as owned. */
   private async skipDuplicate(context: JobContext, item: WebSerialJobItemRow, bookId: number, startedAt: number): Promise<void> {
     const { job } = context;
     if (await this.isShorterCopy(job, item, bookId)) {
@@ -427,6 +452,7 @@ export class WebSerialsJobRunnerService implements OnModuleDestroy {
     if (current === null) this.currentSignatures.delete(jobId);
     try {
       await this.repo.setCurrentUnit(jobId, current);
+      this.changed(this.owners.get(jobId) ?? null, false);
     } catch {
       this.currentSignatures.delete(jobId);
     }
@@ -494,7 +520,7 @@ export class WebSerialsJobRunnerService implements OnModuleDestroy {
         this.chapterFetches.delete(job.id);
       }
     }
-    if (!(await this.repo.transitionJob(job.id, ['running', 'importing'], { status: 'importing', heartbeatAt: new Date() }))) {
+    if (!(await this.repo.transitionJob(job.id, ['running', 'importing'], { status: 'importing' }))) {
       if (built) closeDownload(built);
       return this.abandonUnit(context, item, handle);
     }
@@ -523,7 +549,7 @@ export class WebSerialsJobRunnerService implements OnModuleDestroy {
       targetFolderId,
       ...(job.kind === 'manga' ? { maxBytes: WEB_SERIAL_CHAPTER_SIZE_CAP } : {}),
     });
-    await this.repo.transitionJob(job.id, ['importing'], { status: 'running', heartbeatAt: new Date() });
+    await this.repo.transitionJob(job.id, ['importing'], { status: 'running' });
     return { bookId, note: missingChaptersNote(download.missingChapters) };
   }
 
@@ -549,7 +575,6 @@ export class WebSerialsJobRunnerService implements OnModuleDestroy {
     let lastSignature = '';
     let errors = 0;
     let pollDelay = POLL_FIRST_MS;
-    let lastHeartbeat = 0;
     for (;;) {
       if (this.stopping) throw new JobStopped();
       if (await this.shouldStop(job.id)) return false;
@@ -576,10 +601,6 @@ export class WebSerialsJobRunnerService implements OnModuleDestroy {
         if (errors >= MAX_CONSECUTIVE_POLL_ERRORS) throw err;
       }
       if (Date.now() - lastChange > STALL_TIMEOUT_MS) throw new ItemFailure('The source stopped making progress');
-      if (Date.now() - lastHeartbeat >= HEARTBEAT_MS) {
-        lastHeartbeat = Date.now();
-        await this.repo.heartbeat(job.id);
-      }
       await this.sleep(pollDelay);
       pollDelay = Math.min(pollDelay * 2, POLL_INTERVAL_MS);
     }
@@ -619,8 +640,14 @@ export class WebSerialsJobRunnerService implements OnModuleDestroy {
     this.logger.log(
       `[${JOB_EVENT}] [end] jobId=${job.id} userId=${job.userId} kind=${job.kind} durationMs=${Date.now() - startedAt} outcome=${status} imported=${imported} failed=${failed} skipped=${skipped} gapped=${gapped} - job finished`,
     );
+    this.changed(job.userId);
     await this.announce(job, status, message);
     return true;
+  }
+
+  /** Tells the Jobs area; `state` false when only progress moved. */
+  private changed(ownerId: number | null, state = true): void {
+    this.jobChanges?.notify({ type: 'web-serial', ownerId, state });
   }
 
   /** The job's folder can be deleted while it runs (the FK nulls it); fall back to the library's first folder. */

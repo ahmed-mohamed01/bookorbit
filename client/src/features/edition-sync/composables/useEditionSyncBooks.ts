@@ -8,6 +8,7 @@ import {
   type EditionSyncBookState,
   type EditionSyncDisabledReason,
 } from '@bookorbit/types'
+import { followJobType } from '@/features/jobs/lib/follow-job-type'
 import { i18n } from '@/i18n'
 import {
   fetchEditionSyncBooks,
@@ -22,7 +23,6 @@ import { useEditionSyncSettings } from './useEditionSyncSettings'
 
 export const EDITION_SYNC_BOOKS_SEARCH_DEBOUNCE_MS = 300
 export const EDITION_SYNC_BOOKS_QUERY_MAX_LENGTH = 200
-export const EDITION_SYNC_BOOKS_REFRESH_MS = 5_000
 
 function messageOf(err: unknown, fallbackKey: string): string {
   return err instanceof Error && err.message ? err.message : i18n.global.t(fallbackKey)
@@ -76,7 +76,7 @@ export function useEditionSyncBooks(options: UseEditionSyncBooksOptions = {}) {
   /** Rows whose status came from an action, waiting for the re-fetch to bring their details. */
   const detailsPendingIds = ref<ReadonlySet<number>>(new Set())
   let requestId = 0
-  let refreshTimer: ReturnType<typeof setTimeout> | null = null
+  let stopFollowing: (() => void) | null = null
   let disposed = false
   // The first answer picks the opening tab: Problems when anything failed, otherwise All.
   let pickOpeningTab = true
@@ -138,42 +138,35 @@ export function useEditionSyncBooks(options: UseEditionSyncBooksOptions = {}) {
     } finally {
       if (current === requestId) {
         loading.value = false
-        scheduleRefresh()
+        followWhileActive()
       }
     }
   }
 
-  function clearRefreshTimer(): void {
-    if (refreshTimer) clearTimeout(refreshTimer)
-    refreshTimer = null
+  function unfollow(): void {
+    stopFollowing?.()
+    stopFollowing = null
   }
 
-  function shouldRefresh(): boolean {
-    if (disposed || document.visibilityState === 'hidden') return false
+  function shouldFollow(): boolean {
+    if (disposed) return false
     return toValue(options.runActive) === true || items.value.some((item) => isActiveStatus(item.status))
   }
 
-  /** While something is moving, the page re-fetches itself so running, queued and out-of-date rows stay current. */
-  function scheduleRefresh(): void {
-    clearRefreshTimer()
-    if (!shouldRefresh()) return
-    refreshTimer = setTimeout(() => {
-      refreshTimer = null
-      void load()
-    }, EDITION_SYNC_BOOKS_REFRESH_MS)
+  function anyRunning(): boolean {
+    return items.value.some((item) => item.status === 'running')
   }
 
-  function handleVisibilityChange(): void {
-    if (document.visibilityState === 'hidden') clearRefreshTimer()
-    else if (loaded.value && !loading.value && !refreshTimer && shouldRefresh()) void load()
+  /** While something is moving, the Jobs push for edition sync re-fetches the page so running, queued and out-of-date rows stay current. */
+  function followWhileActive(): void {
+    if (!shouldFollow()) return unfollow()
+    stopFollowing ??= followJobType('edition-sync', load, anyRunning)
   }
-
-  document.addEventListener('visibilitychange', handleVisibilityChange)
 
   watch(
     () => toValue(options.runActive) === true,
-    (active) => {
-      if (active && loaded.value && !loading.value && !refreshTimer) scheduleRefresh()
+    () => {
+      if (loaded.value && !loading.value) followWhileActive()
     },
   )
 
@@ -267,8 +260,7 @@ export function useEditionSyncBooks(options: UseEditionSyncBooksOptions = {}) {
 
   onScopeDispose(() => {
     disposed = true
-    clearRefreshTimer()
-    document.removeEventListener('visibilitychange', handleVisibilityChange)
+    unfollow()
     requestId += 1
   })
 

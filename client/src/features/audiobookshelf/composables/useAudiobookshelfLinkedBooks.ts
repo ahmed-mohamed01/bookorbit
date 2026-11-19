@@ -193,7 +193,7 @@ export function useAudiobookshelfLinkedBooks() {
       // a queued count, not enough to update locally, so this still falls back to a full reload. The
       // settings come along because they carry the recalculated staleCount the cleanup indicator reads.
       await rescanAudiobookshelfMatches()
-      await useAudiobookshelfSettings().fetchSettings()
+      await useAudiobookshelfSettings().fetchSettings({ force: true })
       await loadAllBuckets()
       return true
     } catch (err) {

@@ -1,7 +1,8 @@
-import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationBootstrap, Optional } from '@nestjs/common';
 
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { splitSchemaStatements } from '../../common/utils/schema-bootstrap.utils';
+import { JobChangesService } from '../jobs/job-changes.service';
 import { describeError } from './web-serials-log.utils';
 import { WebSerialsRepository, type WebSerialInterruptedJobs } from './web-serials.repository';
 import { WEB_SERIALS_SCHEMA_SQL, WEB_SERIALS_TABLE_NAMES } from './schema/web-serials-schema';
@@ -18,7 +19,10 @@ export class WebSerialsSchemaBootstrapService implements OnApplicationBootstrap 
    */
   readonly ready: Promise<WebSerialInterruptedJobs>;
 
-  constructor(private readonly repo: WebSerialsRepository) {
+  constructor(
+    private readonly repo: WebSerialsRepository,
+    @Optional() private readonly jobChanges?: JobChangesService,
+  ) {
     this.ready = new Promise<WebSerialInterruptedJobs>((resolve, reject) => {
       this.settle = { resolve, reject };
     });
@@ -32,6 +36,7 @@ export class WebSerialsSchemaBootstrapService implements OnApplicationBootstrap 
       const missing = await this.repo.findMissingTables(WEB_SERIALS_TABLE_NAMES);
       await this.repo.applySchemaStatements(splitSchemaStatements(WEB_SERIALS_SCHEMA_SQL));
       const interrupted = await this.repo.requeueInterruptedJobs();
+      if (interrupted.requeued.length > 0) this.jobChanges?.notify({ type: 'web-serial', ownerId: null, state: true });
 
       if (missing.length > 0 || interrupted.requeued.length > 0) {
         this.logger.log(

@@ -64,6 +64,7 @@ import type {
 import type { RequestUser } from '../../common/types/request-user';
 import { isUniqueViolation } from '../../common/utils/db-error.utils';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
+import { normalizeMetadataTextKey } from '../../common/utils/metadata-text-normalize.utils';
 import { matchIdentityKeys } from './monitored-match-overrides';
 import { AuthorEnrichmentExecutorService } from '../authors/author-enrichment-executor.service';
 import { AuthorImageStorageService } from '../authors/author-image-storage.service';
@@ -122,6 +123,7 @@ type AuthorProfileMetadata = {
   coverBookId: number | null;
 };
 type AuthorArtwork = Pick<AuthorProfileMetadata, 'portraitAuthorId' | 'coverBookId'>;
+type PortraitLookup = Pick<MonitoredAuthorConfig, 'id' | 'localAuthorId' | 'authorName'>;
 type BulkRequestCandidate = {
   resultIndex: number;
   workId: string;
@@ -278,32 +280,18 @@ export class MonitoredService {
     return Object.fromEntries(monitoredIds);
   }
 
+  /** The monitors whose resolved local author has a portrait, in one query for the whole list. */
+  async findMonitorsWithPortraits(monitors: readonly PortraitLookup[]): Promise<Set<string>> {
+    const candidates = await this.matchLocalAuthors(monitors);
+    return new Set(candidates.filter(({ candidate }) => candidate?.hasPhoto).map(({ monitorId }) => monitorId));
+  }
+
   // Resolve each monitored author to a local authors row (by link or name) in a single query so the
   // list cards can show the author's artwork without an N+1 lookup per card.
   private async resolveArtwork(monitors: MonitoredAuthorConfig[], user: RequestUser): Promise<Map<string, AuthorArtwork>> {
     const result = new Map<string, AuthorArtwork>();
     if (monitors.length === 0) return result;
-    const [rows, libraryIds] = await Promise.all([
-      this.authorsRepository.findPortraitCandidates(
-        monitors.map((monitor) => monitor.localAuthorId).filter((id): id is number => id != null),
-        monitors.map((monitor) => monitor.authorName),
-      ),
-      this.libraryService.findAccessibleLibraryIds(user),
-    ]);
-    const byId = new Map<number, boolean>();
-    const byName = new Map<string, { id: number; hasPhoto: boolean }>();
-    for (const row of rows) {
-      byId.set(row.id, row.hasPhoto);
-      const key = row.name.trim().toLowerCase();
-      if (!byName.has(key)) byName.set(key, { id: row.id, hasPhoto: row.hasPhoto });
-    }
-    const candidates = monitors.map((monitor) => ({
-      monitorId: monitor.id,
-      candidate:
-        monitor.localAuthorId != null
-          ? { id: monitor.localAuthorId, hasPhoto: byId.get(monitor.localAuthorId) ?? false }
-          : (byName.get(monitor.authorName.trim().toLowerCase()) ?? null),
-    }));
+    const [candidates, libraryIds] = await Promise.all([this.matchLocalAuthors(monitors), this.libraryService.findAccessibleLibraryIds(user)]);
     const covers = await this.authorsRepository.findCoverBookIds(
       candidates.flatMap(({ candidate }) => (candidate ? [candidate.id] : [])),
       libraryIds,
@@ -315,6 +303,33 @@ export class MonitoredService {
       });
     }
     return result;
+  }
+
+  private async matchLocalAuthors(
+    monitors: readonly PortraitLookup[],
+  ): Promise<Array<{ monitorId: string; candidate: { id: number; hasPhoto: boolean } | null }>> {
+    if (monitors.length === 0) return [];
+    const rows = await this.authorsRepository.findPortraitCandidates(
+      monitors.map((monitor) => monitor.localAuthorId).filter((id): id is number => id != null),
+      monitors.map((monitor) => monitor.authorName),
+    );
+    const byId = new Map<number, boolean>();
+    const byExactName = new Map<string, { id: number; hasPhoto: boolean }>();
+    const byNameKey = new Map<string, { id: number; hasPhoto: boolean }>();
+    for (const row of [...rows].sort((a, b) => a.id - b.id)) {
+      byId.set(row.id, row.hasPhoto);
+      const exact = row.name.trim().toLowerCase();
+      const key = normalizeMetadataTextKey(row.name);
+      if (!byExactName.has(exact)) byExactName.set(exact, { id: row.id, hasPhoto: row.hasPhoto });
+      if (key && !byNameKey.has(key)) byNameKey.set(key, { id: row.id, hasPhoto: row.hasPhoto });
+    }
+    return monitors.map((monitor) => ({
+      monitorId: monitor.id,
+      candidate:
+        monitor.localAuthorId != null
+          ? { id: monitor.localAuthorId, hasPhoto: byId.get(monitor.localAuthorId) ?? false }
+          : (byExactName.get(monitor.authorName.trim().toLowerCase()) ?? byNameKey.get(normalizeMetadataTextKey(monitor.authorName) ?? '') ?? null),
+    }));
   }
 
   async createAuthor(input: MonitorAuthorRequest, user: RequestUser): Promise<MonitoredAuthorItem> {

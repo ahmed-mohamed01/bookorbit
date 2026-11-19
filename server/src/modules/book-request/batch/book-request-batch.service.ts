@@ -50,7 +50,11 @@ export class BookRequestBatchService {
       },
     );
     if (!moved) return false;
-    this.gateway.emitChanged();
+    try {
+      await this.downloads.failInFlightForRequest(requestId, reason);
+    } finally {
+      this.gateway.emitChanged();
+    }
     this.logger.log(`[book_request.settle_available] [end] requestId=${requestId} moved=true - book request settled as available`);
     return true;
   }
@@ -108,6 +112,9 @@ export class BookRequestBatchService {
     try {
       const source = await this.requests.findById(dto.sourceRequestId);
       if (!source) throw new NotFoundException('Book request not found');
+      if (source.request.targetLibraryId === null) {
+        throw new BadRequestException('Set a destination library on this request before grabbing a release');
+      }
 
       const inspection = await this.fulfillment.inspectRelease(dto.sourceRequestId, { indexerId: dto.indexerId, releaseGuid: dto.releaseGuid }, user);
       const selection = inspection.selection;
@@ -131,7 +138,7 @@ export class BookRequestBatchService {
 
       const imported = new Set(selection.alreadyImported ?? []);
       if (dto.unitIndexes.some((index) => imported.has(index))) {
-        throw new BadRequestException('These books are already in Book Dock from an earlier batch.');
+        throw new BadRequestException('These books are already in the Library Dock from an earlier batch.');
       }
 
       await this.fulfillment.assertTorrentFree({
@@ -264,7 +271,11 @@ export class BookRequestBatchService {
       const units = await this.batches.resetUnitsForRetry(requestId);
       let claimed: Awaited<ReturnType<BookRequestDownloadRepository['updateIf']>>;
       try {
-        claimed = await this.downloads.updateIf(download.id, RETRYABLE_DOWNLOAD_STATUSES, { status: 'completed', errorMessage: null });
+        claimed = await this.downloads.updateIf(download.id, RETRYABLE_DOWNLOAD_STATUSES, {
+          status: 'completed',
+          errorMessage: null,
+          failureCode: null,
+        });
       } catch (error) {
         await this.requests.updateIf(requestId, ['downloading'], { status: 'failed', statusReason: reason });
         if (isUniqueViolation(error)) throw new BadRequestException(TORRENT_BUSY_MESSAGE);

@@ -1,5 +1,5 @@
 import { ForbiddenException } from '@nestjs/common';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sql, type SQL } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { PgDialect } from 'drizzle-orm/pg-core';
@@ -7,7 +7,13 @@ import { PgDialect } from 'drizzle-orm/pg-core';
 import { MONITORED_STATUS_FILTER_BY_FORMAT_STATUS, monitoredFormatStatus } from '@bookorbit/types';
 import type { MonitoredWork } from '@bookorbit/types';
 import type { RequestUser } from '../../common/types/request-user';
-import { MonitoredStoreService, releaseEventKey, releaseRangeOverlapsSql, type MonitoredDueRelease } from './monitored-store.service';
+import {
+  MonitoredStoreService,
+  releaseEventKey,
+  releaseRangeOverlapsSql,
+  WATCHLIST_FETCH_NOTIFY_INTERVAL_MS,
+  type MonitoredDueRelease,
+} from './monitored-store.service';
 import { visibleWorkCondition } from './monitored-work-conditions';
 import * as schema from './schema/monitored.schema';
 import { authorCatalogWorks, type AuthorCatalogWorkRow, type MonitoredAuthorWorkRow } from './schema/monitored.schema';
@@ -2031,15 +2037,25 @@ describe('MonitoredStoreService.countWorkClasses', () => {
 });
 
 describe('MonitoredStoreService fetch transitions', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
   function fetchDb(rows: unknown[]) {
     const builder = {} as Record<string, ReturnType<typeof vi.fn>>;
     for (const method of ['set', 'where', 'values', 'onConflictDoUpdate', 'orderBy', 'from']) builder[method] = vi.fn(() => builder);
     builder.returning = vi.fn().mockResolvedValue(rows);
     builder.limit = vi.fn().mockResolvedValue(rows);
     builder.then = vi.fn((resolve: (value: unknown[]) => unknown) => Promise.resolve(rows).then(resolve));
-    const db = { update: vi.fn(() => builder), insert: vi.fn(() => builder), select: vi.fn(() => builder), transaction: vi.fn() };
+    const db = {
+      update: vi.fn(() => builder),
+      insert: vi.fn(() => builder),
+      select: vi.fn(() => builder),
+      delete: vi.fn(() => builder),
+      transaction: vi.fn(),
+    };
     db.transaction.mockImplementation((run) => run(db));
-    return { db, builder, store: new MonitoredStoreService(db as never, {} as never) };
+    const jobChanges = { notify: vi.fn() };
+    return { db, builder, jobChanges, store: new MonitoredStoreService(db as never, {} as never, jobChanges as never) };
   }
 
   it.each([
@@ -2051,9 +2067,97 @@ describe('MonitoredStoreService fetch transitions', () => {
     const queued = new PgDialect().sqlToQuery(builder.where.mock.calls[0][0]);
     expect(queued.sql).toContain('"monitored_authors"."fetch_state" in');
     expect(queued.params).toEqual(['m', 'idle', 'failed']);
-    expect(builder.set.mock.calls[0][0]).toEqual({ fetchState: 'queued', fetchErrorKind: null, fetchErrorAt: null, fetchRetryAt: null });
+    expect(builder.set.mock.calls[0][0]).toEqual({
+      fetchState: 'queued',
+      fetchErrorKind: null,
+      fetchErrorAt: null,
+      fetchRetryAt: null,
+      fetchQueuedAt: expect.any(Date),
+      fetchStartedAt: null,
+    });
     await expect(store.claimFetch('m')).resolves.toBe(expected);
     expect(new PgDialect().sqlToQuery(builder.where.mock.calls[1][0]).params).toEqual(['m', 'queued']);
+    expect(builder.set.mock.calls[1][0]).toEqual({ fetchState: 'fetching', fetchStartedAt: expect.any(Date) });
+  });
+
+  it('tells the owner at once, folds the transitions that follow into one note per interval, and still lands the last one', async () => {
+    const { store, jobChanges } = fetchDb([{ id: 'm', ownerUserId: 42 }]);
+    const change = { type: 'watchlist-fetch', ownerId: 42, state: true };
+    await store.markFetchQueued('m');
+    expect(jobChanges.notify).toHaveBeenCalledTimes(1);
+    await store.claimFetch('m');
+    await store.finishFetchFailed('m', { kind: 'timeout', at: '2026-10-20T00:00:00Z', retryAt: null, attempts: 1 });
+    await store.finishFetchSucceeded('m', { lastRefreshedAt: '2026-10-20T00:00:00Z', hardcoverAuthorId: null, localAuthorId: null });
+    await store.releaseFetch('m');
+    expect(jobChanges.notify).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(WATCHLIST_FETCH_NOTIFY_INTERVAL_MS);
+    expect(jobChanges.notify).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(WATCHLIST_FETCH_NOTIFY_INTERVAL_MS);
+    expect(jobChanges.notify).toHaveBeenCalledTimes(2);
+    for (const [call] of jobChanges.notify.mock.calls) expect(call).toEqual(change);
+
+    await store.claimFetch('m');
+    expect(jobChanges.notify).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps one owner's notes from holding back another's, and drops pending notes on shutdown", async () => {
+    const { store, builder, jobChanges } = fetchDb([{ id: 'm', ownerUserId: 1 }]);
+    await store.markFetchQueued('m');
+    builder.returning.mockResolvedValue([{ id: 'n', ownerUserId: 2 }]);
+    await store.markFetchQueued('n');
+    expect(jobChanges.notify.mock.calls.map(([call]) => call.ownerId)).toEqual([1, 2]);
+
+    await store.claimFetch('n');
+    store.onModuleDestroy();
+    vi.advanceTimersByTime(WATCHLIST_FETCH_NOTIFY_INTERVAL_MS);
+    expect(jobChanges.notify).toHaveBeenCalledTimes(2);
+  });
+
+  it('stays quiet when a transition lost its conditional update', async () => {
+    const { store, jobChanges } = fetchDb([]);
+    await store.markFetchQueued('m');
+    await store.claimFetch('m');
+    await store.finishFetchSucceeded('m', { lastRefreshedAt: '2026-10-20T00:00:00Z', hardcoverAuthorId: '42', localAuthorId: null });
+    await store.resetInterruptedFetches();
+    expect(jobChanges.notify).not.toHaveBeenCalled();
+  });
+
+  it('stamps when a new monitor was queued and tells its owner, and tells the owner when a monitor is removed', async () => {
+    const { store, builder, jobChanges } = fetchDb([{ id: 'm', ownerUserId: 42 }]);
+    await store.upsertAuthor({
+      id: 'm',
+      ownerUserId: 42,
+      authorName: 'Ursula K. Le Guin',
+      localAuthorId: null,
+      providerIds: {},
+      formats: {
+        ebook: { mode: 'notify', libraryId: null, folderId: null },
+        audiobook: { mode: 'off', libraryId: null, folderId: null },
+      },
+      paused: false,
+      addedAt: '2026-10-20T00:00:00Z',
+      lastRefreshedAt: null,
+      fetchState: 'queued',
+    } as never);
+    expect(builder.values.mock.calls[0][0]).toMatchObject({ fetchState: 'queued', fetchQueuedAt: expect.any(Date) });
+    expect(jobChanges.notify).toHaveBeenCalledWith({ type: 'watchlist-fetch', ownerId: 42, state: true });
+    jobChanges.notify.mockClear();
+    await store.removeAuthor('m');
+    vi.advanceTimersByTime(WATCHLIST_FETCH_NOTIFY_INTERVAL_MS);
+    expect(jobChanges.notify).toHaveBeenCalledWith({ type: 'watchlist-fetch', ownerId: 42, state: true });
+  });
+
+  it('settles fetches interrupted by a restart back to queued, clears their start and tells each owner once', async () => {
+    const { store, builder, jobChanges } = fetchDb([
+      { id: 'a', ownerUserId: 1 },
+      { id: 'b', ownerUserId: 1 },
+      { id: 'c', ownerUserId: 2 },
+    ]);
+    await expect(store.resetInterruptedFetches()).resolves.toBe(3);
+    expect(builder.set.mock.calls[0][0]).toEqual({ fetchState: 'queued', fetchStartedAt: null });
+    expect(new PgDialect().sqlToQuery(builder.where.mock.calls[0][0]).params).toEqual(['fetching']);
+    expect(jobChanges.notify.mock.calls.map(([call]) => call.ownerId)).toEqual([1, 2]);
   });
 
   it.each([[{ id: 'm' }], []])('releases only a fetching row without changing other fields: %j', async (...rows) => {

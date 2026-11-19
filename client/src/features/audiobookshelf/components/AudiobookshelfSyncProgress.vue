@@ -74,7 +74,7 @@ async function handleCleanupStale(): Promise<void> {
   if (result) {
     cleanupSummary.value = describeCleanup(result)
     toast.success(cleanupSummary.value)
-    await fetchSettings()
+    await fetchSettings({ force: true })
   } else {
     toast.error(cleanupError.value ?? 'Failed to clean up stale Audiobookshelf entries')
   }

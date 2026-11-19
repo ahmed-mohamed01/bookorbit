@@ -7,6 +7,14 @@ import { EDITION_SYNC_INDEX_EXTENSION, isAudioFormat } from '@bookorbit/types';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { PositionConverterService } from '../position-converter/position-converter.service';
 import { buildEpubMediaOverlayPlaylistFromFile } from '../reader/epub/epub-media-overlay';
+import {
+  buildAudioTimeline,
+  locateItemByNarratedSeconds,
+  narratedSecondsToTimelineSeconds,
+  readAloudDurationsMatch,
+  timelineSecondsToNarratedSeconds,
+  type AudioTimeline,
+} from '../reader/epub/epub-media-overlay-timeline';
 import { BookRepository } from './book.repository';
 import { OVERLAY_SOURCE_RESOLVER, type OverlaySourceResolver } from './overlay-source-provider';
 
@@ -17,8 +25,6 @@ const NARRATION_EVENT = 'book.narration_marker_advance';
 // one and a half minutes, so a page start further back than this is a page the reader went back to.
 const NARRATION_PAGE_SECONDS = 120;
 const PLAYLIST_CACHE_MAX = 12;
-const MAX_DURATION_DIFF_RATIO = 0.05;
-const MAX_DURATION_DIFF_SECONDS = 300;
 
 type SyncFilesResult = NonNullable<Awaited<ReturnType<BookRepository['findAudioEbookProgressSyncFiles']>>>;
 type SyncFile = SyncFilesResult['files'][number];
@@ -66,6 +72,8 @@ type AudioPosition = {
 export class AudiobookEbookProgressSyncService {
   private readonly logger = new Logger(AudiobookEbookProgressSyncService.name);
   private readonly playlistCache = new Map<number, PlaylistCacheEntry>();
+  private readonly timelines = new WeakMap<EpubMediaOverlayPlaylist, AudioTimeline | null>();
+  private readonly clocks = new WeakMap<EpubMediaOverlayPlaylist, EpubMediaOverlayPlaylistItem[]>();
 
   constructor(
     private readonly bookRepo: BookRepository,
@@ -314,7 +322,7 @@ export class AudiobookEbookProgressSyncService {
     const playlist = await this.getPlaylist(overlaySourceFile, params.bookId);
     if (playlist.items.length === 0 || playlist.durationSeconds == null || playlist.durationSeconds <= 0) return null;
 
-    const overlaySeconds = this.mapAudioSecondsToOverlaySeconds(audioAbsoluteSeconds, audioTotalSeconds, playlist.durationSeconds);
+    const overlaySeconds = this.mapAudioSecondsToOverlaySeconds(playlist, audioAbsoluteSeconds, audioTotalSeconds);
     if (overlaySeconds === null) return null;
 
     const item = this.findItemBySeconds(playlist, overlaySeconds);
@@ -399,7 +407,7 @@ export class AudiobookEbookProgressSyncService {
   private mapOverlayPositionToAudio(position: EbookOverlayPosition): AudioPosition | null {
     if (position.audioTotalSeconds === null) return null;
 
-    const audioSeconds = this.mapOverlaySecondsToAudioSeconds(position.overlaySeconds, position.overlayDurationSeconds, position.audioTotalSeconds);
+    const audioSeconds = this.mapOverlaySecondsToAudioSeconds(position.playlist, position.overlaySeconds, position.audioTotalSeconds);
     if (audioSeconds === null) return null;
 
     const filePosition = this.audioFilePositionForSeconds(position.audioFiles, audioSeconds);
@@ -512,20 +520,31 @@ export class AudiobookEbookProgressSyncService {
     return total > 0 ? total : null;
   }
 
-  private mapAudioSecondsToOverlaySeconds(audioSeconds: number, audioTotalSeconds: number, overlayTotalSeconds: number): number | null {
-    const diff = Math.abs(audioTotalSeconds - overlayTotalSeconds);
-    const tolerance = Math.min(MAX_DURATION_DIFF_SECONDS, overlayTotalSeconds * MAX_DURATION_DIFF_RATIO);
-    if (diff > tolerance) return null;
-
-    return Math.max(0, Math.min(overlayTotalSeconds, audioSeconds * (overlayTotalSeconds / audioTotalSeconds)));
+  private timelineOf(playlist: EpubMediaOverlayPlaylist): AudioTimeline | null {
+    if (!this.timelines.has(playlist)) this.timelines.set(playlist, buildAudioTimeline(playlist.items));
+    return this.timelines.get(playlist) ?? null;
   }
 
-  private mapOverlaySecondsToAudioSeconds(overlaySeconds: number, overlayTotalSeconds: number, audioTotalSeconds: number): number | null {
-    const diff = Math.abs(audioTotalSeconds - overlayTotalSeconds);
-    const tolerance = Math.min(MAX_DURATION_DIFF_SECONDS, overlayTotalSeconds * MAX_DURATION_DIFF_RATIO);
-    if (diff > tolerance) return null;
+  /**
+   * The narration clock counts only the sentences that have a clip, so it runs shorter than the
+   * audiobook by every pause and unaligned stretch. Positions are carried over the audio the
+   * clips point into instead, which is the audiobook's own timeline.
+   */
+  private mapAudioSecondsToOverlaySeconds(playlist: EpubMediaOverlayPlaylist, audioSeconds: number, audioTotalSeconds: number): number | null {
+    const timeline = this.timelineOf(playlist);
+    if (!timeline || !readAloudDurationsMatch(audioTotalSeconds, timeline.totalSeconds)) return null;
 
-    return Math.max(0, Math.min(audioTotalSeconds, overlaySeconds * (audioTotalSeconds / overlayTotalSeconds)));
+    const timelineSeconds = Math.min(timeline.totalSeconds, Math.max(0, audioSeconds) * (timeline.totalSeconds / audioTotalSeconds));
+    return timelineSecondsToNarratedSeconds(this.clockItems(playlist), timeline, timelineSeconds);
+  }
+
+  private mapOverlaySecondsToAudioSeconds(playlist: EpubMediaOverlayPlaylist, overlaySeconds: number, audioTotalSeconds: number): number | null {
+    const timeline = this.timelineOf(playlist);
+    if (!timeline || !readAloudDurationsMatch(audioTotalSeconds, timeline.totalSeconds)) return null;
+
+    const timelineSeconds = narratedSecondsToTimelineSeconds(this.clockItems(playlist), timeline, overlaySeconds);
+    if (timelineSeconds === null) return null;
+    return Math.max(0, Math.min(audioTotalSeconds, timelineSeconds * (audioTotalSeconds / timeline.totalSeconds)));
   }
 
   private async resolveOverlaySecondsFromEbookPosition(
@@ -642,24 +661,22 @@ export class AudiobookEbookProgressSyncService {
   }
 
   private findItemBySeconds(playlist: EpubMediaOverlayPlaylist, positionSeconds: number): EpubMediaOverlayPlaylistItem | null {
-    const durations = this.itemDurations(playlist);
-    let elapsed = 0;
-    let lastKnown: EpubMediaOverlayPlaylistItem | null = null;
+    const clock = this.clockItems(playlist);
+    const located = locateItemByNarratedSeconds(clock, positionSeconds);
+    return located ? playlist.items[clock.indexOf(located.item)]! : null;
+  }
 
-    for (const [index, item] of playlist.items.entries()) {
-      const duration = durations[index];
-      const start = elapsed;
-      if (typeof duration === 'number' && Number.isFinite(duration) && duration <= 0) continue;
-      const end = this.isPositiveFinite(duration) ? start + duration : null;
-
-      if (positionSeconds <= start) return item;
-      if (end == null || positionSeconds < end) return item;
-
-      lastKnown = item;
-      elapsed = end;
+  /** Fork: the playlist on the clock `itemDurations` builds, for upstream's narration clock helpers. */
+  private clockItems(playlist: EpubMediaOverlayPlaylist): EpubMediaOverlayPlaylistItem[] {
+    let items = this.clocks.get(playlist);
+    if (!items) {
+      const durations = this.itemDurations(playlist);
+      items = playlist.items.map((item, index) =>
+        durations[index] === item.durationSeconds ? item : { ...item, durationSeconds: durations[index] ?? null },
+      );
+      this.clocks.set(playlist, items);
     }
-
-    return lastKnown;
+    return items;
   }
 
   /**

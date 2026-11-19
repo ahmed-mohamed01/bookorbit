@@ -7,7 +7,6 @@ import App from './App.vue'
 import router from './router'
 import { i18n } from './i18n'
 import { useLocaleStore } from './stores/locale'
-import { useAuth } from './features/auth/composables/useAuth'
 import { bootstrapSession } from './features/auth/composables/useSessionBootstrap'
 
 // Chrome 124+ blocks aria-hidden from being applied to an element that contains
@@ -46,22 +45,6 @@ async function boot() {
   await Promise.all([localeStore.setLocale(localeStore.locale), bootstrapSession()])
   app.use(router)
   app.mount('#app')
-
-  const connection = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection
-  if (!useAuth().user.value || connection?.saveData) return
-  const idleWindow = window as Window & { requestIdleCallback?: (callback: () => void) => number }
-  if (idleWindow.requestIdleCallback) idleWindow.requestIdleCallback(prefetchPdfReader)
-  else window.setTimeout(prefetchPdfReader, 5_000)
-}
-
-function prefetchPdfReader() {
-  if (!useAuth().user.value) return
-  void import('@embedpdf/pdfium/pdfium.wasm?url').then((wasm) => {
-    const link = document.createElement('link')
-    link.rel = 'prefetch'
-    link.href = wasm.default
-    document.head.append(link)
-  })
 }
 
 void boot()

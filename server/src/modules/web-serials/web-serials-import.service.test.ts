@@ -152,7 +152,7 @@ describe('WebSerialsImportService', () => {
   });
 
   it('marks a failure while filing as an import-stage error but leaves stream failures alone', async () => {
-    const filing = await setup({ success: false, message: 'Book Dock file not found' });
+    const filing = await setup({ success: false, message: 'Library Dock file not found' });
     await expect(filing.service.importUnit(request())).rejects.toBeInstanceOf(ImportStageError);
 
     const { service } = await setup();

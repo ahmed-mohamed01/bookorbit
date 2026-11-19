@@ -78,6 +78,12 @@ CREATE INDEX IF NOT EXISTS "audio_convert_jobs_library_idx" ON "audio_convert_jo
 --> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "audio_convert_jobs_one_active_uidx" ON "audio_convert_jobs" USING btree ("book_id") WHERE "status" in ('waiting', 'queued', 'running');
 --> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "audio_convert_jobs_jobs_area_idx" ON "audio_convert_jobs" USING btree ("status", "user_id") WHERE "status" in ('waiting', 'queued', 'running', 'failed');
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "audio_convert_jobs_finish_idx" ON "audio_convert_jobs" USING btree ((coalesce("finished_at", "created_at")) DESC, "id" DESC) WHERE "status" in ('success', 'failed', 'skipped', 'cancelled');
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "audio_convert_jobs_user_finish_idx" ON "audio_convert_jobs" USING btree ("user_id", (coalesce("finished_at", "created_at")) DESC, "id" DESC) WHERE "status" in ('success', 'failed', 'skipped', 'cancelled');
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "audio_convert_watch" (
 	"book_id" integer PRIMARY KEY NOT NULL,
 	"last_seen_at" timestamp with time zone DEFAULT now() NOT NULL

@@ -378,6 +378,93 @@ describe('AudiobookshelfSyncService.sync', () => {
     });
   });
 
+  describe('Jobs area run tracking', () => {
+    function watchedService(notify: ReturnType<typeof vi.fn>) {
+      return new AudiobookshelfSyncService(
+        mockRepo as any,
+        mockClient as any,
+        mockMatchService as any,
+        mockAttempts as any,
+        mockStatusService as any,
+        mockSessionsService as any,
+        mockLibraryService as any,
+        mockAchievementEvents as any,
+        mockProgressPush as any,
+        new AudiobookshelfSyncCoordinatorService(),
+        mockBookService as any,
+        { notify } as any,
+      );
+    }
+
+    it('records the running sync with its kind and announces its start and end', async () => {
+      const notify = vi.fn();
+      const service = watchedService(notify);
+      const gate = deferred<{ mediaProgress: AbsMediaProgress[] }>();
+      mockClient.getMe.mockReturnValue(gate.promise);
+
+      const run = service.fullResync(user);
+      await vi.waitFor(() => expect(service.activeRun(user.id)).toMatchObject({ kind: 'full' }));
+      expect(notify).toHaveBeenCalledTimes(1);
+      gate.resolve({ mediaProgress: [] });
+      await run;
+
+      expect(service.activeRun(user.id)).toBeNull();
+      expect(notify).toHaveBeenCalledTimes(2);
+      expect(notify).toHaveBeenLastCalledWith({ type: 'audiobookshelf-sync', ownerId: user.id, state: true });
+    });
+
+    it('keeps the hot tier out of the list, quiet, and off the last-run record whether it succeeds or fails', async () => {
+      const notify = vi.fn();
+      const service = watchedService(notify);
+
+      await service.sync(user, { hotInProgressOnly: true });
+      expect(service.activeRun(user.id)).toBeNull();
+
+      mockClient.getMe.mockRejectedValue(new Error('offline'));
+      await expect(service.sync(user, { hotInProgressOnly: true })).rejects.toThrow('offline');
+
+      expect(notify).not.toHaveBeenCalled();
+      expect(updateSettingsPatchedKey('lastSyncError')).toBe(true);
+      for (const key of ['lastRunFinishedAt', 'lastRunKind', 'lastRunError']) expect(updateSettingsPatchedKey(key)).toBe(false);
+    });
+
+    it('records how a full, reconcile or poll run ended, failure included', async () => {
+      const service = watchedService(vi.fn());
+      await service.sync(user);
+      expect(mockRepo.updateSettings).toHaveBeenLastCalledWith(
+        user.id,
+        expect.objectContaining({ lastRunFinishedAt: expect.any(Date), lastRunKind: 'poll', lastRunError: null }),
+      );
+
+      mockClient.getMe.mockRejectedValue(new Error('offline'));
+      await expect(service.fullResync(user)).rejects.toThrow('offline');
+      expect(mockRepo.updateSettings).toHaveBeenLastCalledWith(
+        user.id,
+        expect.objectContaining({ lastSyncError: 'offline', lastRunFinishedAt: expect.any(Date), lastRunKind: 'full', lastRunError: 'offline' }),
+      );
+    });
+
+    it('names a plain poll and a reconcile apart', async () => {
+      const notify = vi.fn();
+      const service = watchedService(notify);
+      const gate = deferred<{ mediaProgress: AbsMediaProgress[] }>();
+      mockClient.getMe.mockReturnValue(gate.promise);
+
+      const run = service.sync(user);
+      await vi.waitFor(() => expect(service.activeRun(user.id)).toMatchObject({ kind: 'poll' }));
+      gate.resolve({ mediaProgress: [] });
+      await run;
+
+      mockClient.getMe.mockResolvedValue({ mediaProgress: [] });
+      const gated = deferred<{ autoLinked: number }>();
+      mockMatchService.matchLibrary.mockReturnValue(gated.promise);
+      const reconcile = service.sync(user, { reconcile: true });
+      await vi.waitFor(() => expect(service.activeRun(user.id)).toMatchObject({ kind: 'reconcile' }));
+      gated.resolve({ autoLinked: 0 });
+      await reconcile;
+    });
+  });
+
   describe('status is not double-written', () => {
     it('routes a finish through importUnlinkedRead + a single updateManual, and position through upsertAudioProgressGuarded', async () => {
       const finished = makeMp({ isFinished: true, progress: 1, currentTime: 1000, duration: 1000, finishedAt: 1_700_000_000_000 });

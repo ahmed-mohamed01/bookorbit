@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy, Optional } from '@nestjs/common';
 import { Interval, SchedulerRegistry } from '@nestjs/schedule';
 import { CronJob } from 'cron';
 import type {
@@ -11,6 +11,7 @@ import type {
 
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { SYSTEM_TIME_ZONE } from '../../common/utils/timezone.utils';
+import { JobChangesService } from '../jobs/job-changes.service';
 import { ReadAloudWorkerClientService } from '../read-aloud/read-aloud-worker-client.service';
 import { ReadAloudWorkerService } from '../read-aloud/read-aloud-worker.service';
 import {
@@ -69,6 +70,7 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
     private readonly workerClient: ReadAloudWorkerClientService,
     private readonly upstreamWorker: ReadAloudWorkerService,
     private readonly schedulerRegistry: SchedulerRegistry,
+    @Optional() private readonly jobChanges?: JobChangesService,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -81,6 +83,7 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
         this.repo.findAdminSettings(),
       ]);
       const registered = this.syncSchedule(settings.cronExpression, settings.enabled);
+      if (runsClosed > 0 || rowsInterrupted > 0) this.changed();
       this.logger.log(
         `[${event}] [end] durationMs=${Date.now() - startedAt} runsClosed=${runsClosed} rowsInterrupted=${rowsInterrupted} scheduleRegistered=${registered} - edition sync scheduler ready`,
       );
@@ -120,6 +123,20 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
       this.logFailure(event, startedAt, err, 'scheduled indexing registration failed');
       return false;
     }
+  }
+
+  /** What started the active run, or null when none is active. */
+  activeTrigger(): EditionSyncRunTrigger | null {
+    return this.run?.trigger ?? null;
+  }
+
+  currentBookId(): number | null {
+    return this.run?.currentBookId ?? null;
+  }
+
+  /** Tells the Jobs area a build or run moved; `state` false when only progress or run context moved. */
+  changed(state = true): void {
+    this.jobChanges?.notify({ type: 'edition-sync', ownerId: null, state });
   }
 
   nextRunAt(): Date | null {
@@ -172,6 +189,7 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
       this.wake?.();
       if (run.currentBookId !== null) await this.repo.clearPin(run.currentBookId);
       await this.indexer.cancelCurrent();
+      this.changed();
     }
     return this.getAdminStatus();
   }
@@ -179,7 +197,7 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
   async getAdminStatus(): Promise<EditionSyncAdminStatus> {
     const run = this.run;
     const [health, settings, indexCounts, unused, throughput, current, lastRun] = await Promise.all([
-      this.workerClient.healthState(),
+      this.workerClient.lastKnownHealthState(),
       this.repo.findAdminSettings(),
       this.repo.countIndexStates(),
       this.repo.countUnused(),
@@ -245,6 +263,7 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
             run.trigger = 'scheduled';
             run.pinnedOnly = false;
             run.windowUntil = windowUntil;
+            this.changed(false);
             this.logger.log(
               `[edition_sync.run] [start] runId=${run.id} trigger=scheduled windowUntil=${run.windowUntil?.toISOString()} widened=true - scheduled run joined the active run`,
             );
@@ -284,6 +303,7 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
       this.logger.log(
         `[edition_sync.run] [start] runId=${run.id} trigger=${trigger} windowUntil=${windowUntil?.toISOString() ?? 'none'} - indexing run started`,
       );
+      this.changed();
       void this.execute(run);
     } finally {
       this.starting = false;
@@ -307,6 +327,7 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
         .finishRun(run.id, { stopReason, booksIndexed: run.booksIndexed, booksFailed: run.booksFailed, secondsIndexed: run.secondsIndexed })
         .catch((err: unknown) => this.logFailure('edition_sync.run', startedAt, err, 'run record not closed', `runId=${run.id} `));
       if (this.run === run) this.run = null;
+      this.changed();
     }
   }
 
@@ -398,10 +419,12 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
             new Date(Date.now() - EDITION_SYNC_FILES_SETTLE_MS),
             EDITION_SYNC_FILES_CHANGED_PIN_BATCH_SIZE,
           );
-          if (pinned > 0)
+          if (pinned > 0) {
+            this.changed();
             this.logger.log(
               `[edition_sync.files_changed] [end] durationMs=${Date.now() - pinStarted} pinned=${pinned} - changed books queued for re-index`,
             );
+          }
         }
       } catch (err) {
         this.logFailure('edition_sync.files_changed', pinStarted, err, 'changed books could not be queued');

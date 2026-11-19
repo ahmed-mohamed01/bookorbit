@@ -498,3 +498,26 @@ describe('Unicode author matching', () => {
     expect(db.select).not.toHaveBeenCalled();
   });
 });
+
+describe('findPortraitCandidates', () => {
+  it('matches names on the indexed whitespace-folded key', async () => {
+    const { db } = makeDb();
+    const { inArray } = await import('drizzle-orm');
+
+    await new AuthorsRepository(db as never).findPortraitCandidates([], ['  Brandon   Sanderson ', 'BRANDON SANDERSON', '   ']);
+
+    const nameClause = vi.mocked(inArray).mock.calls.at(-1)!;
+    expect(nameClause[0]).toMatchObject({
+      op: 'sql',
+      text: 'lower()',
+      values: [expect.objectContaining({ text: expect.stringContaining('chr(160)') })],
+    });
+    expect(nameClause[1]).toEqual(['brandon sanderson']);
+  });
+
+  it('runs no query when there is nothing to look up', async () => {
+    const { db } = makeDb();
+    await expect(new AuthorsRepository(db as never).findPortraitCandidates([], ['  '])).resolves.toEqual([]);
+    expect(db.select).not.toHaveBeenCalled();
+  });
+});

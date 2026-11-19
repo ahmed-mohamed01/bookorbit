@@ -78,6 +78,7 @@ function batchRequest(): BookRequestItem {
     targetFolderId: null,
     decidedByUserId: null,
     decidedByUsername: null,
+    decidedByName: null,
     decidedAt: null,
     decisionNote: null,
     matchedBookId: null,
@@ -154,16 +155,20 @@ describe('RequestDetailPanel batch units', () => {
     expect(wrapper.text()).not.toContain('Placing')
   })
 
-  it('offers no single-request grab or download cancel on a batch', async () => {
+  it.each([
+    ['failed', 'failed'],
+    ['downloading', 'downloading'],
+  ] as const)('offers no single-request grab or download cancel on a %s batch', async (status, downloadStatus) => {
     fetchUnits.mockResolvedValue([])
-    requestRef.value = { ...batchRequest(), status: 'failed', download: { id: 9, status: 'failed' } as BookRequestItem['download'] }
-    const wrapper = shallowMount(RequestDetailPanel)
+    hasPermission.mockImplementation(() => true)
+    requestRef.value = { ...batchRequest(), status, download: { id: 9, status: downloadStatus } as BookRequestItem['download'] }
+    const wrapper = shallowMount(RequestDetailPanel, { global: { stubs: { Button: false, Primitive: false } } })
     await flushPromises()
 
-    const progress = wrapper.findComponent({ name: 'RequestDownloadProgress' })
-    expect(progress.exists()).toBe(true)
-    expect(progress.props('canRetry')).toBe(false)
-    expect(progress.props('canCancel')).toBe(false)
+    const labels = wrapper.findAll('button').map((button) => button.text())
+    expect(labels).not.toContain('Cancel download')
+    expect(labels).not.toContain('Pick release')
+    expect(labels).not.toContain('Try another release')
   })
 
   it('does not load units for a single request', async () => {

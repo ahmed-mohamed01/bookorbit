@@ -4,13 +4,14 @@ import { useI18n } from 'vue-i18n'
 import { breakpointsTailwind, useBreakpoints } from '@vueuse/core'
 import { Aperture, BookMarked, BookmarkPlus, ChevronLeft, ChevronRight, Headphones, ListOrdered, RefreshCw, Shuffle, Sparkles } from '@lucide/vue'
 
-import type { BookCard, ScrollerType } from '@bookorbit/types'
+import type { BookCard, ConcreteBookMediaKind, CoverAspectRatio, ScrollerType } from '@bookorbit/types'
 import BookCoverCard from '@/features/book/components/BookCoverCard.vue'
 import BookQuickView from '@/features/book/components/BookQuickView.vue'
 import AddToCollectionSheet from '@/features/collection/components/AddToCollectionSheet.vue'
 import DeleteBookDialog from '@/features/book/components/DeleteBookDialog.vue'
 import { useDashboardScroller } from '../composables/useDashboardScroller'
 import { useDeleteBook } from '@/features/book/composables/useDeleteBook'
+import { cardMediaView } from '@/features/book/lib/card-media'
 import { MIN_SHELF_ROWS, chunkIntoBands, effectiveShelfRows, shelfBookLimit } from '../lib/shelf-rows'
 
 defineOptions({
@@ -63,6 +64,7 @@ const SKELETONS_PER_BAND = 8
 const skeletonBands = computed(() => Array.from({ length: shelfRows.value }, () => Array.from({ length: SKELETONS_PER_BAND })))
 const PORTRAIT_COVER_WIDTH_CLASS = 'w-[120px]'
 const SQUARE_COVER_WIDTH_CLASS = 'w-[150px]'
+const shelfMediaKind = computed<ConcreteBookMediaKind | null>(() => (props.type === 'continue-listening' ? 'audiobook' : null))
 
 // 'move-to-library' is part of the shared card contract; this view does not
 // opt in, so it never fires here.
@@ -100,8 +102,12 @@ function handleBookAction(book: BookCard, action: BookActionType) {
   }
 }
 
+function shelfCoverAspectRatio(book: BookCard): CoverAspectRatio {
+  return cardMediaView(book, shelfMediaKind.value)?.coverAspectRatio ?? book.coverAspectRatio
+}
+
 function coverWidthClass(book: BookCard): string {
-  return book.coverAspectRatio === '1/1' ? SQUARE_COVER_WIDTH_CLASS : PORTRAIT_COVER_WIDTH_CLASS
+  return shelfCoverAspectRatio(book) === '1/1' ? SQUARE_COVER_WIDTH_CLASS : PORTRAIT_COVER_WIDTH_CLASS
 }
 </script>
 
@@ -176,7 +182,12 @@ function coverWidthClass(book: BookCard): string {
       <div class="flex w-max flex-col gap-5">
         <div v-for="(band, bandIndex) in bands" :key="bandIndex" data-testid="shelf-band" class="flex items-end gap-5">
           <div v-for="book in band" :key="book.id" class="shrink-0" :class="coverWidthClass(book)">
-            <BookCoverCard :book="book" :cover-aspect-ratio="book.coverAspectRatio" @action="handleBookAction(book, $event)" />
+            <BookCoverCard
+              :book="book"
+              :cover-aspect-ratio="shelfCoverAspectRatio(book)"
+              :media-kind="shelfMediaKind"
+              @action="handleBookAction(book, $event)"
+            />
           </div>
         </div>
       </div>

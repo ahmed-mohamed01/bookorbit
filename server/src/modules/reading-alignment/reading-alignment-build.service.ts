@@ -1,11 +1,12 @@
 import { basename } from 'path';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { describeError } from './reading-alignment-error.util';
 import type { RequestUser } from '../../common/types/request-user';
 import { appConfig } from '../../config/config';
+import { JobChangesService } from '../jobs/job-changes.service';
 import { EpubService } from '../reader/epub/epub.service';
 import { absoluteSecondsToFilePosition, buildAudioTimeline } from '../../common/utils/audio-timeline.utils';
 import { audioContentHashOf, epubContentHashOf } from './reading-alignment-content-hash.util';
@@ -59,6 +60,7 @@ export class ReadingAlignmentBuildService {
     private readonly whisper: WhisperService,
     private readonly epub: EpubService,
     private readonly pairService: ReadingAlignmentPairService,
+    @Optional() private readonly jobChanges?: JobChangesService,
   ) {}
 
   async buildAlignment(bookId: number, user: RequestUser, force = false): Promise<void> {
@@ -105,6 +107,7 @@ export class ReadingAlignmentBuildService {
     } finally {
       this.inFlight.delete(key);
       settle();
+      this.changed(true);
     }
   }
 
@@ -240,6 +243,7 @@ export class ReadingAlignmentBuildService {
         error: null,
       });
       alignmentId = alignment.id;
+      this.changed(true);
       if (!resuming) await this.repo.clearAnchors(alignmentId);
 
       const spines: SpineText[] = await this.epub.extractSpineText(textBookId, ebook.id, user);
@@ -302,6 +306,7 @@ export class ReadingAlignmentBuildService {
           }
         }
         await this.repo.updateAlignmentProgress(alignmentId, { samplesDone: i + 1, anchorCount });
+        this.changed(false);
       }
       // A cancel after the last clip must not turn the row the cancel is deleting into a terminal one.
       if (signal.aborted) {
@@ -346,6 +351,10 @@ export class ReadingAlignmentBuildService {
       );
       throw error instanceof Error ? error : new Error(message);
     }
+  }
+
+  private changed(state: boolean): void {
+    this.jobChanges?.notify({ type: 'whisper-alignment', ownerId: null, state });
   }
 
   // Nothing is written back: the cancel path owns the row and deletes it.

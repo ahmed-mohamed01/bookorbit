@@ -25,7 +25,7 @@ export interface CoverThumbnailBackfillState {
   /** Runs after start-up and daily. "Run now" works either way. */
   enabled: boolean;
   /** Counts so far while a run is going, otherwise null. */
-  running: (CoverThumbnailBackfillCounts & { trigger: CoverThumbnailBackfillTrigger; startedAt: string }) | null;
+  running: (CoverThumbnailBackfillCounts & { trigger: CoverThumbnailBackfillTrigger; startedAt: string; total: number | null }) | null;
   lastRun: CoverThumbnailBackfillRun | null;
 }
 

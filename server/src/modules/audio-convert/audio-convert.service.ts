@@ -8,9 +8,10 @@ import {
   type AudioConvertSettings,
   type AudioConvertStatus,
 } from '@bookorbit/types';
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import type { RequestUser } from '../../common/types/request-user';
 import { BookService } from '../book/book.service';
+import { JobChangesService } from '../jobs/job-changes.service';
 import { AudioConvertConverterService } from './audio-convert-converter.service';
 import { AudioConvertQueueService } from './audio-convert-queue.service';
 import { AudioConvertRepository, toJob } from './audio-convert.repository';
@@ -24,6 +25,7 @@ export class AudioConvertService {
     private readonly converter: AudioConvertConverterService,
     private readonly queue: AudioConvertQueueService,
     private readonly books: BookService,
+    @Optional() private readonly jobChanges?: JobChangesService,
   ) {}
 
   // ── Settings ──────────────────────────────────────────────────────────────
@@ -74,6 +76,7 @@ export class AudioConvertService {
       const job = await this.repo.createJob({ bookId, libraryId, userId: user.id, trigger: 'manual', status: 'queued', stage: 'ready', ...encoder });
       if (job) queued++;
     }
+    if (queued > 0) this.changed(user.id);
     return { queued, skipped: ids.length - queued };
   }
 
@@ -84,7 +87,9 @@ export class AudioConvertService {
 
   /** Cancels queued jobs; the running one finishes and new books waiting in the pipeline carry on. */
   async stop(libraryId: number): Promise<{ cancelled: number }> {
-    return { cancelled: await this.repo.cancelQueuedInLibrary(libraryId) };
+    const cancelled = await this.repo.cancelQueuedInLibrary(libraryId);
+    if (cancelled > 0) this.changed(null);
+    return { cancelled };
   }
 
   // ── Book ──────────────────────────────────────────────────────────────────
@@ -112,6 +117,7 @@ export class AudioConvertService {
       ...encoderFor(dto, settings),
     });
     if (!job) throw new ConflictException('A conversion is already queued for this book');
+    this.changed(user.id);
     return toJob(job, book.title);
   }
 
@@ -120,7 +126,10 @@ export class AudioConvertService {
     const latest = await this.repo.latestJob(bookId);
     if (!latest) return { cancelled: false };
     if (latest.status === 'running') return { cancelled: this.queue.cancelRunning(latest.id) };
-    if (await this.repo.cancelPendingJob(latest.id)) return { cancelled: true };
+    if (await this.repo.cancelPendingJob(latest.id)) {
+      this.changed(latest.userId);
+      return { cancelled: true };
+    }
     // The worker claimed it between the read and the cancel.
     const now = await this.repo.findJob(latest.id);
     return { cancelled: now?.status === 'running' ? this.queue.cancelRunning(latest.id) : false };
@@ -137,6 +146,7 @@ export class AudioConvertService {
       finishedAt: new Date(),
     });
     if (!row) throw new ConflictException('This conversion has already started');
+    this.changed(row.userId);
     return this.withTitle(row.id);
   }
 
@@ -148,6 +158,7 @@ export class AudioConvertService {
       if (now?.status === 'waiting') throw new ConflictException('Chapters are being looked up for this book; it is queued as soon as that finishes');
       throw new ConflictException('This conversion is not waiting');
     }
+    this.changed(row.userId);
     return this.withTitle(row.id);
   }
 
@@ -162,6 +173,11 @@ export class AudioConvertService {
     const job = await this.repo.jobWithTitle(jobId);
     if (!job) throw new NotFoundException('Conversion not found');
     return job;
+  }
+
+  /** Tells the Jobs area; `state` false when only progress moved. */
+  private changed(ownerId: number | null, state = true): void {
+    this.jobChanges?.notify({ type: 'audio-convert', ownerId, state });
   }
 
   private async requireEnabled(): Promise<AudioConvertSettingsRow> {

@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import {
   languageSubtagOf,
@@ -28,6 +28,7 @@ import {
   READ_ALOUD_UNREACHABLE_BACKOFF_MS,
   READ_ALOUD_UNREACHABLE_WINDOW_MS,
 } from '../read-aloud/read-aloud.constants';
+import { JobChangesService } from '../jobs/job-changes.service';
 import { buildEpubMediaOverlayPlaylistFromFile } from '../reader/epub/epub-media-overlay';
 import { EDITION_SYNC_MAX_ATTEMPTS, EDITION_SYNC_PROGRESS_WRITE_MS } from './edition-sync.constants';
 import { EditionSyncIndexStoreService } from './edition-sync-index-store.service';
@@ -50,6 +51,7 @@ export class EditionSyncIndexerService {
     private readonly playOrder: AudioPlayOrderService,
     private readonly overlaySource: EditionSyncOverlaySourceService,
     @Inject(readAloudConfig.KEY) private readonly config: ConfigType<typeof readAloudConfig>,
+    @Optional() private readonly jobChanges?: JobChangesService,
   ) {}
 
   get currentWorkerJobId(): string | null {
@@ -191,6 +193,7 @@ export class EditionSyncIndexerService {
       return outcome('failed', code, message);
     } finally {
       this.active = null;
+      this.jobChanges?.notify({ type: 'edition-sync', ownerId: null, state: true });
     }
   }
 
@@ -223,6 +226,7 @@ export class EditionSyncIndexerService {
         if (Date.now() - lastWrite >= EDITION_SYNC_PROGRESS_WRITE_MS) {
           await this.repo.updateIndexRow(claim.bookId, { stage: state.stage, progress: Math.round(state.progress) });
           lastWrite = Date.now();
+          this.jobChanges?.notify({ type: 'edition-sync', ownerId: null, state: false });
         }
       } catch (error) {
         if (error instanceof WorkerJobNotFoundError) {

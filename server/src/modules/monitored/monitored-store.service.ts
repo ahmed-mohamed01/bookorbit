@@ -2,7 +2,7 @@ import { StatsCache } from '../../common/cache/stats-cache';
 import { assertOffsetWithinLimit } from '../../common/constants/pagination.constants';
 import { randomUUID } from 'node:crypto';
 
-import { ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, Logger, NotFoundException, Optional, type OnModuleDestroy } from '@nestjs/common';
 import { and, asc, count, desc, eq, inArray, ne, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
@@ -44,6 +44,7 @@ import { chunk } from '../../common/utils/batch.utils';
 import { normalizeMetadataText } from '../../common/utils/metadata-text-normalize.utils';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
+import { JobChangesService } from '../jobs/job-changes.service';
 import { dueForAutomaticFetchSql } from './monitored-fetch-due';
 import { identityLikePattern, identityLikeRun, normalizeMonitoredName, titleAuthorKey } from './monitored-text.utils';
 import { enrolReleaseProbes, reapplyReleaseOverlay } from './monitored-release-probe-store.service';
@@ -67,6 +68,13 @@ import * as schema from './schema/monitored.schema';
 import type { AuthorCatalogWorkRow, MonitoredAuthorRow, MonitoredAuthorWorkRow, MonitoredMatchOverrideRow } from './schema/monitored.schema';
 
 const WRITE_BATCH_SIZE = 250;
+const FETCH_CHANGE = { id: schema.monitoredAuthors.id, ownerUserId: schema.monitoredAuthors.ownerUserId };
+/**
+ * The shortest gap between two Watchlist state notes for one owner. The Jobs gateway sends a state
+ * note to everyone who sees the type, so one owner refreshing thousands of authors would otherwise
+ * make every Watchlist viewer re-read the Jobs summary every second for hours.
+ */
+export const WATCHLIST_FETCH_NOTIFY_INTERVAL_MS = 10_000;
 /** The OR arms the identity prefilter may spend on one candidate list, so a query stays bounded. */
 const IDENTITY_LIKE_MAX_RUNS = 10;
 
@@ -286,13 +294,16 @@ function releaseDueSql(date: AnyPgColumn, precision: AnyPgColumn, addedDay: stri
 export type MonitoredWorkSearchRow = Omit<MonitoredWorkSearchItem, 'isOwner'> & { ownerUserId: number };
 
 @Injectable()
-export class MonitoredStoreService {
+export class MonitoredStoreService implements OnModuleDestroy {
   private readonly summaryCache = new StatsCache({ ttlMs: 60_000, maxEntries: 2000 });
   private readonly logger = new Logger(MonitoredStoreService.name);
+  /** Owners noted within the last interval, and whether another transition is waiting for its end. */
+  private readonly fetchNotes = new Map<number, { timer: ReturnType<typeof setTimeout>; pending: boolean }>();
 
   constructor(
     @Inject(DB) private readonly db: Db,
     private readonly libraries: LibraryService,
+    @Optional() private readonly jobChanges?: JobChangesService,
   ) {}
 
   async findMissingTables(tableNames: readonly string[]): Promise<string[]> {
@@ -993,6 +1004,7 @@ export class MonitoredStoreService {
           );
           if (identities.length) await tx.insert(schema.authorProviderIdentities).values(identities);
         });
+        if (input.fetchState === 'queued') this.fetchChanged([input.ownerUserId]);
         return {
           id,
           ownerUserId: input.ownerUserId,
@@ -1012,19 +1024,19 @@ export class MonitoredStoreService {
   async markFetchQueued(monitorId: string): Promise<boolean> {
     const rows = await this.db
       .update(schema.monitoredAuthors)
-      .set({ fetchState: 'queued', fetchErrorKind: null, fetchErrorAt: null, fetchRetryAt: null })
+      .set({ fetchState: 'queued', fetchErrorKind: null, fetchErrorAt: null, fetchRetryAt: null, fetchQueuedAt: new Date(), fetchStartedAt: null })
       .where(and(eq(schema.monitoredAuthors.id, monitorId), inArray(schema.monitoredAuthors.fetchState, ['idle', 'failed'])))
-      .returning({ id: schema.monitoredAuthors.id });
-    return rows.length > 0;
+      .returning(FETCH_CHANGE);
+    return this.fetchChanged(rows.map((row) => row.ownerUserId));
   }
 
   async claimFetch(monitorId: string): Promise<boolean> {
     const rows = await this.db
       .update(schema.monitoredAuthors)
-      .set({ fetchState: 'fetching' })
+      .set({ fetchState: 'fetching', fetchStartedAt: new Date() })
       .where(and(eq(schema.monitoredAuthors.id, monitorId), eq(schema.monitoredAuthors.fetchState, 'queued')))
-      .returning({ id: schema.monitoredAuthors.id });
-    return rows.length > 0;
+      .returning(FETCH_CHANGE);
+    return this.fetchChanged(rows.map((row) => row.ownerUserId));
   }
 
   async releaseFetch(monitorId: string): Promise<boolean> {
@@ -1032,15 +1044,15 @@ export class MonitoredStoreService {
       .update(schema.monitoredAuthors)
       .set({ fetchState: 'idle' })
       .where(and(eq(schema.monitoredAuthors.id, monitorId), eq(schema.monitoredAuthors.fetchState, 'fetching')))
-      .returning({ id: schema.monitoredAuthors.id });
-    return rows.length > 0;
+      .returning(FETCH_CHANGE);
+    return this.fetchChanged(rows.map((row) => row.ownerUserId));
   }
 
   async finishFetchSucceeded(
     monitorId: string,
     fields: { lastRefreshedAt: string; hardcoverAuthorId: string | null; localAuthorId: number | null },
   ): Promise<boolean> {
-    return this.db.transaction(async (tx) => {
+    const owners = await this.db.transaction(async (tx) => {
       const rows = await tx
         .update(schema.monitoredAuthors)
         .set({
@@ -1053,8 +1065,8 @@ export class MonitoredStoreService {
           ...(fields.localAuthorId !== null ? { localAuthorId: fields.localAuthorId } : {}),
         })
         .where(and(eq(schema.monitoredAuthors.id, monitorId), eq(schema.monitoredAuthors.fetchState, 'fetching')))
-        .returning({ id: schema.monitoredAuthors.id });
-      if (!rows.length) return false;
+        .returning(FETCH_CHANGE);
+      if (!rows.length) return [];
       if (fields.hardcoverAuthorId !== null) {
         await tx
           .insert(schema.authorProviderIdentities)
@@ -1064,8 +1076,9 @@ export class MonitoredStoreService {
             set: { providerId: fields.hardcoverAuthorId },
           });
       }
-      return true;
+      return rows.map((row) => row.ownerUserId);
     });
+    return this.fetchChanged(owners);
   }
 
   async finishFetchFailed(
@@ -1082,16 +1095,17 @@ export class MonitoredStoreService {
         fetchAttempts: Math.min(failure.attempts, 3),
       })
       .where(and(eq(schema.monitoredAuthors.id, monitorId), eq(schema.monitoredAuthors.fetchState, 'fetching')))
-      .returning({ id: schema.monitoredAuthors.id });
-    return rows.length > 0;
+      .returning(FETCH_CHANGE);
+    return this.fetchChanged(rows.map((row) => row.ownerUserId));
   }
 
   async resetInterruptedFetches(): Promise<number> {
     const rows = await this.db
       .update(schema.monitoredAuthors)
-      .set({ fetchState: 'queued' })
+      .set({ fetchState: 'queued', fetchStartedAt: null })
       .where(eq(schema.monitoredAuthors.fetchState, 'fetching'))
-      .returning({ id: schema.monitoredAuthors.id });
+      .returning(FETCH_CHANGE);
+    this.fetchChanged(rows.map((row) => row.ownerUserId));
     return rows.length;
   }
 
@@ -1153,7 +1167,8 @@ export class MonitoredStoreService {
   }
 
   async removeAuthor(id: string, actor?: RequestUser): Promise<boolean> {
-    return this.invalidatingSummary(await this.ownerOf('author', id), async () => {
+    const owner = await this.ownerOf('author', id);
+    return this.invalidatingSummary(owner, async () => {
       const startedAt = Date.now();
       this.logger.log(`[monitored.store.remove_author] [start] monitorId="${sanitizeLogValue(id)}" - monitored author cascade started`);
       try {
@@ -1163,6 +1178,7 @@ export class MonitoredStoreService {
           .where(eq(schema.monitoredAuthors.id, id))
           .returning({ id: schema.monitoredAuthors.id });
         if (!result.length) throw new NotFoundException('Monitored author not found');
+        if (owner !== null) this.fetchChanged([owner]);
         this.logger.log(
           `[monitored.store.remove_author] [end] monitorId="${sanitizeLogValue(id)}" durationMs=${Date.now() - startedAt} deleted=1 - monitored author cascade completed`,
         );
@@ -2460,7 +2476,9 @@ export class MonitoredStoreService {
       authorName: author.authorName,
       localAuthorId: author.localAuthorId,
       paused: author.paused,
-      ...(author.fetchState !== undefined ? { fetchState: author.fetchState } : {}),
+      ...(author.fetchState !== undefined
+        ? { fetchState: author.fetchState, fetchQueuedAt: author.fetchState === 'queued' ? new Date() : null }
+        : {}),
       ebookMode: author.formats.ebook.mode,
       ebookLibraryId: author.formats.ebook.libraryId,
       ebookFolderId: author.formats.ebook.folderId,
@@ -2582,6 +2600,41 @@ export class MonitoredStoreService {
       paused: row.paused,
       addedAt: row.addedAt.toISOString(),
     };
+  }
+
+  onModuleDestroy(): void {
+    for (const note of this.fetchNotes.values()) clearTimeout(note.timer);
+    this.fetchNotes.clear();
+  }
+
+  /** Every fetch transition is a Watchlist update moving in the Jobs area; true when a row moved. */
+  private fetchChanged(owners: readonly number[]): boolean {
+    for (const ownerId of new Set(owners)) this.noteFetch(ownerId);
+    return owners.length > 0;
+  }
+
+  /** The first transition is noted at once; later ones within the interval fold into one note at its end. */
+  private noteFetch(ownerId: number): void {
+    if (!this.jobChanges) return;
+    const open = this.fetchNotes.get(ownerId);
+    if (open) {
+      open.pending = true;
+      return;
+    }
+    this.jobChanges.notify({ type: 'watchlist-fetch', ownerId, state: true });
+    this.openFetchNote(ownerId);
+  }
+
+  private openFetchNote(ownerId: number): void {
+    const timer = setTimeout(() => {
+      const pending = this.fetchNotes.get(ownerId)?.pending === true;
+      this.fetchNotes.delete(ownerId);
+      if (!pending) return;
+      this.jobChanges?.notify({ type: 'watchlist-fetch', ownerId, state: true });
+      this.openFetchNote(ownerId);
+    }, WATCHLIST_FETCH_NOTIFY_INTERVAL_MS);
+    timer.unref?.();
+    this.fetchNotes.set(ownerId, { timer, pending: false });
   }
 
   private readScope(user: RequestUser, owner: AnyPgColumn) {

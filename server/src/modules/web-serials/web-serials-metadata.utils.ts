@@ -24,7 +24,7 @@ export interface UnitMetadataInput {
 
 /**
  * The range a short LNReader volume (`volume-20:1901-1950`), the last lightnovel-crawler volume (`<volume id>:101-150`)
- * or the growing volume of an ongoing manga (`vol:12:100-103`) carries in its key. Its title shows it: the Book Dock
+ * or the growing volume of an ongoing manga (`vol:12:100-103`) carries in its key. Its title shows it: the Library Dock
  * refuses a second book of the same title, and a grown copy is one.
  */
 export function growingVolumeRange(unitKey: string, seriesKey = ''): string | null {

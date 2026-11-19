@@ -5,6 +5,7 @@ import { validate } from 'class-validator';
 
 import type { RequestUser } from '../../common/types/request-user';
 import { BookService } from '../book/book.service';
+import { JobChangesService } from '../jobs/job-changes.service';
 import { AudioConvertConverterService } from './audio-convert-converter.service';
 import { AudioConvertQueueService } from './audio-convert-queue.service';
 import { AudioConvertRepository } from './audio-convert.repository';
@@ -44,6 +45,7 @@ async function setup() {
   };
   const queue = { cancelRunning: vi.fn().mockReturnValue(true) };
   const books = { verifyBookAccess: vi.fn().mockResolvedValue(undefined) };
+  const jobChanges = { notify: vi.fn() };
   const module = await Test.createTestingModule({
     providers: [
       AudioConvertService,
@@ -51,9 +53,10 @@ async function setup() {
       { provide: AudioConvertConverterService, useValue: { plan: vi.fn() } },
       { provide: AudioConvertQueueService, useValue: queue },
       { provide: BookService, useValue: books },
+      { provide: JobChangesService, useValue: jobChanges },
     ],
   }).compile();
-  return { service: module.get(AudioConvertService), repo, queue };
+  return { service: module.get(AudioConvertService), repo, queue, jobChanges };
 }
 
 describe('AudioConvertService', () => {
@@ -126,5 +129,19 @@ describe('audio convert DTOs', () => {
     expect(await errors(AudioConvertRunDto, { search: 'dune', excludeBookIds: [1] })).toEqual([]);
     expect(await errors(AudioConvertEncoderDto, {})).toEqual([]);
     expect(await errors(AudioConvertEncoderDto, { codec: null })).toEqual(['codec']);
+  });
+
+  it('tells the Jobs area when it queues or cancels conversions, and not when nothing changed', async () => {
+    const { service, repo, jobChanges } = await setup();
+    await service.run(7, {}, manager);
+    expect(jobChanges.notify).toHaveBeenLastCalledWith({ type: 'audio-convert', ownerId: manager.id, state: true });
+    await service.stop(7);
+    expect(jobChanges.notify).toHaveBeenLastCalledWith({ type: 'audio-convert', ownerId: null, state: true });
+    jobChanges.notify.mockClear();
+    repo.cancelQueuedInLibrary.mockResolvedValueOnce(0);
+    repo.createJob.mockResolvedValue(null);
+    await service.stop(7);
+    await service.run(7, {}, manager);
+    expect(jobChanges.notify).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import type {
@@ -15,6 +15,7 @@ import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { AppSettingsService } from '../app-settings/app-settings.service';
 import { BookCoverStore } from '../book-cover-store/book-cover-store.service';
+import { JobChangesService } from '../jobs/job-changes.service';
 import { CoverThumbnailBackfillRepository, type ThumbnailBackfillCursor } from './cover-thumbnail-backfill.repository';
 
 export const THUMBNAIL_BACKFILL_STARTUP_DELAY_MS = 2 * 60 * 1000;
@@ -23,7 +24,12 @@ export const THUMBNAIL_BACKFILL_ENABLED_KEY = 'fork_cover_thumbnail_backfill_ena
 export const THUMBNAIL_BACKFILL_LAST_RUN_KEY = 'fork_cover_thumbnail_backfill_last_run';
 const THUMBNAIL_BACKFILL_CRON = '0 30 4 * * *';
 
-type ActiveRun = CoverThumbnailBackfillCounts & { trigger: CoverThumbnailBackfillTrigger; startedAt: string; cancelled: boolean };
+type ActiveRun = CoverThumbnailBackfillCounts & {
+  trigger: CoverThumbnailBackfillTrigger;
+  startedAt: string;
+  total: number | null;
+  cancelled: boolean;
+};
 
 /**
  * Makes thumbnails that are missing beside a cover before a client asks for them, so a library
@@ -44,6 +50,7 @@ export class CoverThumbnailBackfillService implements OnApplicationBootstrap, On
     private readonly repository: CoverThumbnailBackfillRepository,
     private readonly store: BookCoverStore,
     private readonly appSettings: AppSettingsService,
+    @Optional() private readonly jobChanges?: JobChangesService,
   ) {
     this.appDataPath = config.getOrThrow<string>('storage.appDataPath');
   }
@@ -77,6 +84,7 @@ export class CoverThumbnailBackfillService implements OnApplicationBootstrap, On
         ? {
             trigger: active.trigger,
             startedAt: active.startedAt,
+            total: active.total,
             scanned: active.scanned,
             missing: active.missing,
             made: active.made,
@@ -107,16 +115,26 @@ export class CoverThumbnailBackfillService implements OnApplicationBootstrap, On
     return this.getState();
   }
 
+  /** Stops the run that is going, leaving the switch as it is. False when nothing is running or it is already stopping. */
+  stopRun(user: RequestUser): boolean {
+    const active = this.active;
+    if (!active || active.cancelled) return false;
+    active.cancelled = true;
+    this.logger.log(`[cover.thumbnail_backfill_settings] [end] userId=${user.id} action=stop - backfill run stop requested`);
+    return true;
+  }
+
   async run(trigger: CoverThumbnailBackfillTrigger): Promise<CoverThumbnailBackfillRun | null> {
     if (this.destroyed) return null;
     if (this.activePromise) return null;
-    this.active = { trigger, startedAt: new Date().toISOString(), scanned: 0, missing: 0, made: 0, unresolved: 0, cancelled: false };
+    this.active = { trigger, startedAt: new Date().toISOString(), total: null, scanned: 0, missing: 0, made: 0, unresolved: 0, cancelled: false };
     this.activePromise = this.execute(this.active);
     try {
       return await this.activePromise;
     } finally {
       this.active = null;
       this.activePromise = null;
+      this.changed(true);
     }
   }
 
@@ -133,7 +151,9 @@ export class CoverThumbnailBackfillService implements OnApplicationBootstrap, On
   private async execute(active: ActiveRun): Promise<CoverThumbnailBackfillRun | null> {
     const startedAt = Date.now();
     this.logger.log(`[cover.thumbnail_backfill] [start] trigger=${active.trigger} - thumbnail backfill started`);
+    this.changed(true);
     try {
+      active.total = await this.repository.countServedSlots();
       let cursor: ThumbnailBackfillCursor | null = null;
       while (!active.cancelled) {
         const slots = await this.repository.servedSlotsAfter(cursor, THUMBNAIL_BACKFILL_PAGE_SIZE);
@@ -145,6 +165,7 @@ export class CoverThumbnailBackfillService implements OnApplicationBootstrap, On
           if (await this.store.ensureSlotThumbnail(slot.bookId, slot.medium)) active.made++;
           else active.unresolved++;
         }
+        this.changed(false);
         if (slots.length < THUMBNAIL_BACKFILL_PAGE_SIZE) break;
         cursor = slots[slots.length - 1];
       }
@@ -175,6 +196,10 @@ export class CoverThumbnailBackfillService implements OnApplicationBootstrap, On
     };
     await this.appSettings.setValue(THUMBNAIL_BACKFILL_LAST_RUN_KEY, JSON.stringify(run));
     return run;
+  }
+
+  private changed(state: boolean): void {
+    this.jobChanges?.notify({ type: 'cover-thumbnail-backfill', ownerId: null, state });
   }
 
   private logFail(trigger: CoverThumbnailBackfillTrigger, startedAt: number, counts: CoverThumbnailBackfillCounts | null, error: unknown): void {

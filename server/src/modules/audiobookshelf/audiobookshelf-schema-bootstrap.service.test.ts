@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { Logger } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -56,6 +57,33 @@ describe('AudiobookshelfSchemaBootstrapService', () => {
 
     expect(logSpy).not.toHaveBeenCalled();
     expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it('only restores the missing upstream Audible ID index after migration 0158', async () => {
+    const { service, repo } = createService();
+    const migration = readFileSync(new URL('../../db/migrations/0158_add_book_metadata_edition_id_indexes.sql', import.meta.url), 'utf8');
+    const upstreamIndex = migration
+      .split('--> statement-breakpoint')
+      .find((statement) => statement.includes('"bm_audible_id_idx"'))!
+      .trim();
+
+    await service.onApplicationBootstrap();
+
+    const statements = repo.applySchemaStatements.mock.calls[0]![0] as string[];
+    const indexStatements = statements.filter((statement) => /\bbm_audible_id_idx\b/i.test(statement));
+    expect(indexStatements.map((statement) => statement.replace(/^--[^\n]*\n/, ''))).toEqual([
+      `DO $$ BEGIN
+\tIF EXISTS (
+\t\tSELECT 1 FROM pg_indexes
+\t\tWHERE schemaname = 'public' AND tablename = 'book_metadata' AND indexname = 'bm_google_books_id_idx'
+\t) AND NOT EXISTS (
+\t\tSELECT 1 FROM pg_indexes
+\t\tWHERE schemaname = 'public' AND tablename = 'book_metadata' AND indexname = 'bm_audible_id_idx'
+\t) THEN
+\t\t${upstreamIndex}
+\tEND IF;
+END $$;`,
+    ]);
   });
 
   it('logs the number of tables created when tables were missing', async () => {

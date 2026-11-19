@@ -3,8 +3,28 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AudioConvertJob, AudioConvertPreviewPage, AudioConvertStatus } from '@bookorbit/types'
 
+import { JOB_TYPE_FALLBACK_POLL_MS, JOB_TYPE_REFRESH_GAP_MS } from '@/features/jobs/lib/follow-job-type'
+
 import * as api from '../../api/audio-convert'
 import { useAudioConvert } from '../useAudioConvert'
+
+const socket = vi.hoisted(() => ({
+  listener: null as null | { changed: (event: { type: string; state: boolean }) => void; live: (live: boolean) => void },
+  connected: true,
+  stop: vi.fn<() => void>(),
+}))
+
+vi.mock('@/features/jobs/lib/jobs-socket', () => ({
+  listenToJobs: (listener: NonNullable<typeof socket.listener>) => {
+    socket.listener = listener
+    if (socket.connected) listener.live(true)
+    return socket.stop
+  },
+}))
+
+function push(state: boolean, type = 'audio-convert'): void {
+  socket.listener?.changed({ type, state })
+}
 
 vi.mock('../../api/audio-convert', () => {
   class AudioConvertHttpError extends Error {
@@ -79,6 +99,8 @@ function setup() {
 
 beforeEach(() => {
   vi.useFakeTimers()
+  socket.listener = null
+  socket.connected = true
   fetchPreview.mockResolvedValue(page())
   fetchStatus.mockResolvedValue(status([]))
 })
@@ -119,7 +141,7 @@ describe('useAudioConvert', () => {
     expect(audio.previewError.value).toEqual({ code: 'http', status: 500 })
   })
 
-  it('polls every two seconds while jobs are active and stops when idle', async () => {
+  it('refreshes when a convert job changes status and reloads the list once one finishes', async () => {
     fetchStatus.mockResolvedValueOnce(status([job('a', 'running')])).mockResolvedValueOnce(status([job('a', 'success')]))
     const audio = setup()
     audio.selectLibrary(7)
@@ -127,24 +149,48 @@ describe('useAudioConvert', () => {
     expect(audio.statusReady.value).toBe(true)
     expect(fetchStatus).toHaveBeenCalledTimes(1)
 
-    await vi.advanceTimersByTimeAsync(2000)
+    push(true)
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_REFRESH_GAP_MS)
     expect(fetchStatus).toHaveBeenCalledTimes(2)
     // The finished job moves its book to another scope, so the list reloads.
     expect(fetchPreview).toHaveBeenCalled()
 
-    await vi.advanceTimersByTimeAsync(6000)
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_FALLBACK_POLL_MS * 2)
     expect(fetchStatus).toHaveBeenCalledTimes(2)
   })
 
-  it('polls a library with only waiting jobs every thirty seconds', async () => {
+  it('follows progress only while a job runs and ignores other job types', async () => {
     fetchStatus.mockResolvedValue(status([job('w', 'waiting')]))
     const audio = setup()
     audio.selectLibrary(7)
     await audio.refreshStatus()
 
-    await vi.advanceTimersByTimeAsync(29_000)
+    push(false)
+    push(true, 'web-serial')
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_REFRESH_GAP_MS * 2)
     expect(fetchStatus).toHaveBeenCalledTimes(1)
-    await vi.advanceTimersByTimeAsync(1000)
+
+    fetchStatus.mockResolvedValue(status([job('w', 'running')]))
+    push(true)
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_REFRESH_GAP_MS)
+    push(false)
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_REFRESH_GAP_MS)
+    expect(fetchStatus).toHaveBeenCalledTimes(3)
+  })
+
+  it('polls slowly while the jobs socket is down and stops on unmount', async () => {
+    socket.connected = false
+    const audio = setup()
+    audio.selectLibrary(7)
+    await audio.refreshStatus()
+
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_FALLBACK_POLL_MS + JOB_TYPE_REFRESH_GAP_MS)
+    expect(fetchStatus).toHaveBeenCalledTimes(2)
+
+    wrapper?.unmount()
+    wrapper = null
+    expect(socket.stop).toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_FALLBACK_POLL_MS * 2)
     expect(fetchStatus).toHaveBeenCalledTimes(2)
   })
 
@@ -155,7 +201,8 @@ describe('useAudioConvert', () => {
     await audio.refreshStatus()
     expect(fetchPreview).not.toHaveBeenCalled()
 
-    await vi.advanceTimersByTimeAsync(2000)
+    push(true)
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_REFRESH_GAP_MS)
     expect(fetchPreview).toHaveBeenCalledTimes(1)
   })
 

@@ -15,10 +15,23 @@ vi.mock('../../api/cover-thumbnails', async (importOriginal) => ({
   updateBackfill: mocks.update,
   runBackfill: mocks.run,
 }))
+const socket = vi.hoisted(() => ({
+  listener: null as null | { changed: (event: { type: string; state: boolean }) => void; live: (live: boolean) => void },
+  stop: vi.fn<() => void>(),
+}))
+
+vi.mock('@/features/jobs/lib/jobs-socket', () => ({
+  listenToJobs: (listener: NonNullable<typeof socket.listener>) => {
+    socket.listener = listener
+    listener.live(true)
+    return socket.stop
+  },
+}))
+
 vi.mock('vue-sonner', () => ({ toast: { success: vi.fn<(message: string) => void>(), error: mocks.toastError } }))
 
 import CoverThumbnailBackfillSettings from '../CoverThumbnailBackfillSettings.vue'
-import { BACKFILL_POLL_MS } from '../../composables/useCoverThumbnailBackfill'
+import { JOB_TYPE_REFRESH_GAP_MS } from '@/features/jobs/lib/follow-job-type'
 
 const IDLE: CoverThumbnailBackfillState = {
   enabled: true,
@@ -38,7 +51,7 @@ const IDLE: CoverThumbnailBackfillState = {
 
 const RUNNING: CoverThumbnailBackfillState = {
   ...IDLE,
-  running: { trigger: 'manual', startedAt: new Date().toISOString(), scanned: 10, missing: 3, made: 2, unresolved: 0 },
+  running: { trigger: 'manual', startedAt: new Date().toISOString(), total: 1200, scanned: 10, missing: 3, made: 2, unresolved: 0 },
 }
 
 async function mountSection() {
@@ -50,6 +63,8 @@ async function mountSection() {
 describe('CoverThumbnailBackfillSettings', () => {
   beforeEach(() => {
     Object.values(mocks).forEach((mock) => mock.mockReset())
+    socket.listener = null
+    socket.stop.mockReset()
     mocks.fetchState.mockResolvedValue(IDLE)
   })
 
@@ -85,7 +100,7 @@ describe('CoverThumbnailBackfillSettings', () => {
     expect(wrapper.get('[data-testid="cover-thumbnail-backfill-toggle"]').attributes('aria-checked')).toBe('false')
   })
 
-  it('starts a run, shows its progress and polls until it finishes', async () => {
+  it('starts a run, shows its progress and refreshes on the Jobs push until it finishes', async () => {
     vi.useFakeTimers()
     mocks.run.mockResolvedValue(RUNNING)
     const wrapper = await mountSection()
@@ -97,11 +112,18 @@ describe('CoverThumbnailBackfillSettings', () => {
     expect(wrapper.get('[data-testid="cover-thumbnail-backfill-run"]').attributes('disabled')).toBeDefined()
 
     mocks.fetchState.mockResolvedValue(IDLE)
-    await vi.advanceTimersByTimeAsync(BACKFILL_POLL_MS)
+    socket.listener?.changed({ type: 'web-serial', state: true })
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_REFRESH_GAP_MS)
+    expect(mocks.fetchState).toHaveBeenCalledTimes(1)
+
+    socket.listener?.changed({ type: 'cover-thumbnail-backfill', state: true })
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_REFRESH_GAP_MS)
     await flushPromises()
 
+    expect(mocks.fetchState).toHaveBeenCalledTimes(2)
     expect(wrapper.get('[data-testid="cover-thumbnail-backfill-status"]').text()).toContain('38 made')
     expect(wrapper.get('[data-testid="cover-thumbnail-backfill-run"]').attributes('disabled')).toBeUndefined()
+    expect(socket.stop).toHaveBeenCalled()
     wrapper.unmount()
   })
 

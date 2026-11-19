@@ -35,6 +35,7 @@ export class EditionSyncSettingsService {
   async upsertSettings(user: RequestUser, payload: UpsertEditionSyncSettingsPayload): Promise<EditionSyncSettings> {
     const row = await this.repo.upsertUserSettings(user.id, { enabled: payload.enabled, bookSyncMode: payload.bookSyncMode });
     this.overlaySource.invalidate(user.id);
+    this.scheduler.changed();
     return this.toSettings(user, row);
   }
 
@@ -58,6 +59,7 @@ export class EditionSyncSettingsService {
       if (enabledChanged) this.overlaySource.invalidate();
       const registered = this.scheduler.syncSchedule(row.cronExpression, row.enabled);
       if (enabledChanged && !row.enabled) await this.scheduler.stop();
+      if (enabledChanged) this.scheduler.changed();
       this.logger.log(
         `[${event}] [end] userId=${user.id} durationMs=${Date.now() - startedAt} enabled=${row.enabled} cron="${sanitizeLogValue(row.cronExpression ?? 'never')}" runHours=${row.runHours} onFilesChanged=${row.onFilesChanged} scheduleRegistered=${registered} - admin settings updated`,
       );

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { effectScope, ref } from 'vue'
+import { effectScope, nextTick, ref } from 'vue'
 import type { EditionSyncBookListItem, EditionSyncBookListQuery, EditionSyncBookListResponse, EditionSyncBookState } from '@bookorbit/types'
 import { editionSyncState } from '@/features/book/lib/__tests__/sync-fixtures'
 
@@ -13,6 +13,23 @@ const mocks = vi.hoisted(() => ({
   toastSuccess: vi.fn<(message: string) => void>(),
 }))
 
+const socket = vi.hoisted(() => ({
+  listener: null as null | { changed: (event: { type: string; state: boolean }) => void; live: (live: boolean) => void },
+  live: true,
+  stop: vi.fn<() => void>(),
+}))
+
+vi.mock('@/features/jobs/lib/jobs-socket', () => ({
+  listenToJobs: (listener: NonNullable<typeof socket.listener>) => {
+    socket.listener = listener
+    if (socket.live) listener.live(true)
+    return () => {
+      socket.listener = null
+      socket.stop()
+    }
+  },
+}))
+
 vi.mock('../../api/edition-sync.api', () => ({
   fetchEditionSyncBooks: mocks.fetchBooks,
   updateEditionSyncBookState: mocks.update,
@@ -22,13 +39,8 @@ vi.mock('../../api/edition-sync.api', () => ({
 }))
 vi.mock('vue-sonner', () => ({ toast: { error: mocks.toastError, success: mocks.toastSuccess } }))
 
-import {
-  applyBookState,
-  EDITION_SYNC_BOOKS_REFRESH_MS,
-  EDITION_SYNC_BOOKS_SEARCH_DEBOUNCE_MS,
-  useEditionSyncBooks,
-  type UseEditionSyncBooksOptions,
-} from '../useEditionSyncBooks'
+import { JOB_TYPE_FALLBACK_POLL_MS, JOB_TYPE_REFRESH_GAP_MS } from '@/features/jobs/lib/follow-job-type'
+import { applyBookState, EDITION_SYNC_BOOKS_SEARCH_DEBOUNCE_MS, useEditionSyncBooks, type UseEditionSyncBooksOptions } from '../useEditionSyncBooks'
 import { bookItem as fixtureBookItem } from '../../lib/__tests__/list-fixtures'
 import { useEditionSyncSettings } from '../useEditionSyncSettings'
 
@@ -61,6 +73,11 @@ function setup(options: UseEditionSyncBooksOptions = {}) {
   return scope.run(() => useEditionSyncBooks(options))!
 }
 
+async function push(state: boolean): Promise<void> {
+  socket.listener?.changed({ type: 'edition-sync', state })
+  await vi.advanceTimersByTimeAsync(JOB_TYPE_REFRESH_GAP_MS)
+}
+
 function setVisibility(state: DocumentVisibilityState) {
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state })
   document.dispatchEvent(new Event('visibilitychange'))
@@ -70,6 +87,9 @@ describe('useEditionSyncBooks', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     Object.values(mocks).forEach((mock) => mock.mockReset())
+    socket.listener = null
+    socket.live = true
+    socket.stop.mockReset()
     mocks.fetchBooks.mockResolvedValue(response())
   })
 
@@ -310,60 +330,110 @@ describe('useEditionSyncBooks', () => {
     expect(mocks.toastError).toHaveBeenCalledWith('Edition sync is off')
   })
 
-  it('re-fetches every 5 s while the page has running or queued rows, and stops when hidden or idle', async () => {
+  it('does not follow the jobs push while every row is settled', async () => {
+    mocks.fetchBooks.mockResolvedValue(response({ items: [bookItem({ status: 'ready' })] }))
     const books = setup()
     await books.load()
+    expect(socket.listener).toBeNull()
+
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_FALLBACK_POLL_MS * 2)
+    expect(mocks.fetchBooks).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-fetches on a state push while rows are queued, on progress only while one runs, and stops once idle', async () => {
+    const books = setup()
+    await books.load()
+    expect(socket.listener).not.toBeNull()
     mocks.fetchBooks.mockClear()
-    await vi.advanceTimersByTimeAsync(EDITION_SYNC_BOOKS_REFRESH_MS)
-    expect(mocks.fetchBooks).toHaveBeenCalledTimes(1)
 
-    setVisibility('hidden')
-    await vi.advanceTimersByTimeAsync(EDITION_SYNC_BOOKS_REFRESH_MS * 3)
-    expect(mocks.fetchBooks).toHaveBeenCalledTimes(1)
+    await push(false)
+    expect(mocks.fetchBooks).not.toHaveBeenCalled()
 
-    setVisibility('visible')
-    await vi.waitFor(() => expect(mocks.fetchBooks).toHaveBeenCalledTimes(2))
+    mocks.fetchBooks.mockResolvedValue(response({ items: [bookItem({ status: 'running' })] }))
+    await push(true)
+    expect(mocks.fetchBooks).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(books.loading.value).toBe(false))
+
+    await push(false)
+    expect(mocks.fetchBooks).toHaveBeenCalledTimes(2)
+    await vi.waitFor(() => expect(books.loading.value).toBe(false))
 
     mocks.fetchBooks.mockResolvedValue(response({ items: [bookItem({ status: 'ready' })] }))
-    await vi.advanceTimersByTimeAsync(EDITION_SYNC_BOOKS_REFRESH_MS)
+    await push(true)
     expect(mocks.fetchBooks).toHaveBeenCalledTimes(3)
-    await vi.advanceTimersByTimeAsync(EDITION_SYNC_BOOKS_REFRESH_MS * 3)
+    await vi.waitFor(() => expect(socket.listener).toBeNull())
+    expect(socket.stop).toHaveBeenCalledOnce()
+
+    await push(true)
     expect(mocks.fetchBooks).toHaveBeenCalledTimes(3)
   })
 
-  it('keeps refreshing while the page has out-of-date rows', async () => {
+  it('keeps following while the page has out-of-date rows', async () => {
     mocks.fetchBooks.mockResolvedValue(response({ items: [bookItem({ status: 'stale' })] }))
     const books = setup()
     await books.load()
     mocks.fetchBooks.mockClear()
-    await vi.advanceTimersByTimeAsync(EDITION_SYNC_BOOKS_REFRESH_MS)
+    await push(true)
     expect(mocks.fetchBooks).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps refreshing an idle page while an admin run is active', async () => {
+  it('defers a push while the page is hidden and catches up when it is shown', async () => {
+    const books = setup()
+    await books.load()
+    mocks.fetchBooks.mockClear()
+
+    setVisibility('hidden')
+    await push(true)
+    expect(mocks.fetchBooks).not.toHaveBeenCalled()
+
+    setVisibility('visible')
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_REFRESH_GAP_MS)
+    expect(mocks.fetchBooks).toHaveBeenCalledTimes(1)
+  })
+
+  it('follows an idle page while an admin run is active', async () => {
     mocks.fetchBooks.mockResolvedValue(response({ items: [bookItem({ status: 'ready' })] }))
     const runActive = ref(false)
     const books = setup({ runActive })
     await books.load()
     mocks.fetchBooks.mockClear()
-    await vi.advanceTimersByTimeAsync(EDITION_SYNC_BOOKS_REFRESH_MS * 2)
-    expect(mocks.fetchBooks).not.toHaveBeenCalled()
+    expect(socket.listener).toBeNull()
 
     runActive.value = true
-    await vi.advanceTimersByTimeAsync(EDITION_SYNC_BOOKS_REFRESH_MS)
+    await nextTick()
+    expect(socket.listener).not.toBeNull()
+    await push(true)
     expect(mocks.fetchBooks).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(books.loading.value).toBe(false))
 
     runActive.value = false
-    await vi.advanceTimersByTimeAsync(EDITION_SYNC_BOOKS_REFRESH_MS * 3)
-    expect(mocks.fetchBooks).toHaveBeenCalledTimes(2)
+    await nextTick()
+    expect(socket.listener).toBeNull()
+    await push(true)
+    expect(mocks.fetchBooks).toHaveBeenCalledTimes(1)
   })
 
-  it('stops refreshing once disposed', async () => {
+  it('stops following once disposed', async () => {
     const books = setup()
     await books.load()
     mocks.fetchBooks.mockClear()
     scope.stop()
-    await vi.advanceTimersByTimeAsync(EDITION_SYNC_BOOKS_REFRESH_MS * 3)
+    expect(socket.stop).toHaveBeenCalledOnce()
+
+    await push(true)
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_FALLBACK_POLL_MS * 2)
     expect(mocks.fetchBooks).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the slow poll while the jobs socket is not live', async () => {
+    socket.live = false
+    const books = setup()
+    await books.load()
+    mocks.fetchBooks.mockClear()
+
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_FALLBACK_POLL_MS - 1)
+    expect(mocks.fetchBooks).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1 + JOB_TYPE_REFRESH_GAP_MS)
+    expect(mocks.fetchBooks).toHaveBeenCalledTimes(1)
   })
 })

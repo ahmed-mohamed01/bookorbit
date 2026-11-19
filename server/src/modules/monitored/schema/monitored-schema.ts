@@ -120,6 +120,8 @@ CREATE TABLE IF NOT EXISTS "monitored_authors" (
 	"fetch_error_at" timestamp with time zone,
 	"fetch_retry_at" timestamp with time zone,
 	"fetch_attempts" smallint NOT NULL DEFAULT 0,
+	"fetch_queued_at" timestamp with time zone,
+	"fetch_started_at" timestamp with time zone,
 	"last_release_check_at" timestamp with time zone,
 	CONSTRAINT "monitored_authors_ebook_mode_chk" CHECK ("monitored_authors"."ebook_mode" in ('notify', 'auto-upcoming', 'auto-all', 'off')),
 	CONSTRAINT "monitored_authors_audiobook_mode_chk" CHECK ("monitored_authors"."audiobook_mode" in ('notify', 'auto-upcoming', 'auto-all', 'off'))
@@ -831,4 +833,12 @@ DO $$ BEGIN
 END $$;
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "monitored_authors_fetch_pending_idx" ON "monitored_authors" ("fetch_state","added_at","id") WHERE "fetch_state" <> 'idle';
+--> statement-breakpoint
+ALTER TABLE "monitored_authors" ADD COLUMN IF NOT EXISTS "fetch_queued_at" timestamp with time zone;
+--> statement-breakpoint
+ALTER TABLE "monitored_authors" ADD COLUMN IF NOT EXISTS "fetch_started_at" timestamp with time zone;
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "monitored_authors_fetch_owner_idx" ON "monitored_authors" ("owner_user_id","fetch_state") WHERE "fetch_state" <> 'idle';
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "monitored_authors_fetch_finish_idx" ON "monitored_authors" ("owner_user_id",(coalesce("fetch_error_at", "last_refreshed_at")),"id" COLLATE "C");
 `;

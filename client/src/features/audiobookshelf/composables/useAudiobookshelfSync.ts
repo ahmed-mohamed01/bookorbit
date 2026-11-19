@@ -19,14 +19,14 @@ export function useAudiobookshelfSync() {
     lastResult.value = null
     try {
       lastResult.value = mode === 'full' ? await startAudiobookshelfFullResync() : await startAudiobookshelfSync()
-      await useAudiobookshelfSettings().fetchSettings()
+      await useAudiobookshelfSettings().fetchSettings({ force: true })
       await useAudiobookshelfLinkedBooks()
         .loadAllBuckets()
         .catch(() => undefined)
       return true
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to sync Audiobookshelf'
-      await useAudiobookshelfSettings().fetchSettings()
+      await useAudiobookshelfSettings().fetchSettings({ force: true })
       return false
     } finally {
       syncing.value = false

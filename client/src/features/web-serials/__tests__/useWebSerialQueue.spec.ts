@@ -20,66 +20,116 @@ const api = vi.hoisted(() => ({
 
 vi.mock('../api/webSerials', () => api)
 
-import { ACTIVE_POLL_MS, IDLE_POLL_MS, nextPollDelay, useWebSerialQueue } from '../composables/useWebSerialQueue'
+const socket = vi.hoisted(() => ({
+  listener: null as null | { changed: (event: { type: string; state: boolean }) => void; live: (live: boolean) => void },
+  connected: false,
+  stop: vi.fn<() => void>(),
+}))
+
+vi.mock('@/features/jobs/lib/jobs-socket', () => ({
+  listenToJobs: (listener: NonNullable<typeof socket.listener>) => {
+    socket.listener = listener
+    if (socket.connected) listener.live(true)
+    return socket.stop
+  },
+}))
+
+import { JOB_TYPE_FALLBACK_POLL_MS, JOB_TYPE_REFRESH_GAP_MS } from '@/features/jobs/lib/follow-job-type'
+import { useWebSerialQueue } from '../composables/useWebSerialQueue'
 
 beforeEach(() => {
   vi.useFakeTimers()
   vi.clearAllMocks()
+  socket.listener = null
+  socket.connected = false
 })
 
 afterEach(() => {
   vi.useRealTimers()
 })
 
-describe('nextPollDelay', () => {
-  it('polls fast only while a job is active and the page is visible', () => {
-    expect(nextPollDelay(1, true)).toBe(ACTIVE_POLL_MS)
-    expect(nextPollDelay(0, true)).toBe(IDLE_POLL_MS)
-    expect(nextPollDelay(2, false)).toBe(IDLE_POLL_MS)
-  })
-})
+function push(type: string, state: boolean): void {
+  socket.listener?.changed({ type, state })
+}
 
 describe('useWebSerialQueue', () => {
-  it('loads the list and reschedules at the active cadence', async () => {
+  it('loads the list on start and refreshes when a web serial job changes status', async () => {
     api.fetchSerialJobs.mockResolvedValue({ items: [job()], activeCount: 1, total: [job()].length, finishedCount: 0, queuePaused: false })
     const queue = useWebSerialQueue()
 
+    socket.connected = true
     queue.start()
     await vi.advanceTimersByTimeAsync(0)
     expect(queue.jobs.value).toHaveLength(1)
     expect(queue.activeCount.value).toBe(1)
 
-    await vi.advanceTimersByTimeAsync(ACTIVE_POLL_MS)
+    push('web-serial', true)
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_REFRESH_GAP_MS)
     expect(api.fetchSerialJobs).toHaveBeenCalledTimes(2)
     queue.stop()
   })
 
-  it('slows to the idle cadence once nothing is active', async () => {
-    api.fetchSerialJobs.mockResolvedValue({
-      items: [job({ status: 'completed' })],
-      activeCount: 0,
-      total: [job({ status: 'completed' })].length,
-      finishedCount: 0,
-      queuePaused: false,
-    })
+  it('ignores pushes for other job types', async () => {
+    api.fetchSerialJobs.mockResolvedValue({ items: [job()], activeCount: 1, total: 1, finishedCount: 0, queuePaused: false })
     const queue = useWebSerialQueue()
-
+    socket.connected = true
     queue.start()
     await vi.advanceTimersByTimeAsync(0)
-    await vi.advanceTimersByTimeAsync(ACTIVE_POLL_MS * 2)
+
+    push('audio-convert', true)
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_REFRESH_GAP_MS * 2)
     expect(api.fetchSerialJobs).toHaveBeenCalledTimes(1)
-    await vi.advanceTimersByTimeAsync(IDLE_POLL_MS)
-    expect(api.fetchSerialJobs).toHaveBeenCalledTimes(2)
     queue.stop()
   })
 
-  it('stops polling when stopped', async () => {
+  it('follows progress pushes only while a job is running', async () => {
+    api.fetchSerialJobs.mockResolvedValue({ items: [job({ status: 'queued' })], activeCount: 1, total: 1, finishedCount: 0, queuePaused: false })
+    const queue = useWebSerialQueue()
+    socket.connected = true
+    queue.start()
+    await vi.advanceTimersByTimeAsync(0)
+
+    push('web-serial', false)
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_REFRESH_GAP_MS * 2)
+    expect(api.fetchSerialJobs).toHaveBeenCalledTimes(1)
+
+    api.fetchSerialJobs.mockResolvedValue({ items: [job({ status: 'running' })], activeCount: 1, total: 1, finishedCount: 0, queuePaused: false })
+    push('web-serial', true)
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_REFRESH_GAP_MS)
+    expect(api.fetchSerialJobs).toHaveBeenCalledTimes(2)
+
+    push('web-serial', false)
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_REFRESH_GAP_MS)
+    expect(api.fetchSerialJobs).toHaveBeenCalledTimes(3)
+    queue.stop()
+  })
+
+  it('polls slowly only while the jobs socket is down', async () => {
+    api.fetchSerialJobs.mockResolvedValue({ items: [], activeCount: 0, total: 0, finishedCount: 0, queuePaused: false })
+    const queue = useWebSerialQueue()
+    queue.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(api.fetchSerialJobs).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_FALLBACK_POLL_MS + JOB_TYPE_REFRESH_GAP_MS)
+    expect(api.fetchSerialJobs).toHaveBeenCalledTimes(2)
+
+    socket.listener?.live(true)
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_REFRESH_GAP_MS)
+    const afterCatchUp = api.fetchSerialJobs.mock.calls.length
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_FALLBACK_POLL_MS * 3)
+    expect(api.fetchSerialJobs).toHaveBeenCalledTimes(afterCatchUp)
+    queue.stop()
+  })
+
+  it('stops following when stopped', async () => {
     api.fetchSerialJobs.mockResolvedValue({ items: [], activeCount: 0, total: [].length, finishedCount: 0, queuePaused: false })
     const queue = useWebSerialQueue()
     queue.start()
     await vi.advanceTimersByTimeAsync(0)
     queue.stop()
-    await vi.advanceTimersByTimeAsync(IDLE_POLL_MS * 3)
+    expect(socket.stop).toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_FALLBACK_POLL_MS * 3)
     expect(api.fetchSerialJobs).toHaveBeenCalledTimes(1)
   })
 
@@ -333,12 +383,14 @@ describe('useWebSerialQueue', () => {
     api.fetchSerialJobs.mockResolvedValueOnce({ items: [running], activeCount: 1, total: 1, finishedCount: 0, queuePaused: false })
     api.fetchSerialJobDetail.mockResolvedValueOnce({ job: running, items: [jobItem({ id: 9, status: 'fetching' })] })
     const queue = useWebSerialQueue()
+    socket.connected = true
     queue.start()
     await vi.advanceTimersByTimeAsync(0)
     await queue.toggleExpanded(1)
     api.fetchSerialJobs.mockResolvedValue({ items: [done], activeCount: 0, total: 1, finishedCount: 1, queuePaused: false })
     api.fetchSerialJobDetail.mockResolvedValue({ job: done, items: [jobItem({ id: 9, status: 'imported' })] })
-    await vi.advanceTimersByTimeAsync(ACTIVE_POLL_MS)
+    push('web-serial', true)
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_REFRESH_GAP_MS)
     expect(queue.details.value[1]?.items[0]?.status).toBe('imported')
     queue.stop()
   })
@@ -387,13 +439,15 @@ describe('useWebSerialQueue', () => {
       queuePaused: false,
     }))
     const queue = useWebSerialQueue()
+    socket.connected = true
     queue.start()
     await vi.advanceTimersByTimeAsync(0)
     await queue.loadMore()
     await queue.loadMore()
     expect(queue.jobs.value).toHaveLength(150)
     api.fetchSerialJobs.mockClear()
-    await vi.advanceTimersByTimeAsync(ACTIVE_POLL_MS)
+    push('web-serial', true)
+    await vi.advanceTimersByTimeAsync(JOB_TYPE_REFRESH_GAP_MS)
     expect(api.fetchSerialJobs).toHaveBeenCalledTimes(1)
     expect(api.fetchSerialJobs).toHaveBeenCalledWith('mine', 50, 0)
     expect(queue.jobs.value).toHaveLength(150)

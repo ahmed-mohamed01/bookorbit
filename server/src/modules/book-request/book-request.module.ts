@@ -1,11 +1,13 @@
 import { ReleaseInspectionFactsBootstrapService } from './release-inspection-facts-bootstrap.service';
 import { ReleaseInspectionFactsRepository } from './indexers/release-inspection-facts.repository';
 import { Module, forwardRef } from '@nestjs/common';
+import { SetupOverviewModule } from '../setup-overview/setup-overview.module';
 
 import { AppSettingsModule } from '../app-settings/app-settings.module';
 import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
 import { BookDockModule } from '../book-dock/book-dock.module';
+import { JobsModule } from '../jobs/jobs.module';
 import { LibraryModule } from '../library/library.module';
 import { NotificationModule } from '../notification/notification.module';
 import { UploadModule } from '../upload/upload.module';
@@ -19,6 +21,8 @@ import { BatchUnitFilingService } from './batch/batch-unit-filing.service';
 import { BookRequestBatchService } from './batch/book-request-batch.service';
 import { RequestBatchImportService } from './batch/request-batch-import.service';
 import { REQUEST_IMPORT_HOOK } from './batch/request-import-hook';
+import { BatchDownloadJobDecorator } from './batch/batch-download-job-decorator';
+import { REQUEST_DOWNLOAD_JOB_DECORATOR } from './batch/request-download-job-decorator';
 import { BookRequestAutoGrabBootstrapService } from './book-request-auto-grab-bootstrap.service';
 import { BookRequestController } from './book-request.controller';
 import { BookRequestSelfFulfilController } from './book-request-self-fulfil.controller';
@@ -31,7 +35,10 @@ import { BookRequestGateway } from './book-request.gateway';
 import { BookRequestNotifier } from './book-request-notifier.service';
 import { BookRequestRepository } from './book-request.repository';
 import { BookRequestService } from './book-request.service';
+import { BookRequestSetupFlow } from './book-request.setup-flow';
 import { RequestCredentialService } from './request-credential.service';
+import { RequestDownloadJobRepository } from './request-download-job.repository';
+import { RequestDownloadJobSource } from './request-download-job-source';
 import { DOWNLOAD_CLIENT_ADAPTERS } from './download-clients/download-client-adapter';
 import { DownloadClientConfigService } from './download-clients/download-client-config.service';
 import { DownloadClientReconciliationService } from './download-clients/download-client-reconciliation.service';
@@ -90,6 +97,7 @@ import { ShelfmarkSchemaBootstrapService } from './shelfmark/shelfmark-schema-bo
  */
 @Module({
   imports: [
+    SetupOverviewModule,
     LibraryModule,
     AppSettingsModule,
     AuditModule,
@@ -97,6 +105,7 @@ import { ShelfmarkSchemaBootstrapService } from './shelfmark/shelfmark-schema-bo
     UploadModule,
     AuthModule,
     UserModule,
+    JobsModule,
     forwardRef(() => NotificationModule),
   ],
   controllers: [
@@ -111,6 +120,7 @@ import { ShelfmarkSchemaBootstrapService } from './shelfmark/shelfmark-schema-bo
     IndexerManagerController,
   ],
   providers: [
+    BookRequestSetupFlow,
     ReleaseInspectionFactsRepository,
     ReleaseInspectionFactsBootstrapService,
     BookRequestService,
@@ -122,6 +132,7 @@ import { ShelfmarkSchemaBootstrapService } from './shelfmark/shelfmark-schema-bo
     BookRequestBatchService,
     BatchUnitFilingService,
     { provide: REQUEST_IMPORT_HOOK, useClass: RequestBatchImportService },
+    { provide: REQUEST_DOWNLOAD_JOB_DECORATOR, useClass: BatchDownloadJobDecorator },
     ShelfmarkSchemaBootstrapService,
     BookRequestAttributionService,
     BookRequestDedupeService,
@@ -129,6 +140,8 @@ import { ShelfmarkSchemaBootstrapService } from './shelfmark/shelfmark-schema-bo
     BookRequestGateway,
     BookRequestEventsService,
     RequestCredentialService,
+    RequestDownloadJobRepository,
+    RequestDownloadJobSource,
 
     DownloadClientRepository,
     DownloadClientConfigService,

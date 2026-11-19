@@ -17,7 +17,7 @@ vi.mock('../../api/audiobookshelf.api', () => ({
   cleanupAudiobookshelfStaleEntries: vi.fn<(payload?: { includeManuallyUnlinked?: boolean }) => Promise<AudiobookshelfCleanupResult>>(),
 }))
 
-const mockFetchSettings = vi.hoisted(() => vi.fn<() => Promise<void>>())
+const mockFetchSettings = vi.hoisted(() => vi.fn<(options?: { force?: boolean }) => Promise<void>>())
 
 vi.mock('../useAudiobookshelfSettings', () => ({
   useAudiobookshelfSettings: () => ({ fetchSettings: mockFetchSettings }),
@@ -244,6 +244,7 @@ describe('useAudiobookshelfLinkedBooks', () => {
     expect(c.rescanning.value).toBe(false)
     // The settings carry the recalculated staleCount behind the cleanup indicator.
     expect(mockFetchSettings).toHaveBeenCalledTimes(1)
+    expect(mockFetchSettings).toHaveBeenCalledWith({ force: true })
     expect(mockFetchBookStates).toHaveBeenCalledTimes(3)
   })
 

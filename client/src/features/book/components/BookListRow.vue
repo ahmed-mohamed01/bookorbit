@@ -331,6 +331,7 @@ function handleRowClick(event: MouseEvent) {
         :is-audio="isAudiobook"
         :seed="book.title ?? String(book.id)"
         :alt="book.title ?? ''"
+        :frame-aspect-ratio="coverAspectRatio"
         backdrop-class="blur-md brightness-50"
         :spine="!isAudiobook"
         :is-comic="isComic"

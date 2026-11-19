@@ -1,6 +1,6 @@
 import type { EditionSyncProvenance } from '@bookorbit/types';
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import {
   AUDIO_FORMAT_LIST,
@@ -65,7 +65,7 @@ function rowsOf<T>(result: unknown): T[] {
  * Users whose edition sync is effectively on: active, permitted (or superuser), enabled. The server
  * switch is deliberately not part of it: it pauses indexing but does not make indexes unused.
  */
-const WANTING_USERS_CTE = sql`wanting AS (
+export const WANTING_USERS_CTE = sql`wanting AS (
   SELECT u.id, u.is_superuser, COALESCE(s.book_sync_mode, 'all_eligible') AS book_sync_mode
   FROM users u
   LEFT JOIN edition_sync_user_settings s ON s.user_id = u.id
@@ -77,7 +77,7 @@ const WANTING_USERS_CTE = sql`wanting AS (
 )`;
 
 /** Some wanting user with access to the book's library has it in effective scope. `b` is the book alias. */
-const WANTED_SQL = sql`EXISTS (
+export const WANTED_SQL = sql`EXISTS (
   SELECT 1 FROM wanting w
   LEFT JOIN edition_sync_book_overrides o ON o.user_id = w.id AND o.book_id = b.id
   WHERE (w.is_superuser OR EXISTS (SELECT 1 FROM user_library_access a WHERE a.user_id = w.id AND a.library_id = b.library_id))
@@ -94,7 +94,7 @@ const BOOK_PLACEMENT_SQL = sql`b.status = 'present'
  * read-along EPUB edition yet. `b` is the book alias, `l` its library. Per-book form, for single
  * books and the small pinned set.
  */
-const ELIGIBLE_SQL = sql`${BOOK_PLACEMENT_SQL}
+export const ELIGIBLE_SQL = sql`${BOOK_PLACEMENT_SQL}
   AND EXISTS (SELECT 1 FROM book_files f WHERE f.book_id = b.id AND f.role = 'content' AND f.format = 'epub' AND NOT f.media_overlay_available)
   AND NOT EXISTS (SELECT 1 FROM book_files f WHERE f.book_id = b.id AND f.role = 'content' AND f.format = 'epub' AND f.media_overlay_available)
   AND EXISTS (SELECT 1 FROM book_files f WHERE f.book_id = b.id AND f.role = 'content' AND f.format IN (${AUDIO_FORMATS_SQL}))
@@ -118,7 +118,7 @@ const ELIGIBLE_FILES_CTE = sql`eligible_files AS (
 )`;
 
 /** No row, a stale row, or a failed row someone asked to retry. `i` is the (left-joined) index row. */
-const QUEUEABLE_ROW_SQL = sql`(i.book_id IS NULL OR i.status = 'stale' OR (i.status = 'failed' AND i.retry_requested))`;
+export const QUEUEABLE_ROW_SQL = sql`(i.book_id IS NULL OR i.status = 'stale' OR (i.status = 'failed' AND i.retry_requested))`;
 
 /** Pinned first (oldest pin first), then books a wanting user is reading, then newest added. */
 const QUEUE_ORDER_SQL = sql`(i.pinned_at IS NOT NULL) DESC,
@@ -131,7 +131,7 @@ const QUEUE_ORDER_SQL = sql`(i.pinned_at IS NOT NULL) DESC,
   b.id DESC`;
 
 /** CTEs and FROM clause of a whole-queue query; `b`, `l` and `i` are in scope for the WHERE. */
-function queueQuery(select: SQL, extraWhere?: SQL): SQL {
+export function queueQuery(select: SQL, extraWhere?: SQL): SQL {
   return sql`WITH ${WANTING_USERS_CTE}, ${ELIGIBLE_FILES_CTE}
     SELECT ${select}
     FROM eligible_files ef
@@ -167,7 +167,7 @@ function listFilterPredicate(filter: EditionSyncBookListFilter): SQL {
 }
 
 /** Limits `b` to the requester's visible libraries; null adds no filter and an empty list matches nothing. */
-function libraryFilterSql(libraryIds: readonly number[] | null): SQL {
+export function libraryFilterSql(libraryIds: readonly number[] | null): SQL {
   if (libraryIds === null) return sql``;
   if (libraryIds.length === 0) return sql`AND false`;
   return sql`AND b.library_id IN (${sql.join(
@@ -888,12 +888,18 @@ export class EditionSyncRepository {
     return rowsOf<Pick<EditionSyncBookIndexRow, 'bookId' | 'status' | 'indexPath' | 'indexBytes' | 'workerJobId'>>(result);
   }
 
-  /** Read-only peek: does upstream have a queued or processing read-aloud job? */
+  /** Yields to processing jobs and mirrors read-aloud's claimNext filters for queued jobs, including the retry deadline. */
   async hasUpstreamActiveJobs(): Promise<boolean> {
+    const jobs = schema.readAloudJobs;
     const [row] = await this.db
-      .select({ id: schema.readAloudJobs.id })
-      .from(schema.readAloudJobs)
-      .where(inArray(schema.readAloudJobs.status, ['queued', 'processing']))
+      .select({ id: jobs.id })
+      .from(jobs)
+      .where(
+        or(
+          eq(jobs.status, 'processing'),
+          and(eq(jobs.status, 'queued'), isNull(jobs.pausedAt), eq(jobs.cancelRequested, false), lte(jobs.nextAttemptAt, new Date())),
+        ),
+      )
       .limit(1);
     return row !== undefined;
   }
