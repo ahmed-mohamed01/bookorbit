@@ -1,0 +1,2 @@
+# Fork: merge surface check (FORK_MAINTENANCE.md, "Enforcement").
+bash "$(dirname "$0")/fork/surface.sh" "$1"

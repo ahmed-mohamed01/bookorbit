@@ -4,4 +4,5 @@ export PNPM_HOME="$HOME/Library/pnpm"
 export PATH="$PNPM_HOME:$PATH"
 [ -s "$HOME/.nvm/nvm.sh" ] && . "$HOME/.nvm/nvm.sh"
 
+bash "$(dirname "$0")/fork/pre-commit.sh"
 pnpm exec lint-staged

@@ -148,6 +148,29 @@ Real example: `audio.extractor.ts` shows **188 raw** lines but **26 semantic** -
 was reindentation. It was ranked a top-3 seam target on the raw number and turned out
 to need no work at all.
 
+## Enforcement
+
+Git hooks hold every commit to this document, for people and agents alike. They live in
+`.husky/fork/` and run from the hooks husky already installs.
+
+- **Docs** (pre-commit, `docs.sh`): a commit that changes a file upstream owns (present in
+  `upstream/main` or at the last merge base) must also change this file. Record the change in
+  the overlay's section, and in the conflict surface table when a hook grew. In a merge, only
+  files that differ from both sides count.
+- **Surface** (commit-msg, `surface.sh`): a commit may grow the fork's lines in upstream files
+  by at most 20, measured with `git diff -w` against the merge base. Past that, move the logic
+  into fork-owned files, or add a `Fork-Surface: <why it has to live there>` line to the message.
+- **Merge log** (pre-commit and pre-merge-commit, `merge-log.sh`): a merge that brings in
+  upstream commits must add an entry under "Merge log". A merge that would commit on its own
+  stops instead; add the entry, stage this file, and run `git commit`.
+- **Agents** (`.claude/hooks/git-guard.sh`): Claude Code may not run `--no-verify`,
+  `commit -n`, `HUSKY=0`, `FORK_DOCS_SKIP=1`, or change `core.hooksPath`. Codex and other agents
+  follow the same rule from `AGENTS.md`.
+
+`FORK_DOCS_SKIP=1` skips the docs check once, for the user only. Worktrees whose
+`core.hooksPath` points at this checkout's `.husky/_` run the checks from this checkout, so a
+branch cannot weaken them. Without an `upstream` remote the checks pass.
+
 ## Branch model
 
 - **`monitored` is this fork's main branch.** It carries every overlay in this document on

@@ -1,0 +1,2 @@
+# Fork: a merge that commits on its own skips pre-commit, so the merge log check runs here.
+bash "$(dirname "$0")/fork/merge-log.sh"

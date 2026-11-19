@@ -1,3 +1,12 @@
+## Fork (read first)
+
+This checkout is a personal fork of BookOrbit that keeps merging upstream. Before you edit any file upstream owns, add a feature, review a change or merge upstream, read [FORK_MAINTENANCE.md](FORK_MAINTENANCE.md). It is required, not background. Where it and the rules below disagree, it wins.
+
+- New behaviour goes in fork-owned files. Upstream files get the smallest hook that reaches them, and a hook must shrink the fork's footprint, not grow it.
+- Never reformat, rename or tidy upstream code. Measure the surface with `git diff -w upstream/main`.
+- Reuse upstream code instead of rewriting it, and delete fork code that upstream now covers.
+- Record what the fork changes in FORK_MAINTENANCE.md in the same change: the overlay section, the conflict surface table and, for a merge, the merge log.
+
 ## Project
 
 - Book/library management app with Kobo device support.
