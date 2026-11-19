@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { stageInputs } from "../dist/stages.js";
-import { AUDIO_PREPARE_VERSION, assertFullyDecoded, decodedShare, reencodeArgs, reencodeXheAac } from "../dist/xhe-aac.js";
+import { AUDIO_PREPARE_VERSION, XHE_AAC_STALL_MS, assertFullyDecoded, decodedShare, reencodeArgs, reencodeXheAac } from "../dist/xhe-aac.js";
 
 const track = (name, duration, start, end) => ({ name, duration, source: { file: "0001.m4b", start, end, title: null } });
 
@@ -37,7 +38,8 @@ test("xhe-aac: a short decode fails the job as invalid output", () => {
 
 test("xhe-aac: frames that cannot be decoded become silence, and chapters are kept", () => {
   const args = reencodeArgs("in.m4b", "out.m4b", "native");
-  assert.ok(args.includes("aresample=async=1:first_pts=0"));
+  assert.ok(args.includes("aresample=async=1:first_pts=0,aformat=sample_fmts=s16"), "out-of-range samples are clipped before the encoder");
+  assert.deepEqual(args.slice(args.indexOf("-progress"), args.indexOf("-progress") + 2), ["-progress", "pipe:1"]);
   assert.deepEqual(args.slice(args.indexOf("-map_chapters"), args.indexOf("-map_chapters") + 2), ["-map_chapters", "0"]);
   assert.ok(args.indexOf("in.m4b") > 0 && !args.includes("libfdk_aac"));
 });
@@ -98,4 +100,88 @@ test("xhe-aac: only the xHE-AAC link is replaced, and the library file is never 
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+/** A source audio folder whose one file is linked from a library folder, with stand-in tools on PATH. */
+function workspace(t, { ffprobe, ffmpeg }) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "read-aloud-xhe-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const library = join(root, "library");
+  const work = join(root, "source-audio");
+  const bin = join(root, "bin");
+  for (const dir of [library, work, bin]) mkdirSync(dir);
+  writeFileSync(join(bin, "ffprobe"), ffprobe);
+  chmodSync(join(bin, "ffprobe"), 0o755);
+  if (ffmpeg) {
+    writeFileSync(join(bin, "ffmpeg"), ffmpeg);
+    chmodSync(join(bin, "ffmpeg"), 0o755);
+  }
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  t.after(() => {
+    process.env.PATH = path;
+  });
+  const events = [];
+  const context = { signal: new AbortController().signal, event: (...args) => events.push(args) };
+  return { library, work, context, events };
+}
+
+const XHE_PROBE = '#!/bin/sh\necho xHE-AAC\n';
+
+test("xhe-aac: a re-encode that stops advancing fails the job and leaves the link", async (t) => {
+  const { library, work, context } = workspace(t, {
+    ffprobe: XHE_PROBE,
+    ffmpeg: '#!/bin/sh\ncase "$*" in *-decoders*) exit 0;; esac\necho out_time_us=1000000\nexec sleep 30\n',
+  });
+  writeFileSync(join(library, "book.m4b"), "xhe-bytes");
+  symlinkSync(join(library, "book.m4b"), join(work, "0001.m4b"));
+  await assert.rejects(reencodeXheAac(work, context, 300), (error) => error.code === "audio_processing_failed" && /stopped advancing/.test(error.message));
+  assert.ok(lstatSync(join(work, "0001.m4b")).isSymbolicLink());
+  assert.deepEqual(readdirSync(work), ["0001.m4b"]);
+  assert.ok(XHE_AAC_STALL_MS >= 60_000, "a slow machine is not taken for a stuck encode");
+});
+
+const hasFfmpeg = (() => {
+  try {
+    execFileSync("ffmpeg", ["-version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+/** Mono 32-bit float WAV: a quiet tone with three frames of samples ~1e10 times full scale. */
+function spikeWav() {
+  const rate = 44100;
+  const samples = rate * 3;
+  const data = Buffer.alloc(samples * 4);
+  for (let i = 0; i < samples; i++) {
+    const spike = i >= rate && i < rate + 3 * 1024;
+    data.writeFloatLE(spike ? 9.6e9 * Math.sin(i) : 0.3 * Math.sin((2 * Math.PI * 220 * i) / rate), i * 4);
+  }
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + data.length, 4);
+  header.write("WAVEfmt ", 8);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(3, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(rate, 24);
+  header.writeUInt32LE(rate * 4, 28);
+  header.writeUInt16LE(4, 32);
+  header.writeUInt16LE(32, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(data.length, 40);
+  return Buffer.concat([header, data]);
+}
+
+test("xhe-aac: decoder garbage billions of times full scale is clipped so the AAC encoder takes it", { skip: !hasFfmpeg && "ffmpeg is not installed" }, async (t) => {
+  const { library, work, context } = workspace(t, { ffprobe: XHE_PROBE });
+  writeFileSync(join(library, "book.m4b"), spikeWav());
+  symlinkSync(join(library, "book.m4b"), join(work, "0001.m4b"));
+  // Without the 16-bit step ffmpeg's AAC encoder rejects this file outright. On the real book's frames it
+  // passes that check and then spins forever, which only a full decode from the start reproduces.
+  assert.equal(await reencodeXheAac(work, context, 20_000), 1);
+  assert.ok(lstatSync(join(work, "0001.m4b")).isFile());
+  assert.ok(existsSync(join(work, "0001.m4b")));
 });
