@@ -830,20 +830,20 @@ book-move and scanner paths the slot and flag cascade together.
 
 Measured with `git diff -w upstream/main --numstat`. Totals include the existing fork changes in each file.
 
-| Upstream file | Added | Removed | Hook |
-| --- | ---: | ---: | --- |
-| `server/src/app.module.ts` | 16 | 0 | Registers fork modules, including `ForkJobReorderModule` |
-| `packages/types/src/index.ts` | 11 | 0 | Exports fork contracts, including `fork-job-reorder` |
-| `packages/types/src/jobs.ts` | 13 | 1 | Shared action kinds for adjacent movement and starting |
-| `client/src/features/jobs/lib/job-presentation.ts` | 9 | 3 | Start uses an action button, adjacent moves stay on the grip, and front-of-queue actions stay in the row menu |
-| `client/src/features/jobs/lib/job-copy.ts` | 8 | 7 | Optional per-type action labels and result messages |
-| `client/src/features/jobs/components/JobTableRow.vue` | 45 | 13 | Reorder grip, Open/Review link with Jobs drawer routing for request URLs, menu-only actions and per-type labels |
-| `client/src/features/jobs/views/JobsActivityView.vue` | 21 | 7 | Drag bindings, per-type results for single-type targets, and the request drawer host in displayed row order |
-| `client/src/features/jobs/views/JobsActivityView.test.ts` | 37 | 4 | Covers row-only movement, Start in the selection bar and keyboard access during progress refresh |
-| `client/src/router/index.ts` | 18 | 0 | Fork routes, including the request detail child of Jobs Activity |
-| `client/src/components/AppLayout.vue` | 3 | 0 | Keeps the app view keyed to Jobs Activity while the request drawer is open |
-| `client/src/features/book-requests/composables/useRequestQueue.ts` | 1 | 1 | Lets the shared stepper accept Jobs rows adapted to request IDs |
-| `client/src/locales/en.json` | 2753 | 143 | Grip labels, movement results and per-type Move to top copy, alongside existing fork copy |
+| Upstream file                                                      | Added | Removed | Hook                                                                                                            |
+| ------------------------------------------------------------------ | ----: | ------: | --------------------------------------------------------------------------------------------------------------- |
+| `server/src/app.module.ts`                                         |    16 |       0 | Registers fork modules, including `ForkJobReorderModule`                                                        |
+| `packages/types/src/index.ts`                                      |    11 |       0 | Exports fork contracts, including `fork-job-reorder`                                                            |
+| `packages/types/src/jobs.ts`                                       |    13 |       1 | Shared action kinds for adjacent movement and starting                                                          |
+| `client/src/features/jobs/lib/job-presentation.ts`                 |     9 |       3 | Start uses an action button, adjacent moves stay on the grip, and front-of-queue actions stay in the row menu   |
+| `client/src/features/jobs/lib/job-copy.ts`                         |     8 |       7 | Optional per-type action labels and result messages                                                             |
+| `client/src/features/jobs/components/JobTableRow.vue`              |    45 |      13 | Reorder grip, Open/Review link with Jobs drawer routing for request URLs, menu-only actions and per-type labels |
+| `client/src/features/jobs/views/JobsActivityView.vue`              |    21 |       7 | Drag bindings, per-type results for single-type targets, and the request drawer host in displayed row order     |
+| `client/src/features/jobs/views/JobsActivityView.test.ts`          |    37 |       4 | Covers row-only movement, Start in the selection bar and keyboard access during progress refresh                |
+| `client/src/router/index.ts`                                       |    18 |       0 | Fork routes, including the request detail child of Jobs Activity                                                |
+| `client/src/components/AppLayout.vue`                              |     3 |       0 | Keeps the app view keyed to Jobs Activity while the request drawer is open                                      |
+| `client/src/features/book-requests/composables/useRequestQueue.ts` |     1 |       1 | Lets the shared stepper accept Jobs rows adapted to request IDs                                                 |
+| `client/src/locales/en.json`                                       |  2753 |     143 | Grip labels, movement results and per-type Move to top copy, alongside existing fork copy                       |
 
 ### 2026-11-14 surface shrink after the v3.8.0 merge
 
@@ -1583,6 +1583,76 @@ links to the SMB mounts are no longer needed. Samba must write as the container'
 (`force user`). macOS SMB multichannel (`mc_on=no` in `~/Library/Preferences/nsmb.conf`) cut uploads
 to 4.5 MB/s over Wi-Fi; turning it off restored 125 MB/s.
 
+## Read-aloud audio splits (align patch)
+
+STAlign splits a long audiobook into pieces of at most two hours, and the read-along EPUB carries those
+pieces. Every client that maps the read-along onto the source audiobook (upstream's `buildAudioTimeline`,
+Absorb) lays the pieces end to end, so a piece must start in the source exactly where the ones before it
+end. `@storyteller/align` 0.2.17 (and 0.2.16 before it) breaks that in four ways, all fixed by
+`patches/@storyteller__align@0.2.17.patch`:
+
+- A cut found by voice activity (`getSafeRanges`, a file or chapter longer than the limit) ended the
+  piece at the start of the longest pause and began the next at its end, so the pause was dropped:
+  1.015 s and 2.127 s by the second and third piece of book 3308 (a 21,092 s single-file m4b). The cut
+  is now the middle of the pause, shared by both pieces, as STAlign's chapter-mark cuts are.
+- `splitFile` stream-copies (`-c:a copy`), which keeps whole packets, so a piece ran past its cut to the
+  end of the packet and the next piece repeated that audio: half a frame per cut on average, at every
+  chapter cut. It adds up: Century Rain (12 kHz AAC, 389 chapter cuts) was 16.3 s late by its end.
+  `processFile` now moves each cut shared by two stream-copied pieces (cuts closer than 1 us count as
+  shared) to the nearest packet boundary (`snapToPacketBoundary`, one ffprobe per shared cut, measured
+  from the file's own start time; a cut in the last packet moves to that packet's start) before
+  splitting and before writing the `.source.json` that records it. A file's first start and last end
+  stay put, re-encoded pieces are not snapped, and a chapter that snaps to nothing is skipped without
+  breaking the chain. ffmpeg copies packets for `to - ss` in whole microseconds, so `splitFile` rounds
+  `-ss` up and `-to` down.
+- A PCM demuxer hands out packets from wherever it seeks, so a WAV's packets share no grid to snap to
+  (a 600 s WAV with five cuts overran by 275 ms), and a copied FLAC piece keeps the whole file's sample
+  count in its header, so three pieces of a 250 s FLAC each claimed 250 s. `splitFile` re-encodes a
+  file whose only audio stream is PCM or FLAC to the same codec instead, which is lossless, and each
+  shared cut moves to the nearest sample (`snapToSample`): ffmpeg turns `-to` into a duration from
+  the first sample it keeps, so a cut between samples dropped one. The pieces' samples are the
+  source's, byte for byte. A file with several audio streams keeps the copy.
+- ghost-story's VAD decodes into a scratch file named after `Date.now()`, and the files of a book look
+  for chapter-cut silences at the same time, so two calls in one millisecond read or delete each other's
+  audio: a four-file chaptered book failed 11 runs in 15 with "No RIFF id". `findSilences` now cuts its
+  window and runs VAD one call at a time, so a book of many files also holds one window at a time, and
+  a cancelled job starts no queued call.
+
+If snapping the cuts of a file would leave a piece ending before it starts (cuts on both sides of a
+gap between chapters can snap to the same point), that file is cut unsnapped, with a warning.
+
+Stream copy stays (rather than re-encoding every piece or not splitting) because it is lossless and
+fast, and with packet-aligned cuts it is exact. A copied MP3 piece has no gapless header, so it decodes
+LAME's 529-sample delay (12 ms at 44.1 kHz) before its audio; the pieces still line up end to end. Not
+fixed and older than the patch: on a source whose audio starts after zero, STAlign ends the last piece at
+the metadata duration, about one frame short of the decoded end; on a raw ADTS `.aac` file the last
+piece stops at an estimated duration, short of the real end; and a copied MP3 piece can open with up to
+two frames of silence at a cut, because MP3 frames borrow data from the frames before them.
+`AUDIO_PREPARE_VERSION` (in the fork-owned `xhe-aac.ts`) went to 4 so cached splits are redone; a
+read-along generated before this keeps its drift until it is regenerated. BookOrbit's own timing indexes
+place each piece at its recorded start, so they are not affected.
+
+**Owned (fork-only) files:** `patches/@storyteller__align@0.2.17.patch`,
+`workers/read-aloud/test/split-continuity.test.mjs`. Its cases: pause cuts, chapter cuts, a chapter
+shorter than a frame, a long chapter cut at a pause, a chapter after such a cut, a mark in the last
+packet, audio starting after zero, copied CBR MP3, PCM WAV and FLAC (both compared sample for sample),
+a file with two PCM streams, cuts around a gap between chapters, and a book in four files. Each piece is
+checked against the source by cross-correlation within 2 ms, and so is its recorded start. A further
+case, VBR MP3 (which STAlign re-encodes, so the patch does not touch it), is a regression guard only. All
+of them are skipped where ffmpeg is missing.
+
+| Upstream file                   | Hook                                                 | Footprint          |
+| ------------------------------- | ---------------------------------------------------- | ------------------ |
+| `pnpm-workspace.yaml`           | `patchedDependencies` entry for `@storyteller/align` | 1 line             |
+| `pnpm-lock.yaml`                | the patch hash on the align entries                  | generated, 3 lines |
+| `workers/read-aloud/Dockerfile` | build fails if the deployed align lacks the patch    | 7 lines            |
+
+**Merge hazard:** the patch is pinned to `@storyteller/align@0.2.17`. When upstream bumps align, the
+install fails until the patch is redone with `pnpm patch` on the new version (0.2.16 to 0.2.17 carried
+over unchanged once the `@storyteller-platform/` import scope in the context lines became
+`@storyteller/`), or dropped if Storyteller fixed all of it. Run `split-continuity.test.mjs` against the
+new version without the patch first, and update the Dockerfile check's path and message with it.
+
 ## Investigated and rejected - do not re-chase
 
 Each of these was analysed and deliberately left alone. Re-attempting them wastes time.
@@ -1704,6 +1774,10 @@ golang.org/x/text@v0.43.0`, then `CGO_ENABLED=0 go build -trimpath -ldflags="-s 
 - Read-aloud worker: `READ_ALOUD_LOCAL_WORK_ROOT` (local work folders for a worker on another
   machine). Any remote native worker hits the per-file network cost; upstream owning it deletes
   `local-work.ts` and the six hooks.
+- `patches/@storyteller__align@0.2.17.patch` (also to Storyteller, which owns the code): split
+  pieces that keep the pause at a voice-activity cut, cut on packet boundaries (on samples for PCM) and
+  run VAD calls one at a time, so the pieces laid end to end match the source audiobook. Upstream's own
+  `buildAudioTimeline` drifts without it.
 
 ### Edition sync content-file trigger dependency
 

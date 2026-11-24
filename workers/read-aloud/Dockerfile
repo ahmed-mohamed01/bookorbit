@@ -37,6 +37,13 @@ RUN cd /deploy && \
       echo "ghost-story in the image lacks patches/@storyteller__ghost-story@0.3.5.patch" >&2; exit 1; \
     fi
 
+# Without the align patch, split pieces drop audio at every cut and read-alongs drift from the audiobook.
+RUN cd /deploy && \
+    patched="$(find node_modules/.pnpm -path '*/node_modules/@storyteller/align/dist/common/ffmpeg.js')" && \
+    if [ -z "$patched" ] || grep -L 'snapToPacketBoundary' $patched | grep -q .; then \
+      echo "align in the image lacks patches/@storyteller__align@0.2.17.patch" >&2; exit 1; \
+    fi
+
 FROM ${NODE_IMAGE} AS runtime
 WORKDIR /app
 # The worker never runs npm, and the npm bundled with the base image carries its own copies of

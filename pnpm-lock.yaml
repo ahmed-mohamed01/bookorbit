@@ -31,6 +31,7 @@ overrides:
   zod@>=4.0.0 <4.6.6: ^4.6.7
 
 patchedDependencies:
+  '@storyteller/align@0.2.17': 7ea7142bac0b809db0167742e0dd909d01a80672f4087882a0e9ba262ad55c27
   '@storyteller/ghost-story@0.3.5': 33487017dde10116de956234017057ad5318841171b366792343543935874849
   music-metadata@12.7.0: fa2c2139cc850302fb0d2249ee6ec5072c40f257486b8605e5ebe04b513550d4
 
@@ -601,7 +602,7 @@ importers:
         version: link:../../packages/types
       '@storyteller/align':
         specifier: 0.2.17
-        version: 0.2.17(@types/node@26.6.6)(supports-color@10.2.2)(ws@8.23.0)
+        version: 0.2.17(patch_hash=7ea7142bac0b809db0167742e0dd909d01a80672f4087882a0e9ba262ad55c27)(@types/node@26.6.6)(supports-color@10.2.2)(ws@8.23.0)
       '@storyteller/ghost-story':
         specifier: 0.3.5
         version: 0.3.5(patch_hash=33487017dde10116de956234017057ad5318841171b366792343543935874849)(@types/node@26.6.6)(supports-color@10.2.2)(ws@8.23.0)
@@ -12909,7 +12910,7 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
-  '@storyteller/align@0.2.17(@types/node@26.6.6)(supports-color@10.2.2)(ws@8.23.0)':
+  '@storyteller/align@0.2.17(patch_hash=7ea7142bac0b809db0167742e0dd909d01a80672f4087882a0e9ba262ad55c27)(@types/node@26.6.6)(supports-color@10.2.2)(ws@8.23.0)':
     dependencies:
       '@echogarden/icu-segmentation-wasm': 0.2.2
       '@echogarden/text-segmentation': 0.4.1(@echogarden/icu-segmentation-wasm@0.2.2)

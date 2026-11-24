@@ -21,8 +21,11 @@ import { StageError, type StageContext } from "./pipeline-contract.js";
  */
 export const XHE_AAC_PROFILE = "xHE-AAC";
 
-/** Part of the preparing-audio cache key, so audio split before this re-encode existed is split again. */
-export const AUDIO_PREPARE_VERSION = 3;
+/**
+ * Part of the preparing-audio cache key, so audio split by an older splitter is split again: before
+ * this re-encode existed (3), and before the align patch cut on packet boundaries and kept pauses (4).
+ */
+export const AUDIO_PREPARE_VERSION = 4;
 
 /** How long a re-encode may go without advancing before the job fails. */
 export const XHE_AAC_STALL_MS = 5 * 60_000;

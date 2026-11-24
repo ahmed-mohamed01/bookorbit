@@ -1,0 +1,229 @@
+diff --git a/dist/common/ffmpeg.js b/dist/common/ffmpeg.js
+index d6cb6497aaaea2d14d2502fdac62c13d3d0d39f2..d80b977269417b49f63f3cd4d506559f2d5cc53c 100644
+--- a/dist/common/ffmpeg.js
++++ b/dist/common/ffmpeg.js
+@@ -187,23 +187,105 @@ function commonFfmpegArguments(options) {
+     }
+     return args;
+ }
++/**
++ * BookOrbit: the packet start nearest to `seconds`, relative to the file start
++ * as `-ss` and `-to` are. A stream copy keeps whole packets, so a cut inside
++ * one runs the piece on to the packet's end and the next piece repeats that
++ * audio; on a boundary, pieces laid end to end match the source. A point in
++ * the last packet moves to that packet's start.
++ */
++export async function snapToPacketBoundary(input, seconds, signal, logger) {
++    if (seconds <= 0)
++        return seconds;
++    const offset = (await getTrackInfo(input, logger)).startTime || 0;
++    const stdout = await execCmd("ffprobe", [
++        "-v",
++        "error",
++        "-select_streams",
++        "a:0",
++        "-read_intervals",
++        `${Math.max(0, offset + seconds - 1)}%${offset + seconds + 1}`,
++        "-show_entries",
++        "packet=pts:stream=time_base",
++        "-of",
++        "json",
++        input,
++    ], logger, signal);
++    const { packets, streams } = JSON.parse(stdout);
++    const [num, den] = String(streams?.[0]?.time_base).split("/").map(Number);
++    if (!num || !den)
++        return seconds;
++    const starts = (packets ?? [])
++        .map((packet) => (Number(packet.pts) * num) / den - offset)
++        .filter((start) => Number.isFinite(start) && start >= 0);
++    if (!starts.length)
++        return seconds;
++    return starts.reduce((nearest, start) => Math.abs(start - seconds) < Math.abs(nearest - seconds) ? start : nearest);
++}
++/**
++ * BookOrbit: the codec of `input`'s only audio stream when it is PCM or FLAC,
++ * else null. A PCM demuxer hands out packets from wherever it seeks to, so they
++ * share no grid to snap to, and a copied FLAC piece keeps the whole file's
++ * sample count in its header; `splitFile` re-encodes either to the same codec
++ * instead, which is lossless and cuts on the exact sample. With more than one
++ * audio stream a single codec cannot be passed for all of them.
++ */
++const losslessStream = memoize(async function losslessStream(input, logger) {
++    const stdout = await execCmd("ffprobe", ["-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_name,sample_rate", "-of", "csv=p=0", input], logger);
++    const streams = stdout.split("\n").map((line) => line.trim().split(",")).filter(([codec]) => codec);
++    const [[codec, sampleRate] = []] = streams;
++    return streams.length === 1 && (codec.startsWith("pcm_") || codec === "flac") && Number(sampleRate) > 0
++        ? { codec, sampleRate: Number(sampleRate) }
++        : null;
++});
++/**
++ * BookOrbit: `seconds` on the nearest sample of a file `splitFile` re-encodes
++ * losslessly. ffmpeg turns `-to` into a duration from the first sample it
++ * keeps, so only a cut on a sample ends one piece where the next starts.
++ */
++export async function snapToSample(input, outputExtension, encoding, seconds, logger) {
++    const stream = await sameLosslessStream(input, outputExtension, encoding, logger);
++    return stream ? Math.round(seconds * stream.sampleRate) / stream.sampleRate : seconds;
++}
++/** BookOrbit: the only audio stream of a same-container lossless copy, which `splitFile` re-encodes, or null. */
++async function sameLosslessStream(input, outputExtension, encoding, logger) {
++    if (encoding?.codec ||
++        MediaType.fromExtension(extname(input)) !== MediaType.fromExtension(outputExtension))
++        return null;
++    return losslessStream(input, logger);
++}
++/** BookOrbit: whether `splitFile` would stream-copy `input` into a file with `outputExtension`. */
++export async function isStreamCopy(input, outputExtension, encoding, logger) {
++    return (!encoding?.codec &&
++        canCopyCodec(MediaType.fromExtension(extname(input)), MediaType.fromExtension(outputExtension)) &&
++        !(await sameLosslessStream(input, outputExtension, encoding, logger)));
++}
++/**
++ * BookOrbit: ffmpeg reads `-ss` and `-to` in whole microseconds and copies
++ * packets for `to - ss`. Rounding the start up and the end down keeps that
++ * span within the packets between two boundaries, so no extra packet is kept.
++ */
++function toMicrosecondArg(seconds, round) {
++    return (round(seconds * 1e6) / 1e6).toFixed(6);
++}
+ export async function splitFile(input, output, start, end, encoding, signal, logger) {
+     if (start === end)
+         return false;
+     logger?.info(`Splitting ${input} start: ${start} end: ${end}${encoding?.codec ? ` codec: ${encoding.codec}` : ""}`);
++    const codec = encoding?.codec ?? (await sameLosslessStream(input, extname(output), encoding, logger))?.codec;
+     const command = "ffmpeg";
+     const args = [
+         "-nostdin",
+         "-ss",
+-        String(start),
++        toMicrosecondArg(start, Math.ceil),
+         "-to",
+-        String(end),
++        toMicrosecondArg(end, Math.floor),
+         "-i",
+         input,
+         ...commonFfmpegArguments({
+             sourceExtension: extname(input),
+             destExtension: extname(output),
+-            codec: encoding?.codec ?? null,
++            codec: codec ?? null,
+             bitrate: encoding?.bitrate ?? null,
+         }),
+         output,
+diff --git a/dist/process/processAudiobook.js b/dist/process/processAudiobook.js
+index 599d0da77889f9bb972ec9f63ded4b8fd87ecfea..18d7b5d50dd870b9dfd49031bd473584faa1e1f5 100644
+--- a/dist/process/processAudiobook.js
++++ b/dist/process/processAudiobook.js
+@@ -57,7 +57,7 @@ import { AUDIO_ENCODERS, Audiobook, outputContainer, } from "@storyteller/audiob
+ import { isHiddenFile } from "@storyteller/fs";
+ import { createAggregator, createTiming, } from "@storyteller/ghost-story";
+ import { MediaType } from "@storyteller/media-types";
+-import { getTrackInfo, isVbrMp3, selectCbrBitrate, splitFile, } from "../common/ffmpeg.js";
++import { getTrackInfo, isStreamCopy, isVbrMp3, selectCbrBitrate, snapToPacketBoundary, snapToSample, splitFile, } from "../common/ffmpeg.js";
+ import { getSafeChapterRanges } from "./ranges.js";
+ import { describeTrackSource, writeTrackSource } from "./trackSource.js";
+ export async function processAudiobook(input, output, options) {
+@@ -150,6 +150,43 @@ export async function processFile(input, output, prefix, options) {
+             const result = await resolveVbrEncoding(filepath, options.encoding, options.logger);
+             vbrEncodings.set(filepath, result);
+         }));
++        // BookOrbit: a cut shared by two stream-copied pieces moves to the nearest
++        // packet boundary (or sample, for a lossless re-encode), so both pieces
++        // and their recorded ranges meet there.
++        // A file's own start and end stay as they are; a piece that collapses
++        // to nothing is skipped by splitFile.
++        const unsnapped = ranges.map(({ start, end }) => ({ start, end }));
++        const cuts = new Map();
++        for (const [index, range] of ranges.entries()) {
++            const next = ranges[index + 1];
++            // A range cut at a pause inside a chapter ends at a sum that can
++            // differ from the next chapter's start in the last bits.
++            if (!next || next.filepath !== range.filepath || Math.abs(next.start - range.end) > 1e-6)
++                continue;
++            const encoding = vbrEncodings.has(range.filepath)
++                ? vbrEncodings.get(range.filepath)
++                : options.encoding;
++            const extension = outputContainer(encoding?.codec, MediaType.fromPath(range.filepath))?.extension ?? extname(range.filepath);
++            if (await isStreamCopy(range.filepath, extension, encoding, options.logger))
++                cuts.set(index, await snapToPacketBoundary(range.filepath, range.end, options.signal, options.logger));
++            else
++                cuts.set(index, await snapToSample(range.filepath, extension, encoding, range.end, options.logger));
++        }
++        for (const [index, cut] of cuts) {
++            const low = cuts.get(index - 1) ?? ranges[index].start;
++            const high = cuts.get(index + 1) ?? ranges[index + 1].end;
++            if (cut < low || cut > high)
++                continue;
++            ranges[index].end = cut;
++            ranges[index + 1].start = cut;
++        }
++        // Cuts around a gap between chapters can each pass their own check and
++        // still leave a piece ending before it starts, which ffmpeg refuses.
++        if (ranges.some((range) => range.end < range.start)) {
++            options.logger?.warn(`Snapping the cuts in ${input} would run a piece backwards; cutting them unsnapped`);
++            for (const [index, range] of ranges.entries())
++                Object.assign(range, unsnapped[index]);
++        }
+         await Promise.all(ranges.map(async (range, index) => {
+             const env_2 = { stack: [], error: void 0, hasError: false };
+             try {
+diff --git a/dist/process/ranges.js b/dist/process/ranges.js
+index 8a8680dd97d59532170fb52d0ccea45c2c89b954..8d032c5f63d37b4e5a9967ed7f64a3dac454be7a 100644
+--- a/dist/process/ranges.js
++++ b/dist/process/ranges.js
+@@ -164,6 +164,18 @@ export function chooseChapterCut(mark, silences, { maxDistance = CHAPTER_CUT_MAX
+     }
+     return { cut: (nearest.start + nearest.end) / 2, reason: "moved" };
+ }
++/**
++ * BookOrbit: ghost-story's VAD decodes into a scratch file named after
++ * `Date.now()` and deletes it when done, and the files of a book look for
++ * chapter-cut silences concurrently. Two calls in the same millisecond read or
++ * delete each other's audio, so VAD calls run one at a time.
++ */
++let vadQueue = Promise.resolve();
++function oneAtATime(task) {
++    const run = vadQueue.then(task, task);
++    vadQueue = run.catch(() => undefined);
++    return run;
++}
+ /**
+  * The stretches of `input` between `from` and `to` (seconds) that the VAD
+  * considers non-speech, in absolute seconds. Returns an empty array when
+@@ -171,10 +183,15 @@ export function chooseChapterCut(mark, silences, { maxDistance = CHAPTER_CUT_MAX
+  * misjudged the track's duration near its end.
+  */
+ async function findSilences(input, from, to, tmpFilepath, signal, logger) {
+-    await mkdir(dirname(tmpFilepath), { recursive: true });
+-    await splitFile(input, tmpFilepath, from, to, {}, signal, logger);
+-    const timeline = await detectVoiceActivity(tmpFilepath, {
+-        engine: "active-gate-og",
++    // BookOrbit: the window is cut inside the queue too, so a book of many files
++    // holds one window at a time, and a cancelled job starts no queued work.
++    const timeline = await oneAtATime(async () => {
++        signal?.throwIfAborted();
++        await mkdir(dirname(tmpFilepath), { recursive: true });
++        await splitFile(input, tmpFilepath, from, to, {}, signal, logger);
++        return detectVoiceActivity(tmpFilepath, {
++            engine: "active-gate-og",
++        });
+     });
+     return timeline
+         .filter((segment) => !segment.isSpeech)
+@@ -211,9 +228,13 @@ export async function getSafeRanges(input, duration, maxSeconds, start = 0, sign
+             // one element in it
+             // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+             const lastRange = ranges.at(-1);
+-            lastRange.end = nearestLikelySentenceBreak.start;
++            // BookOrbit: both pieces share one cut in the middle of the pause, as
++            // chapter cuts do. Ending on the pause's start and resuming on its end
++            // dropped the pause, so pieces laid end to end ran ahead of the source.
++            const cut = (nearestLikelySentenceBreak.start + nearestLikelySentenceBreak.end) / 2;
++            lastRange.end = cut;
+             ranges.push({
+-                start: nearestLikelySentenceBreak.end,
++                start: cut,
+                 end: duration + start,
+             });
+         }
