@@ -5,6 +5,7 @@ import {
   forkWebSerialSettingsRoutes,
   forkLibraryRoutes,
   forkToolRoutes,
+  forkJobsActivityRoutes,
 } from './fork-routes'
 import {
   createRouter,
@@ -750,6 +751,7 @@ export const routes: RouteRecordRaw[] = [
             name: 'jobs-activity',
             component: () => import('@/features/jobs/views/JobsActivityView.vue'),
             meta: { title: () => t('titles.jobs') },
+            children: forkJobsActivityRoutes,
           },
           {
             path: 'story-guides',

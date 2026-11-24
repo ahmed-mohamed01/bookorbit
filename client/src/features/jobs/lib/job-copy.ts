@@ -29,7 +29,8 @@ const AI_REASONS = new Set([
 ])
 
 /** Copy for a type this page does not know yet falls back to generic wording. */
-function typeKey(type: string, leaf: string): string | null {
+function typeKey(type: string | undefined, leaf: string): string | null {
+  if (!type) return null
   const key = `jobsArea.types.${type}.${leaf}`
   return te(key) ? key : null
 }
@@ -68,18 +69,18 @@ export function jobStatusLabel(status: JobStatus): string {
   return AI_WORDED_STATUSES.has(status) ? t(`aiArea.activity.status.${status}`) : t('jobsArea.status.unknown')
 }
 
-export function jobActionLabel(action: JobActionKind): string {
-  return AI_WORDED_ACTIONS.has(action) ? t(`aiArea.activity.actions.${action}`) : t(`jobsArea.actions.${action}`)
+export function jobActionLabel(action: JobActionKind, type?: JobListItem['type']): string {
+  return t(typeKey(type, `actions.${action}`) ?? `${AI_WORDED_ACTIONS.has(action) ? 'aiArea.activity' : 'jobsArea'}.actions.${action}`)
 }
 
 /** A label that names the job too, since every row offers the same buttons. */
-export function jobActionOnLabel(action: JobActionKind, name: string): string {
-  return AI_WORDED_ACTIONS.has(action) ? t(`aiArea.activity.actionsOn.${action}`, { name }) : t(`jobsArea.actionsOn.${action}`, { name })
+export function jobActionOnLabel(action: JobActionKind, name: string, type?: JobListItem['type']): string {
+  return t(typeKey(type, `actionsOn.${action}`) ?? `${AI_WORDED_ACTIONS.has(action) ? 'aiArea.activity' : 'jobsArea'}.actionsOn.${action}`, { name })
 }
 
 /** What an action did, for the jobs it was done to. */
-export function jobResultText(action: JobActionKind, count: number): string {
-  return AI_WORDED_ACTIONS.has(action) ? t(`aiArea.activity.results.${action}`, { count }) : t(`jobsArea.results.${action}`, { count })
+export function jobResultText(action: JobActionKind, count: number, type?: JobListItem['type']): string {
+  return t(typeKey(type, `results.${action}`) ?? `${AI_WORDED_ACTIONS.has(action) ? 'aiArea.activity' : 'jobsArea'}.results.${action}`, { count })
 }
 
 /**

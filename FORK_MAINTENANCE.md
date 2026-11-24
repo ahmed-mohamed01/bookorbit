@@ -826,7 +826,7 @@ book-move and scanner paths the slot and flag cascade together.
 
 ## Current conflict surface (semantic, `-w`)
 
-### Jobs queue action hooks
+### Jobs queue action and request drawer hooks
 
 Measured with `git diff -w upstream/main --numstat`. Totals include the existing fork changes in each file.
 
@@ -835,6 +835,15 @@ Measured with `git diff -w upstream/main --numstat`. Totals include the existing
 | `server/src/app.module.ts` | 16 | 0 | Registers fork modules, including `ForkJobReorderModule` |
 | `packages/types/src/index.ts` | 11 | 0 | Exports fork contracts, including `fork-job-reorder` |
 | `packages/types/src/jobs.ts` | 13 | 1 | Shared action kinds for adjacent movement and starting |
+| `client/src/features/jobs/lib/job-presentation.ts` | 9 | 3 | Start uses an action button, adjacent moves stay on the grip, and front-of-queue actions stay in the row menu |
+| `client/src/features/jobs/lib/job-copy.ts` | 8 | 7 | Optional per-type action labels and result messages |
+| `client/src/features/jobs/components/JobTableRow.vue` | 45 | 13 | Reorder grip, Open/Review link with Jobs drawer routing for request URLs, menu-only actions and per-type labels |
+| `client/src/features/jobs/views/JobsActivityView.vue` | 21 | 7 | Drag bindings, per-type results for single-type targets, and the request drawer host in displayed row order |
+| `client/src/features/jobs/views/JobsActivityView.test.ts` | 37 | 4 | Covers row-only movement, Start in the selection bar and keyboard access during progress refresh |
+| `client/src/router/index.ts` | 18 | 0 | Fork routes, including the request detail child of Jobs Activity |
+| `client/src/components/AppLayout.vue` | 3 | 0 | Keeps the app view keyed to Jobs Activity while the request drawer is open |
+| `client/src/features/book-requests/composables/useRequestQueue.ts` | 1 | 1 | Lets the shared stepper accept Jobs rows adapted to request IDs |
+| `client/src/locales/en.json` | 2753 | 143 | Grip labels, movement results and per-type Move to top copy, alongside existing fork copy |
 
 ### 2026-11-14 surface shrink after the v3.8.0 merge
 
@@ -1376,6 +1385,18 @@ settings administrator can start a manual run from the first row in scope. The s
 the global queue head when starting and retries after a bounded batch of lost claim races. When
 the server switch is off, pinned rows show Paused and link to `/settings/fork`, and backlog rows are hidden.
 
+**Jobs queue drag and drop:** The fork client files `JobReorderHandle.vue`, `JobDragPreview.vue`, `JobDropIndicator.vue`,
+`useJobRowDrag.ts`, `job-reorder.ts` and `job-reorder.api.ts` own the grip, keyboard dispatch and
+pointer interactions. Drag targets come from the current page, across queue bands. The edition sync
+backlog head and a lone pin at rank one accept a drop before them even without adjacent move actions.
+Only rows with a move action get a grip. Its arrow keys take the adjacent actions and restore focus
+when the moved job changes bands. The existing Jobs list composable refreshes the page after a drop.
+Background refreshes leave drag and keyboard input enabled and preserve the table's `aria-busy` state.
+After the drag threshold, the cover, title and queue detail follow the pointer on animation frames.
+The original row stays dimmed in place and the drop line stays visible above the preview.
+Edition sync and Convert to M4B use Move to top at ranks below first. Both front-of-queue actions
+appear in More actions across all job types and remain available in the selection bar.
+
 `ForkJobReorderModule` is registered in `app.module.ts` and imports `JobsModule` for the exported
 source registry. Its session-only `POST /api/v1/fork/jobs/reorder` uses the Jobs view permissions.
 The fork-owned `ReorderableJobSource` interface adds relative placement to the three fork adapters.
@@ -1406,6 +1427,20 @@ imports `../edition-sync/edition-sync-fallback.service` (optional injection) and
 server does not compile. Whisper removal later: delete `reading-alignment/` and the two seams above;
 `whisperFallback` on the book state becomes `false`. The worker image seams stay with the fork image
 even if the server module is removed. The fork tables can stay in the database; nothing else reads them.
+
+## Jobs request drawer overlay
+
+Review and Open on Jobs rows with a request URL open `/jobs/activity/requests/:id` with the active
+Jobs query. The fork route in `client/src/router/fork-routes.ts` renders the existing request panel
+inside `JobRequestDrawer.vue`, which reuses the Requests drawer and stepper. The stepper follows the
+distinct request-download entries on the current page in display order. Closing preserves the
+Jobs filters, page and scroll. The same URL loads the drawer over Jobs directly, and the release
+picker opens on the Requests page. Jobs retains its route permission and the panel handles
+request-level access.
+
+**Fork-owned files:** `client/src/features/jobs/components/JobRequestDrawer.vue`,
+`client/src/features/jobs/lib/job-subject-route.ts`, their tests, and the route record in
+`client/src/router/fork-routes.ts`.
 
 ## Convert to M4B overlay (audio conversion)
 
@@ -1641,6 +1676,13 @@ golang.org/x/text@v0.43.0`, then `CGO_ENABLED=0 go build -trimpath -ldflags="-s 
   own ratio but lets the artwork fall back to the library's, so a 2/3 cover in a square-cover library is
   drawn at two-thirds width in the natural-bottom display mode. `BookCoverCard.vue` already passes the
   ratio. Drop the line when upstream fixes it; `BookListRow.spec.ts` has the case.
+- `client/src/features/jobs/components/JobTableRow.vue`: +23/-1 lines and four `jobsArea.*` keys in
+  `en.json` (`open`, `review`, `openOn`, `reviewOn`), 2026-11-19. A Jobs row in Needs you, Failed or Paused
+  that offers no action but has a subject URL shows a Review (Needs you) or Open link-button in the lead
+  slot. Upstream's request-download and read-along Needs-you rows have no action by design (review lives
+  on the request or book page), so the row only led on through a title that underlines on hover. Client
+  only, navigation only. Drop it when upstream adds an equivalent; `JobTableRow.open-link.test.ts` has the
+  cases.
 - `scanner.service.ts`: the `!selfWriteInProgress` guard the fork adds to steps 3c/3d/3e;
   upstream applies it to 3a/3b and states the rule in its own comment.
 - `metadata.service.ts`: `!= null` instead of `!== undefined` for `audibleId` /

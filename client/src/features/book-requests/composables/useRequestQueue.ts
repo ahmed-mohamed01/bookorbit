@@ -6,7 +6,7 @@ import type { BookRequestItem } from '@bookorbit/types'
  * position it reports can never disagree with the table behind it. It stops at both ends: wrapping
  * from the last row back to the first reads as a bug when the count says you are at the end.
  */
-export function useRequestQueue(items: Ref<BookRequestItem[]>, currentId: Ref<number | null>) {
+export function useRequestQueue(items: Ref<Pick<BookRequestItem, 'id' | 'companion'>[]>, currentId: Ref<number | null>) {
   // Either half of a pair stands at the pair's place in the list: the drawer can be open on the
   // audiobook while the row it belongs to is led by the ebook.
   const index = computed(() =>

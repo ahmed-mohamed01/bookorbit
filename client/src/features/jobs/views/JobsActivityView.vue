@@ -13,8 +13,13 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { formatCompactNumber, formatNumber } from '@/i18n/formatters'
 import { errorMessage } from '@/lib/api-json'
+import JobDragPreview from '../components/JobDragPreview.vue'
+import JobDropIndicator from '../components/JobDropIndicator.vue'
+import JobRequestDrawer from '../components/JobRequestDrawer.vue'
 import JobTableRow from '../components/JobTableRow.vue'
 import { JOB_PAGE_SIZE, useJobList } from '../composables/useJobList'
+import { useJobRowDrag } from '../composables/useJobRowDrag'
+import { isJobMove } from '../lib/job-reorder'
 import { jobActionLabel, jobDayLabel, jobResultText, jobTypeLabel } from '../lib/job-copy'
 import { jobsFilterFromQuery, jobsFilterQuery } from '../lib/jobs-filter'
 import { JOB_ACTION_ICONS, JOB_QUEUE_BANDS, jobMoment, jobQueueBand, localDayKey } from '../lib/job-presentation'
@@ -38,7 +43,6 @@ const {
   counts,
   loading,
   failed,
-  acting,
   selectedIds,
   selected,
   selectedActions,
@@ -50,6 +54,7 @@ const {
   toggleAll,
   clearSelection,
 } = jobs
+const { table, dragging, busy, showReorder, line, preview, handlePointerDown, keepHandleFocus } = useJobRowDrag(jobs)
 
 /** Those who manage the server see costs. */
 const manages = computed(() => hasPermission(Permission.ManageAppSettings))
@@ -84,9 +89,8 @@ function followAddress() {
 watch(filterQuery, syncAddress)
 watch(() => route.query, followAddress)
 const showingEveryone = computed(() => displayedScope.value === 'everyone')
-const busy = computed(() => acting.value !== null)
 const labelFirst = computed(() => displayedView.value === 'needs-you' || displayedView.value === 'failed')
-const columnCount = computed(() => 7 + (showingEveryone.value ? 1 : 0))
+const columnCount = computed(() => 7 + Number(showingEveryone.value) + Number(showReorder.value))
 const emptyIcon = computed(() => (displayedView.value === 'history' ? History : CircleCheck))
 
 interface Band {
@@ -184,19 +188,20 @@ function retryLoad() {
   void jobs.load(true)
 }
 
-function report(action: JobActionKind, response: JobActionResponse) {
+function report(action: JobActionKind, response: JobActionResponse, type?: JobListItem['type']) {
   const done = response.results.filter((result) => result.outcome === 'done').length
   const stillPaused = response.results.filter((result) => result.outcome === 'still-paused').length
   const other = response.results.length - done - stillPaused
-  if (done > 0) toast.success(jobResultText(action, done))
+  if (done > 0) toast.success(jobResultText(action, done, type))
   if (stillPaused > 0) toast.info(t('aiArea.activity.results.stillPaused', { count: stillPaused }))
   if (other > 0) toast.warning(t('aiArea.activity.results.unchanged', { count: other }))
 }
 
 async function run(action: JobActionKind, targets: readonly JobListItem[]) {
+  const type = targets[0]?.type
   try {
     const response = await jobs.act(action, targets)
-    if (response) report(action, response)
+    if (response) report(action, response, targets.every((item) => item.type === type) ? type : undefined)
   } catch (reason) {
     toast.error(errorMessage(reason, 'jobsArea.actionFailed'))
   }
@@ -211,7 +216,8 @@ function request(action: JobActionKind, targets: readonly JobListItem[]) {
 }
 
 function handleItemAction(action: JobActionKind, item: JobListItem) {
-  request(action, [item])
+  if (isJobMove(action)) void keepHandleFocus(item.id, () => run(action, [item]))
+  else request(action, [item])
 }
 
 function handleBulkAction(action: JobActionKind) {
@@ -388,14 +394,19 @@ function handleNext() {
 
     <div
       v-else
+      ref="table"
       class="@container/jobs overflow-hidden rounded-xl border border-border bg-card shadow-xs"
       :aria-busy="loading"
       data-testid="jobs-table"
+      @pointerdown="handlePointerDown"
     >
+      <JobDragPreview :preview="preview" />
+      <JobDropIndicator :line="line" />
       <span v-if="loading" class="sr-only" role="status">{{ t('jobsArea.loading') }}</span>
       <table class="w-full border-collapse text-start [&_tbody>tr:first-child>td]:border-t-0 [&_tr[data-band]+tr>td]:border-t-0">
         <thead>
           <tr>
+            <th v-if="showReorder" class="w-px border-b border-border bg-muted/40" aria-hidden="true" />
             <th scope="col" class="h-9 w-px border-b border-border bg-muted/40 ps-4 pe-3 text-start @max-4xl/jobs:ps-3 @max-4xl/jobs:pe-2">
               <input
                 type="checkbox"
@@ -465,6 +476,8 @@ function handleNext() {
               :show-cost="manages"
               :label-first="labelFirst"
               :busy="busy"
+              :show-reorder="showReorder"
+              :class="{ 'opacity-50': dragging === item.id }"
               @toggle="toggle"
               @act="handleItemAction"
               @note="handleNote"
@@ -502,6 +515,7 @@ function handleNext() {
       </div>
     </nav>
 
+    <JobRequestDrawer :items="bands.flatMap(({ rows }) => rows)" />
     <ConfirmDialog
       :open="cancelOpen"
       :title="t('aiArea.activity.confirmCancel.title', { count: cancelCount })"

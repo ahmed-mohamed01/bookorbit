@@ -22,11 +22,17 @@ import {
   X,
 } from '@lucide/vue'
 import type { JobActionKind, JobListItem, JobType } from '@bookorbit/types'
+import type { JobMove } from './job-reorder'
+
+type JobButtonAction = Exclude<JobActionKind, JobMove>
 
 /** The order actions are offered in: the step forward first, the way out last. */
-export const JOB_ACTION_ORDER: readonly JobActionKind[] = ['continue', 'retry', 'resume', 'pause', 'move-to-top', 'prioritize', 'dismiss', 'cancel']
+export const JOB_ACTION_ORDER: readonly JobButtonAction[] = ['start', 'continue', 'retry', 'resume', 'pause', 'move-to-top', 'prioritize', 'dismiss', 'cancel']
 
-export const JOB_ACTION_ICONS: Record<JobActionKind, Component> = {
+export const JOB_MENU_ONLY_ACTIONS: ReadonlySet<JobActionKind> = new Set(['move-to-top', 'prioritize'])
+
+export const JOB_ACTION_ICONS: Record<JobButtonAction, Component> & Partial<Record<JobMove, Component>> = {
+  start: Play,
   continue: StepForward,
   retry: RotateCcw,
   resume: Play,
@@ -56,7 +62,7 @@ export function jobTypeIcon(type: string): Component {
   return TYPE_ICONS[type as JobType] ?? ListTodo
 }
 
-export function orderedJobActions(actions: readonly JobActionKind[]): JobActionKind[] {
+export function orderedJobActions(actions: readonly JobActionKind[]): JobButtonAction[] {
   return JOB_ACTION_ORDER.filter((action) => actions.includes(action))
 }
 

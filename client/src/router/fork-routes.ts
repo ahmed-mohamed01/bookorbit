@@ -4,6 +4,15 @@ import { i18n } from '@/i18n'
 
 const t = i18n.global.t
 
+export const forkJobsActivityRoutes: RouteRecordRaw[] = [
+  {
+    path: 'requests/:id',
+    name: 'jobs-request-detail',
+    component: () => import('@/features/book-requests/components/RequestDetailPanel.vue'),
+    meta: { title: () => t('titles.jobs') },
+  },
+]
+
 export const forkIntegrationRoutes: RouteRecordRaw[] = [
   // Fork: Convert to M4B.
   {

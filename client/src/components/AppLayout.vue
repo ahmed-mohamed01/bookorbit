@@ -47,6 +47,7 @@ const viewKey = computed(() => {
   const name = String(route.name)
   if (BOOK_ROUTE_NAMES.has(name)) return name
   if (REQUEST_ROUTE_NAMES.has(name)) return 'requests'
+  if (name === 'jobs-request-detail') return '/jobs/activity'
   if (name.startsWith('settings-')) return 'settings'
   if (name.startsWith('tools-')) return 'tools'
   return route.path

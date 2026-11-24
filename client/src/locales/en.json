@@ -17788,6 +17788,10 @@
     "costSoFar": "Cost so far",
     "moreActions": "More actions: {name}",
     "moreActionsShort": "More actions",
+    "open": "Open",
+    "review": "Review",
+    "openOn": "Open {name}",
+    "reviewOn": "Review {name}",
     "whyLocked": "Why you can't change {name}",
     "noBulkActions": "Nothing applies to these jobs.",
     "bulkAppliesTo": "{total, plural, one {Applies to {count} of # selected job} other {Applies to {count} of # selected jobs}}",
@@ -17808,19 +17812,27 @@
       "type": "Type",
       "requester": "Requested by"
     },
+    "reorderHandle": "Drag to reorder",
+    "reorderHandleOn": "Drag to reorder: {name}",
+    "reorderResult": "{count, plural, one {Moved # job.} other {Moved # jobs.}}",
     "actions": {
       "continue": "Continue",
       "move-to-top": "Move to front of my jobs",
+      "start": "Start now",
       "prioritize": "Move ahead of everyone"
     },
     "actionsOn": {
       "continue": "Continue {name}",
       "move-to-top": "Move to front of my jobs: {name}",
+      "start": "Start now: {name}",
       "prioritize": "Move ahead of everyone: {name}"
     },
     "results": {
       "continue": "{count, plural, one {Continued # job.} other {Continued # jobs.}}",
       "move-to-top": "{count, plural, one {Moved # job to the front of your jobs.} other {Moved # jobs to the front of your jobs.}}",
+      "move-up": "{count, plural, one {Moved # job up.} other {Moved # jobs up.}}",
+      "move-down": "{count, plural, one {Moved # job down.} other {Moved # jobs down.}}",
+      "start": "Started.",
       "prioritize": "{count, plural, one {Moved # job ahead of everyone's.} other {Moved # jobs ahead of everyone's.}}"
     },
     "confirmCancel": {
@@ -18047,6 +18059,15 @@
       "audio-convert": {
         "label": "Convert to M4B",
         "title": "Convert to M4B",
+        "actions": {
+          "move-to-top": "Move to top"
+        },
+        "actionsOn": {
+          "move-to-top": "Move to top: {name}"
+        },
+        "results": {
+          "move-to-top": "{count, plural, one {Moved # job to the top.} other {Moved # jobs to the top.}}"
+        },
         "phases": {
           "converting": "Joining audio",
           "swapping": "Swapping files"
@@ -18079,8 +18100,14 @@
       "edition-sync": {
         "label": "Edition sync index",
         "title": "Edition sync index",
-        "titles": {
-          "backlog": "Books waiting to be indexed"
+        "actions": {
+          "move-to-top": "Move to top"
+        },
+        "actionsOn": {
+          "move-to-top": "Move to top: {name}"
+        },
+        "results": {
+          "move-to-top": "{count, plural, one {Moved # job to the top.} other {Moved # jobs to the top.}}"
         },
         "kinds": {
           "scheduled": "Indexing in the scheduled run",

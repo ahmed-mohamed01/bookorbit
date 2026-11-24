@@ -250,6 +250,36 @@ describe('JobsActivityView', () => {
     expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ counts: true }))
   })
 
+  it('keeps the table idle and the grip keyboard-enabled during a progress refresh', async () => {
+    vi.useFakeTimers()
+    const jobs = page([
+      item({ id: 'audio-convert:running', type: 'audio-convert', status: 'running', position: null, actions: [] }),
+      item({ id: 'audio-convert:queued', type: 'audio-convert', position: 1, actions: ['move-down'] }),
+    ])
+    let finishRefresh!: (value: JobList) => void
+    const pending = new Promise<JobList>((resolve) => {
+      finishRefresh = resolve
+    })
+    const list = vi.spyOn(jobsApi, 'listJobs').mockResolvedValue(jobs).mockReturnValueOnce(Promise.resolve(jobs)).mockReturnValueOnce(pending)
+    const act = vi.spyOn(jobsApi, 'actOnJobs').mockResolvedValue({ results: [{ id: 'audio-convert:queued', outcome: 'done', status: 'queued' }] })
+    const wrapper = await mountView()
+
+    mocks.listeners[0]!.changed({ type: 'audio-convert', state: false })
+    await vi.advanceTimersByTimeAsync(JOBS_REFRESH_GAP_MS)
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ counts: false }))
+    expect(wrapper.get('[data-testid="jobs-table"]').attributes('aria-busy')).toBe('false')
+    const handle = wrapper.get<HTMLButtonElement>('[data-job-reorder-handle]')
+    handle.element.focus()
+    await handle.trigger('keydown', { key: 'ArrowDown' })
+    expect(act).toHaveBeenCalledWith({ action: 'move-down', ids: ['audio-convert:queued'] })
+
+    finishRefresh(jobs)
+    await flushPromises()
+    expect(wrapper.get('[data-testid="jobs-table"]').attributes('aria-busy')).toBe('false')
+    expect(document.activeElement).toBe(handle.element)
+  })
+
   it('filters by type among the types the viewer sees, and keeps the filter in the address', async () => {
     const list = vi.spyOn(jobsApi, 'listJobs').mockResolvedValue({ ...page([item()]), types: ['story-guide', 'bulk-run'], scopes: ['mine'] })
     const wrapper = await mountView()
@@ -316,21 +346,24 @@ describe('JobsActivityView', () => {
   it('says how many selected jobs each bulk action applies to, and acts only on those', async () => {
     vi.spyOn(jobsApi, 'listJobs').mockResolvedValue(
       page([
-        item({ id: 'story-guide:1', actions: ['pause', 'cancel'] }),
-        item({ id: 'bulk-run:2', type: 'bulk-run', kind: 'book-move', position: null, status: 'running', actions: ['cancel'] }),
+        item({ id: 'edition-sync:1', type: 'edition-sync', actions: ['start', 'pause', 'cancel', 'move-down'] }),
+        item({ id: 'bulk-run:2', type: 'bulk-run', kind: 'book-move', position: null, status: 'queued', actions: ['cancel', 'move-up'] }),
       ]),
     )
-    const act = vi.spyOn(jobsApi, 'actOnJobs').mockResolvedValue({ results: [{ id: 'story-guide:1', outcome: 'done', status: 'paused' }] })
+    const act = vi.spyOn(jobsApi, 'actOnJobs').mockResolvedValue({ results: [{ id: 'edition-sync:1', outcome: 'done', status: 'paused' }] })
     const wrapper = await mountView()
     await wrapper.find('[data-testid="jobs-select-all"]').setValue(true)
     await flushPromises()
 
+    expect(wrapper.find('[data-testid="jobs-bulk-start"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="jobs-bulk-move-up"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="jobs-bulk-move-down"]').exists()).toBe(false)
     const pause = wrapper.find('[data-testid="jobs-bulk-pause"]')
     expect(pause.text()).toContain('Applies to 1 of 2 selected jobs')
     expect(wrapper.find('[data-testid="jobs-bulk-cancel"]').text()).not.toContain('Applies to')
     await pause.trigger('click')
     await flushPromises()
-    expect(act).toHaveBeenCalledWith({ action: 'pause', ids: ['story-guide:1'] })
+    expect(act).toHaveBeenCalledWith({ action: 'pause', ids: ['edition-sync:1'] })
   })
 
   it('shows the empty state for a view with nothing in it', async () => {

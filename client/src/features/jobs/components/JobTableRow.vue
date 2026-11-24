@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Ellipsis, Lock } from '@lucide/vue'
+import { useRoute } from 'vue-router'
+import { ArrowRight, Ellipsis, Lock } from '@lucide/vue'
 import type { JobActionKind, JobListItem } from '@bookorbit/types'
 
 import { Button } from '@/components/ui/button'
@@ -9,7 +10,10 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import AiJobCover from '@/features/ai/components/AiJobCover.vue'
 import { formatRelativeTimeFromNow } from '@/i18n/formatters'
 import { jobActionLabel, jobActionOnLabel, jobNoteText, jobStatusLabel, jobSubjectLabel, jobTypeLabel } from '../lib/job-copy'
-import { JOB_ACTION_ICONS, jobMoment, jobTypeIcon, orderedJobActions } from '../lib/job-presentation'
+import { JOB_ACTION_ICONS, JOB_MENU_ONLY_ACTIONS, jobMoment, jobTypeIcon, orderedJobActions } from '../lib/job-presentation'
+import { isJobMove } from '../lib/job-reorder'
+import { jobSubjectRoute } from '../lib/job-subject-route'
+import JobReorderHandle from './JobReorderHandle.vue'
 import JobDetailLine from './JobDetailLine.vue'
 import JobStatusBadge from './JobStatusBadge.vue'
 
@@ -23,11 +27,13 @@ const props = defineProps<{
   /** Needs you and Failed lead with one labelled button; elsewhere actions stay icons. */
   labelFirst: boolean
   busy: boolean
+  showReorder?: boolean
 }>()
 
 const emit = defineEmits<{ toggle: [id: string]; act: [action: JobActionKind, item: JobListItem]; note: [text: string] }>()
 
 const { t } = useI18n()
+const route = useRoute()
 
 const name = computed(() => jobSubjectLabel(props.item))
 const titleTip = computed(() => (props.item.subject.byline ? `${name.value}, ${props.item.subject.byline}` : name.value))
@@ -35,10 +41,21 @@ const typeLabel = computed(() => jobTypeLabel(props.item.type))
 const typeIcon = computed(() => jobTypeIcon(props.item.type))
 const statusLabel = computed(() => jobStatusLabel(props.item.status))
 const actions = computed(() => orderedJobActions(props.item.actions))
-const lead = computed(() => actions.value[0] ?? null)
+const buttons = computed(() => actions.value.filter((action) => !JOB_MENU_ONLY_ACTIONS.has(action)))
+const lead = computed(() => buttons.value[0] ?? null)
+const openLink = computed(() => {
+  const { status, subject } = props.item
+  if (actions.value.length !== 0 || subject.url === null || !['needs-you', 'failed', 'paused'].includes(status)) return null
+  const review = status === 'needs-you'
+  return {
+    url: jobSubjectRoute(subject.url, route.query),
+    label: review ? t('jobsArea.review') : t('jobsArea.open'),
+    ariaLabel: review ? t('jobsArea.reviewOn', { name: name.value }) : t('jobsArea.openOn', { name: name.value }),
+  }
+})
 /** At most two buttons in a row; the rest wait in a menu, Cancel last and set apart. */
-const inline = computed(() => (props.labelFirst || actions.value.length <= 2 ? actions.value.slice(1) : []))
-const menu = computed(() => (props.labelFirst || actions.value.length <= 2 ? [] : actions.value.slice(1)))
+const inline = computed(() => (props.labelFirst || actions.value.length <= 2 ? buttons.value.slice(1) : []))
+const menu = computed(() => actions.value.filter((action) => action !== lead.value && !inline.value.includes(action)))
 const menuPlain = computed(() => menu.value.filter((action) => action !== 'cancel'))
 const menuCancels = computed(() => menu.value.includes('cancel'))
 const noteText = computed(() => (actions.value.length === 0 && props.item.actionNote ? jobNoteText(props.item.actionNote) : null))
@@ -75,6 +92,9 @@ function handleNote() {
 
 <template>
   <tr class="transition-colors motion-reduce:transition-none" :class="rowClass" data-testid="job-row" :data-job-id="item.id">
+    <td v-if="showReorder || item.actions.some(isJobMove)" class="w-px border-t border-border ps-1 align-middle">
+      <JobReorderHandle v-if="item.actions.some(isJobMove)" :name="name" :actions="item.actions" :busy="busy" @act="handleAction" />
+    </td>
     <td class="h-[41px] w-px border-t border-border ps-4 pe-3 align-middle @max-4xl/jobs:h-[60px] @max-4xl/jobs:ps-3 @max-4xl/jobs:pe-2">
       <input
         type="checkbox"
@@ -155,12 +175,12 @@ function handleNote() {
             variant="outline"
             class="h-8 gap-1.5 px-2.5 @max-4xl/jobs:size-8 @max-4xl/jobs:px-0"
             :disabled="busy"
-            :aria-label="jobActionOnLabel(lead, name)"
+            :aria-label="jobActionOnLabel(lead, name, item.type)"
             :data-testid="`job-action-${lead}`"
             @click="handleLead"
           >
             <component :is="JOB_ACTION_ICONS[lead]" class="size-4" aria-hidden="true" />
-            <span class="@max-4xl/jobs:sr-only">{{ jobActionLabel(lead) }}</span>
+            <span class="@max-4xl/jobs:sr-only">{{ jobActionLabel(lead, item.type) }}</span>
           </Button>
           <Button
             v-else
@@ -169,14 +189,26 @@ function handleNote() {
             class="size-8"
             :class="lead === 'cancel' ? 'text-destructive hover:text-destructive' : undefined"
             :disabled="busy"
-            :aria-label="jobActionOnLabel(lead, name)"
-            :title="jobActionLabel(lead)"
+            :aria-label="jobActionOnLabel(lead, name, item.type)"
+            :title="jobActionLabel(lead, item.type)"
             :data-testid="`job-action-${lead}`"
             @click="handleLead"
           >
             <component :is="JOB_ACTION_ICONS[lead]" class="size-4" aria-hidden="true" />
           </Button>
         </template>
+        <Button
+          v-else-if="openLink"
+          as-child
+          :variant="labelFirst ? 'outline' : 'ghost'"
+          :size="labelFirst ? undefined : 'icon'"
+          :class="labelFirst ? 'h-8 gap-1.5 px-2.5 @max-4xl/jobs:size-8 @max-4xl/jobs:px-0' : 'size-8'"
+        >
+          <RouterLink :to="openLink.url" :aria-label="openLink.ariaLabel" :title="labelFirst ? undefined : openLink.label" data-testid="job-open">
+            <ArrowRight class="size-4" aria-hidden="true" />
+            <span v-if="labelFirst" class="@max-4xl/jobs:sr-only">{{ openLink.label }}</span>
+          </RouterLink>
+        </Button>
         <Button
           v-for="action in inline"
           :key="action"
@@ -185,8 +217,8 @@ function handleNote() {
           class="size-8"
           :class="action === 'cancel' ? 'text-destructive hover:text-destructive' : undefined"
           :disabled="busy"
-          :aria-label="jobActionOnLabel(action, name)"
-          :title="jobActionLabel(action)"
+          :aria-label="jobActionOnLabel(action, name, item.type)"
+          :title="jobActionLabel(action, item.type)"
           :data-testid="`job-action-${action}`"
           @click="handleAction(action)"
         >
@@ -215,7 +247,7 @@ function handleNote() {
               @select="handleAction(action)"
             >
               <component :is="JOB_ACTION_ICONS[action]" class="size-4 text-muted-foreground" aria-hidden="true" />
-              {{ jobActionLabel(action) }}
+              {{ jobActionLabel(action, item.type) }}
             </DropdownMenuItem>
             <DropdownMenuSeparator v-if="menuCancels && menuPlain.length > 0" />
             <DropdownMenuItem
@@ -225,7 +257,7 @@ function handleNote() {
               @select="handleCancel"
             >
               <component :is="JOB_ACTION_ICONS.cancel" class="size-4 text-destructive" aria-hidden="true" />
-              {{ jobActionLabel('cancel') }}
+              {{ jobActionLabel('cancel', item.type) }}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
