@@ -1,4 +1,4 @@
-import { Permission } from '@bookorbit/types';
+import { Permission, type JobReorderRequest } from '@bookorbit/types';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 
 import type {
@@ -11,6 +11,7 @@ import type {
   WebSerialJobStatus,
   WebSerialKind,
 } from '@bookorbit/types';
+import type { QueueDirection, QueueDropOutcome } from '../../common/utils/fork-queue-reorder.utils';
 import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { JobChangesService } from '../jobs/job-changes.service';
@@ -250,6 +251,20 @@ export class WebSerialJobsService {
       `[${QUEUE_EVENT}] [end] jobId=${id} userId=${user.id} durationMs=${Date.now() - startedAt} action=move_to_top - job moved to the front`,
     );
     return this.requireJob(id, user);
+  }
+
+  async reorderTo(id: number, targetId: number, place: JobReorderRequest['place'], user: RequestUser): Promise<QueueDropOutcome> {
+    const job = await this.getAccessibleJob(id, user);
+    const outcome = await this.repo.reorderTo(id, targetId, place, isWebSerialsAdmin(user) ? null : user.id);
+    if (outcome === 'done') this.changed(job.userId);
+    return outcome;
+  }
+
+  async reorderJob(id: number, user: RequestUser, direction: QueueDirection): Promise<boolean> {
+    const job = await this.getAccessibleJob(id, user);
+    const moved = await this.repo.reorderJob(id, isWebSerialsAdmin(user) ? null : user.id, direction);
+    if (moved) this.changed(job.userId);
+    return moved;
   }
 
   async removeJob(id: number, user: RequestUser): Promise<void> {

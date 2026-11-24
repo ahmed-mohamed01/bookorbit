@@ -1,4 +1,5 @@
-import type { EditionSyncProvenance } from '@bookorbit/types';
+import { queueNeighbour, type QueueDirection, type QueueDropOutcome } from '../../common/utils/fork-queue-reorder.utils';
+import type { EditionSyncProvenance, JobReorderRequest } from '@bookorbit/types';
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -48,6 +49,8 @@ import type {
 import { EDITION_SYNC_FILE_CHANGE_REASONS, EDITION_SYNC_FILES_SETTLE_MS } from './edition-sync.constants';
 
 type Db = NodePgDatabase<typeof schema>;
+type QueueDb = Pick<Db, 'execute' | 'insert'>;
+type QueueClaimOptions = { pinnedOnly: boolean; excludeBookIds?: readonly number[] };
 
 const RECENT_THROUGHPUT_RUNS = 10;
 /** The server switch is read on every tick, run step and resolver lookup; admin updates drop the cache. */
@@ -65,16 +68,20 @@ function rowsOf<T>(result: unknown): T[] {
  * Users whose edition sync is effectively on: active, permitted (or superuser), enabled. The server
  * switch is deliberately not part of it: it pauses indexing but does not make indexes unused.
  */
-export const WANTING_USERS_CTE = sql`wanting AS (
+function wantingUsersCte(excludeUserId?: number): SQL {
+  return sql`wanting AS (
   SELECT u.id, u.is_superuser, COALESCE(s.book_sync_mode, 'all_eligible') AS book_sync_mode
   FROM users u
   LEFT JOIN edition_sync_user_settings s ON s.user_id = u.id
   WHERE COALESCE(s.enabled, true)
-    AND u.active
+    AND u.active${excludeUserId === undefined ? sql`` : sql` AND u.id <> ${excludeUserId}`}
     AND (u.is_superuser OR EXISTS (
       SELECT 1 FROM user_permissions p WHERE p.user_id = u.id AND p.permission_name = ${Permission.EditionSync}
     ))
 )`;
+}
+
+export const WANTING_USERS_CTE = wantingUsersCte();
 
 /** Some wanting user with access to the book's library has it in effective scope. `b` is the book alias. */
 export const WANTED_SQL = sql`EXISTS (
@@ -121,8 +128,9 @@ const ELIGIBLE_FILES_CTE = sql`eligible_files AS (
 export const QUEUEABLE_ROW_SQL = sql`(i.book_id IS NULL OR i.status = 'stale' OR (i.status = 'failed' AND i.retry_requested))`;
 
 /** Pinned first (oldest pin first), then books a wanting user is reading, then newest added. */
-const QUEUE_ORDER_SQL = sql`(i.pinned_at IS NOT NULL) DESC,
+export const QUEUE_ORDER_SQL = sql`(i.pinned_at IS NOT NULL) DESC,
   i.pinned_at ASC NULLS LAST,
+  CASE WHEN i.pinned_at IS NOT NULL THEN b.id END DESC,
   EXISTS (
     SELECT 1 FROM user_book_status r JOIN wanting rw ON rw.id = r.user_id
     WHERE r.book_id = b.id AND r.status IN ('reading', 'rereading')
@@ -141,11 +149,13 @@ export function queueQuery(select: SQL, extraWhere?: SQL): SQL {
     WHERE ${QUEUEABLE_ROW_SQL} AND ${BOOK_PLACEMENT_SQL} AND ${WANTED_SQL}${extraWhere ? sql` AND ${extraWhere}` : sql``}`;
 }
 
+const QUEUE_LOCK = sql`SELECT pg_advisory_xact_lock(1651470180, 3)`;
+
 const FILE_CHANGE_REASONS_SQL = sql.join(
   EDITION_SYNC_FILE_CHANGE_REASONS.map((reason) => sql`${reason}`),
   sql`, `,
 );
-const SETTLED_PIN_SQL = sql`(i.pinned_at IS NULL OR i.retry_requested OR i.invalidated_reason IS NULL OR i.invalidated_reason NOT IN (${FILE_CHANGE_REASONS_SQL}) OR i.files_changed_at IS NULL OR i.files_changed_at <= now() - (${EDITION_SYNC_FILES_SETTLE_MS} * interval '1 millisecond'))`;
+export const SETTLED_PIN_SQL = sql`(i.pinned_at IS NULL OR i.retry_requested OR i.invalidated_reason IS NULL OR i.invalidated_reason NOT IN (${FILE_CHANGE_REASONS_SQL}) OR i.files_changed_at IS NULL OR i.files_changed_at <= now() - (${EDITION_SYNC_FILES_SETTLE_MS} * interval '1 millisecond'))`;
 
 /** Index statuses behind each books-list filter; `all` has none. Drives both the page filter and the counts. */
 const LIST_FILTER_STATUSES: Record<Exclude<EditionSyncBookListFilter, 'all'>, readonly string[]> = {
@@ -633,7 +643,17 @@ export class EditionSyncRepository {
     workerJobId: string,
     at: Date,
     expectedFilesChangedAt: Date | null = null,
+    options?: QueueClaimOptions,
   ): Promise<EditionSyncBookIndexRow | null> {
+    if (!options) return this.writeClaim(this.db, bookId, workerJobId, at, expectedFilesChangedAt);
+    return this.db.transaction(async (tx) => {
+      await tx.execute(QUEUE_LOCK);
+      if ((await this.findNextQueuedBook(options, tx))?.bookId !== bookId) return null;
+      return this.writeClaim(tx, bookId, workerJobId, at, expectedFilesChangedAt);
+    });
+  }
+
+  private async writeClaim(db: QueueDb, bookId: number, workerJobId: string, at: Date, expectedFilesChangedAt: Date | null) {
     const set = {
       status: 'running' as const,
       workerJobId,
@@ -648,7 +668,7 @@ export class EditionSyncRepository {
       failedAt: null,
       updatedAt: at,
     };
-    const [row] = await this.db
+    const [row] = await db
       .insert(editionSyncBookIndex)
       .values({ bookId, ...set })
       .onConflictDoUpdate({
@@ -660,10 +680,182 @@ export class EditionSyncRepository {
     return row ?? null;
   }
 
+  async reorderTo(bookId: number, targetId: number, place: JobReorderRequest['place'], scope: SQL): Promise<QueueDropOutcome> {
+    return this.db.transaction(async (tx) => {
+      await tx.execute(QUEUE_LOCK);
+      const enabled = await tx.execute<{ enabled: boolean }>(sql`
+        SELECT enabled FROM ${editionSyncSettings} WHERE id = 1 FOR SHARE
+      `);
+      if (bookId === targetId || !enabled.rows[0]?.enabled) return 'skipped';
+      await tx.execute(sql`
+        SELECT book_id FROM edition_sync_book_index WHERE book_id IN (${bookId}, ${targetId}) ORDER BY book_id FOR UPDATE
+      `);
+      const { rows } = await tx.execute<{ id: number; allowed: boolean; pinned: boolean }>(sql`
+        WITH ${WANTING_USERS_CTE}
+        SELECT b.id, (true ${scope}) AS allowed, i.pinned_at IS NOT NULL AS pinned
+        FROM books b JOIN libraries l ON l.id = b.library_id LEFT JOIN edition_sync_book_index i ON i.book_id = b.id
+        WHERE b.id IN (${bookId}, ${targetId}) AND ${QUEUEABLE_ROW_SQL} AND ${SETTLED_PIN_SQL} AND ${ELIGIBLE_SQL} AND ${WANTED_SQL}
+      `);
+      const own = rows.find((row) => row.id === bookId);
+      const target = rows.find((row) => row.id === targetId);
+      if (own?.allowed === false || target?.allowed === false) return 'refused';
+      if (!own || !target) return 'skipped';
+      if (!target.pinned) {
+        if (place !== 'before') return 'refused';
+        const first = await tx.execute<{ id: number }>(sql`
+          ${queueQuery(sql`b.id`, sql`i.pinned_at IS NULL ${scope}`)}
+          ORDER BY ${QUEUE_ORDER_SQL} LIMIT 1
+        `);
+        if (first.rows[0]?.id !== targetId) return 'refused';
+      }
+
+      const pinned = await this.pinAtDrop(tx, bookId, targetId, target.pinned, place, scope);
+      if (pinned !== 'spread') return pinned;
+      await this.spreadPins(tx, sql`true`);
+      const retried = await this.pinAtDrop(tx, bookId, targetId, target.pinned, place, scope);
+      return retried === 'spread' ? 'skipped' : retried;
+    });
+  }
+
+  private async pinAtDrop(
+    tx: QueueDb,
+    bookId: number,
+    targetId: number,
+    pinned: boolean,
+    place: JobReorderRequest['place'],
+    scope: SQL,
+  ): Promise<'done' | 'skipped' | 'spread'> {
+    const before = place === 'before';
+    const { compare, order } = queueNeighbour(before ? 'move-up' : 'move-down');
+    const neighbour = pinned
+      ? sql`FROM lane q, anchor a WHERE (q.pinned_at, -q.book_id) ${compare} (a.pinned_at, -a.book_id)
+          ORDER BY q.pinned_at ${order}, -q.book_id ${order}`
+      : sql`FROM lane q ORDER BY q.pinned_at DESC, q.book_id ASC`;
+    const edge = sql`coalesce(a.pinned_at, n.pinned_at)`;
+    const offset = before && pinned ? sql`- interval '1 microsecond'` : sql`+ interval '1 microsecond'`;
+    const { rows } = await tx.execute<{ spread: boolean; moved: boolean }>(sql`
+      WITH ${WANTING_USERS_CTE}, lane AS NOT MATERIALIZED (
+        SELECT i.book_id, i.pinned_at FROM edition_sync_book_index i
+        JOIN books b ON b.id = i.book_id JOIN libraries l ON l.id = b.library_id
+        WHERE i.pinned_at IS NOT NULL AND ${SETTLED_PIN_SQL} AND ${QUEUEABLE_ROW_SQL} AND ${ELIGIBLE_SQL} AND ${WANTED_SQL} ${scope}
+      ), anchor AS (
+        SELECT * FROM lane WHERE book_id = ${targetId}
+      ), neighbour AS (
+        SELECT q.* ${neighbour} LIMIT 1
+      ), placement AS (
+        SELECT
+          coalesce(abs(extract(epoch FROM a.pinned_at - n.pinned_at)) < 0.000002, false) AS spread,
+          CASE WHEN a.pinned_at IS NOT NULL AND n.pinned_at IS NOT NULL THEN a.pinned_at + (n.pinned_at - a.pinned_at) / 2
+            ELSE coalesce(${edge} ${offset}, clock_timestamp()) END AS pinned_at
+        FROM (VALUES (1)) base
+        LEFT JOIN anchor a ON true LEFT JOIN neighbour n ON true
+        WHERE n.book_id IS DISTINCT FROM ${bookId} AND (${!pinned} OR a.book_id IS NOT NULL)
+      ), moved AS (
+        INSERT INTO edition_sync_book_index (book_id, status, pinned_at)
+        SELECT ${bookId}, 'stale', pinned_at FROM placement WHERE NOT spread
+        ON CONFLICT (book_id) DO UPDATE SET pinned_at = excluded.pinned_at, updated_at = now()
+        WHERE edition_sync_book_index.status = 'stale'
+          OR (edition_sync_book_index.status = 'failed' AND edition_sync_book_index.retry_requested)
+        RETURNING book_id
+      )
+      SELECT EXISTS (SELECT 1 FROM placement WHERE spread) AS spread, EXISTS (SELECT 1 FROM moved) AS moved
+    `);
+    return rows[0]?.moved ? 'done' : rows[0]?.spread ? 'spread' : 'skipped';
+  }
+
+  private async spreadPins(tx: QueueDb, needed: SQL): Promise<void> {
+    await tx.execute(sql`
+      WITH ordered AS (
+        SELECT book_id,
+          min(pinned_at) OVER () + (row_number() OVER (ORDER BY pinned_at, book_id DESC) * interval '2 microseconds') AS unique_at
+        FROM edition_sync_book_index
+        WHERE pinned_at IS NOT NULL AND (status = 'stale' OR (status = 'failed' AND retry_requested))
+          AND (${needed})
+      )
+      UPDATE edition_sync_book_index i SET pinned_at = ordered.unique_at FROM ordered
+      WHERE i.book_id = ordered.book_id AND (i.status = 'stale' OR (i.status = 'failed' AND i.retry_requested))
+    `);
+  }
+
+  async reorderPinnedBook(bookId: number, scope: SQL, direction: QueueDirection): Promise<boolean> {
+    const { compare, order } = queueNeighbour(direction);
+    return this.db.transaction(async (tx) => {
+      await tx.execute(QUEUE_LOCK);
+      const result = await tx.execute<{ target: number; neighbour: number }>(sql`
+        WITH ${WANTING_USERS_CTE}, lane AS NOT MATERIALIZED (
+          SELECT i.book_id, i.pinned_at
+          FROM edition_sync_book_index i
+          JOIN books b ON b.id = i.book_id
+          JOIN libraries l ON l.id = b.library_id
+          WHERE i.pinned_at IS NOT NULL AND ${SETTLED_PIN_SQL} AND ${QUEUEABLE_ROW_SQL} AND ${ELIGIBLE_SQL} AND ${WANTED_SQL} ${scope}
+        ), target AS (
+          SELECT * FROM lane WHERE book_id = ${bookId}
+        ), neighbour AS (
+          SELECT q.* FROM lane q, target t
+          WHERE (q.pinned_at, -q.book_id) ${compare} (t.pinned_at, -t.book_id)
+          ORDER BY q.pinned_at ${order}, -q.book_id ${order} LIMIT 1
+        )
+        SELECT t.book_id AS target, n.book_id AS neighbour FROM target t CROSS JOIN neighbour n
+      `);
+      const pair = result.rows[0];
+      if (!pair) return false;
+      // Bulk pins can share timestamps. Give tied pins distinct times before exchanging them.
+      await this.spreadPins(
+        tx,
+        sql`EXISTS (
+        SELECT 1 FROM edition_sync_book_index a JOIN edition_sync_book_index b USING (pinned_at)
+        WHERE a.book_id IN (${pair.target}, ${pair.neighbour}) AND a.book_id <> b.book_id
+      )`,
+      );
+      const swapped = await tx.execute(sql`
+        WITH pair AS MATERIALIZED (
+          SELECT book_id, pinned_at FROM edition_sync_book_index
+          WHERE book_id IN (${pair.target}, ${pair.neighbour})
+            AND pinned_at IS NOT NULL AND (status = 'stale' OR (status = 'failed' AND retry_requested))
+          ORDER BY book_id FOR UPDATE
+        )
+        UPDATE edition_sync_book_index i SET pinned_at = other.pinned_at
+        FROM pair own, pair other WHERE i.book_id = own.book_id AND other.book_id <> own.book_id
+        RETURNING i.book_id
+      `);
+      return swapped.rows.length === 2;
+    });
+  }
+
+  async pinQueuedBook(bookId: number, placement: 'front' | 'back', scope: SQL): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      await tx.execute(QUEUE_LOCK);
+      const pin =
+        placement === 'front'
+          ? sql`least(clock_timestamp(), (SELECT min(pinned_at) FROM edition_sync_book_index) - interval '1 microsecond')`
+          : sql`greatest(clock_timestamp(), (SELECT max(pinned_at) FROM edition_sync_book_index) + interval '1 microsecond')`;
+      const canPromote =
+        placement === 'back'
+          ? sql`AND i.pinned_at IS NULL AND b.id <> coalesce((
+              ${queueQuery(sql`b.id`, sql`${SETTLED_PIN_SQL} ${scope}`)} ORDER BY ${QUEUE_ORDER_SQL} LIMIT 1
+            ), b.id)`
+          : sql``;
+      const result = await tx.execute(sql`
+        WITH ${WANTING_USERS_CTE}
+        INSERT INTO edition_sync_book_index (book_id, status, pinned_at)
+        SELECT b.id, 'stale', ${pin}
+        FROM books b
+        JOIN libraries l ON l.id = b.library_id
+        LEFT JOIN edition_sync_book_index i ON i.book_id = b.id
+        WHERE b.id = ${bookId} AND ${QUEUEABLE_ROW_SQL} AND ${ELIGIBLE_SQL} AND ${WANTED_SQL} ${scope}
+          ${canPromote}
+        ON CONFLICT (book_id) DO UPDATE SET pinned_at = excluded.pinned_at, updated_at = now()
+        WHERE edition_sync_book_index.status = 'stale'
+           OR (edition_sync_book_index.status = 'failed' AND edition_sync_book_index.retry_requested)
+        RETURNING book_id
+      `);
+      return result.rows.length > 0;
+    });
+  }
+
   /**
-   * Runs the book first and outside the window (toggle on with no index, run now, retry). A book with
-   * no row gets a `stale` one that never held an index, which reads as queued. Never touches a
-   * running or ready row.
+   * Runs the book outside the window (toggle on with no index, run now, retry). A book with no row
+   * gets a stale one that reads as queued. Never touches a running or ready row.
    */
   async pinBook(bookId: number, at: Date, retry: boolean): Promise<void> {
     await this.db
@@ -798,17 +990,22 @@ export class EditionSyncRepository {
 
   /** Some permitted, enabled user with library access has the book in scope. Eligibility is not part of it. */
   async isWanted(bookId: number): Promise<boolean> {
+    return this.findWanted(bookId, WANTING_USERS_CTE);
+  }
+
+  async isWantedByAnotherUser(bookId: number, userId: number): Promise<boolean> {
+    return this.findWanted(bookId, wantingUsersCte(userId));
+  }
+
+  private async findWanted(bookId: number, wantingUsers: SQL): Promise<boolean> {
     const result = await this.db.execute<{ wanted: boolean }>(sql`
-      WITH ${WANTING_USERS_CTE}
+      WITH ${wantingUsers}
       SELECT ${WANTED_SQL} AS "wanted" FROM books b WHERE b.id = ${bookId}
     `);
     return rowsOf<{ wanted: boolean }>(result)[0]?.wanted === true;
   }
 
-  async findNextQueuedBook(options: {
-    pinnedOnly: boolean;
-    excludeBookIds?: readonly number[];
-  }): Promise<{ bookId: number; pinned: boolean } | null> {
+  async findNextQueuedBook(options: QueueClaimOptions, db: QueueDb = this.db): Promise<{ bookId: number; pinned: boolean } | null> {
     const exclude =
       options.excludeBookIds && options.excludeBookIds.length > 0
         ? sql`b.id <> ALL(${sql.param([...options.excludeBookIds])}::integer[])`
@@ -826,7 +1023,7 @@ export class EditionSyncRepository {
       : sql`${queueQuery(sql`b.id AS "bookId", (i.pinned_at IS NOT NULL) AS "pinned"`, sql`${SETTLED_PIN_SQL}${exclude ? sql` AND ${exclude}` : sql``}`)}
           ORDER BY ${QUEUE_ORDER_SQL}
           LIMIT 1`;
-    const result = await this.db.execute<{ bookId: number; pinned: boolean }>(query);
+    const result = await db.execute<{ bookId: number; pinned: boolean }>(query);
     return rowsOf<{ bookId: number; pinned: boolean }>(result)[0] ?? null;
   }
 

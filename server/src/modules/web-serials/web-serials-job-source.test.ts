@@ -41,6 +41,8 @@ function page(change: Partial<WebSerialJobPageRow> = {}): WebSerialJobPageRow {
     ownerName: 'Sam Whitfield',
     rank: 2,
     ownRank: 2,
+    laneSize: 4,
+    ownLaneSize: 2,
     key: { prefix: [1, 2], suffix: [1], id: 41 },
     ...change,
   };
@@ -62,6 +64,8 @@ function makeSource() {
     pauseJob: vi.fn(() => Promise.resolve({ status: 'paused' })),
     resumeJob: vi.fn(() => Promise.resolve({ status: 'queued' })),
     retryJob: vi.fn(() => Promise.resolve({ status: 'queued' })),
+    reorderTo: vi.fn().mockResolvedValue('done'),
+    reorderJob: vi.fn(() => Promise.resolve(true)),
     moveJobToTop: vi.fn(() => Promise.resolve({ status: 'queued' })),
   };
   const source = new WebSerialsJobSource(registry, jobs as never, service as never);
@@ -78,7 +82,7 @@ function query(view: JobView, owner: { id: number; ownerless: boolean } | null) 
 async function listed(change: Partial<WebSerialJobPageRow>) {
   const { source, jobs } = makeSource();
   jobs.pageForJobs.mockResolvedValue([page(change)]);
-  const [row] = await source.list(query('queue', null));
+  const [row] = await source.list(query('queue', null), viewerOf(admin, true));
   return row!;
 }
 
@@ -88,6 +92,15 @@ function rowOf(change: Partial<WebSerialJobPageRow>): WebSerialJobSourceRow {
 }
 
 describe('WebSerialsJobSource', () => {
+  it.each([reader, admin])('passes relative moves through the web serial access checks for viewer $id', async (user) => {
+    const { source, service } = makeSource();
+    const viewer = { user, access: source.access(user) };
+    await expect(source.reorderTo('41', '45', 'after', viewer)).resolves.toEqual({ outcome: 'done', status: 'queued' });
+    expect(service.reorderTo).toHaveBeenCalledWith(41, 45, 'after', user);
+    service.reorderTo.mockResolvedValue('skipped');
+    await expect(source.reorderTo('41', '52', 'before', viewer)).resolves.toMatchObject({ outcome: 'skipped' });
+  });
+
   it('registers itself as the web-serial type', () => {
     const { source, registry } = makeSource();
     expect(registry.get('web-serial')).toBe(source);
@@ -105,9 +118,9 @@ describe('WebSerialsJobSource', () => {
 
   it("reads one account's downloads for an owner filter and every account's only for null", async () => {
     const { source, jobs } = makeSource();
-    await source.list(query('queue', { id: reader.id, ownerless: false }));
+    await source.list(query('queue', { id: reader.id, ownerless: false }), viewerOf(reader));
     expect(jobs.pageForJobs).toHaveBeenLastCalledWith(expect.objectContaining({ view: 'queue', owner: { id: reader.id }, limit: 51 }));
-    await source.list(query('history', null));
+    await source.list(query('history', null), viewerOf(admin, true));
     expect(jobs.pageForJobs).toHaveBeenLastCalledWith(expect.objectContaining({ view: 'history', owner: null }));
   });
 
@@ -180,11 +193,13 @@ describe('WebSerialsJobSource', () => {
 
   it('offers what the queue page offers for each state', () => {
     const { source } = makeSource();
-    expect(source.actions(rowOf({ status: 'queued' }), viewerOf(reader)).actions).toEqual(['pause', 'move-to-top', 'cancel']);
-    expect(source.actions(rowOf({ status: 'queued', ownRank: 1 }), viewerOf(reader)).actions).toEqual(['pause', 'cancel']);
+    expect(source.actions(rowOf({ status: 'queued' }), viewerOf(reader)).actions).toEqual(['pause', 'move-to-top', 'move-up', 'cancel']);
+    expect(source.actions(rowOf({ status: 'queued', ownRank: 1 }), viewerOf(reader)).actions).toEqual(['pause', 'move-down', 'cancel']);
     expect(source.actions(rowOf({ status: 'queued', ownRank: 1, rank: 3 }), viewerOf(admin, true)).actions).toEqual([
       'pause',
       'prioritize',
+      'move-up',
+      'move-down',
       'cancel',
     ]);
     expect(source.actions(rowOf({ status: 'running' }), viewerOf(reader)).actions).toEqual(['pause', 'cancel']);
@@ -196,6 +211,17 @@ describe('WebSerialsJobSource', () => {
   });
 
   describe('act', () => {
+    it('swaps for owners and managers, and skips after losing a neighbour', async () => {
+      const { source, service, jobs } = makeSource();
+      jobs.findActionRows.mockResolvedValue([stored({ status: 'queued' })]);
+      expect(await source.act('move-up', ['41'], viewerOf(reader))).toEqual([{ id: '41', outcome: 'done', status: 'queued' }]);
+      expect(service.reorderJob).toHaveBeenCalledWith(41, reader, 'move-up');
+      service.reorderJob.mockResolvedValueOnce(false);
+      expect(await source.act('move-down', ['41'], viewerOf(admin, true))).toEqual([{ id: '41', outcome: 'skipped', status: 'queued' }]);
+      expect(service.reorderJob).toHaveBeenLastCalledWith(41, admin, 'move-down');
+      expect(await source.act('move-down', ['41'], viewerOf(otherReader))).toEqual([{ id: '41', outcome: 'not-found', status: null }]);
+    });
+
     it('retries through the queue service as the viewer', async () => {
       const { source, service } = makeSource();
       expect(await source.act('retry', ['41'], viewerOf(reader))).toEqual([{ id: '41', outcome: 'done', status: 'queued' }]);

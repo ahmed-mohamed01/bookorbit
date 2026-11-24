@@ -35,6 +35,7 @@ function page(change: Partial<AudioConvertJobPageRow> = {}): AudioConvertJobPage
     finishedAt: null,
     ownerName: 'Sam Whitfield',
     rank: 2,
+    laneSize: 3,
     key: { prefix: [1, 2], suffix: [1], id: JOB_ID },
     ...change,
   };
@@ -53,6 +54,8 @@ function makeSource(editable: number[] | null = [5]) {
   };
   const service = {
     stopBook: vi.fn(() => Promise.resolve({ cancelled: true })),
+    reorderTo: vi.fn().mockResolvedValue('done'),
+    reorderJob: vi.fn(() => Promise.resolve(true)),
     convertNow: vi.fn(() => Promise.resolve({})),
   };
   const subjects = {
@@ -88,6 +91,15 @@ function rowOf(change: Partial<AudioConvertJobPageRow>): AudioConvertJobSourceRo
 }
 
 describe('AudioConvertJobSource', () => {
+  it.each(['before', 'after'] as const)('dispatches drops %s another conversion in editable libraries', async (place) => {
+    const { source, service } = makeSource([5, 8]);
+    const target = '8f2a7c1e-0b5d-4e8a-9c3f-1d2e3f4a5b6c';
+    await expect(source.reorderTo(JOB_ID, target, place, viewerOf(librarian))).resolves.toEqual({ outcome: 'done', status: 'queued' });
+    expect(service.reorderTo).toHaveBeenCalledWith(JOB_ID, target, place, librarian, [5, 8]);
+    await expect(source.reorderTo(JOB_ID, target, place, viewerOf(operator))).resolves.toMatchObject({ outcome: 'refused' });
+    expect(service.reorderTo).toHaveBeenCalledTimes(1);
+  });
+
   it('registers itself as the audio-convert type', () => {
     const { source, registry } = makeSource();
     expect(registry.get('audio-convert')).toBe(source);
@@ -173,16 +185,33 @@ describe('AudioConvertJobSource', () => {
     expect(subjects.describe).toHaveBeenCalledWith([12], { user: librarian, manages: false });
   });
 
-  it('offers Stop while a job can still stop, and Convert now on a waiting book', () => {
+  it('offers the available directions only for queued jobs the viewer can manage', () => {
     const { source } = makeSource();
-    expect(source.actions(rowOf({ status: 'queued' })).actions).toEqual(['cancel']);
-    expect(source.actions(rowOf({ status: 'running', stage: 'converting' })).actions).toEqual(['cancel']);
-    expect(source.actions(rowOf({ status: 'running', stage: 'swapping' })).actions).toEqual([]);
-    expect(source.actions(rowOf({ status: 'waiting', stage: 'metadata' })).actions).toEqual(['resume', 'cancel']);
-    expect(source.actions(rowOf({ status: 'success' })).actions).toEqual([]);
+    const viewer = viewerOf(librarian);
+    expect(source.actions(rowOf({}), viewer).actions).toEqual(['cancel', 'move-to-top', 'move-up', 'move-down']);
+    expect(source.actions(rowOf({ rank: 1 }), viewer).actions).toEqual(['cancel', 'move-down']);
+    expect(source.actions(rowOf({ rank: 3 }), viewer).actions).toEqual(['cancel', 'move-to-top', 'move-up']);
+    expect(source.actions(rowOf({}), viewerOf(operator)).actions).toEqual([]);
+    expect(source.actions(rowOf({ status: 'running', stage: 'converting' }), viewer).actions).toEqual(['cancel']);
+    expect(source.actions(rowOf({ status: 'running', stage: 'swapping' }), viewer).actions).toEqual([]);
+    expect(source.actions(rowOf({ status: 'waiting', stage: 'metadata' }), viewer).actions).toEqual(['resume', 'cancel']);
+    expect(source.actions(rowOf({ status: 'success' }), viewer).actions).toEqual([]);
   });
 
   describe('act', () => {
+    it('reorders as a library manager and skips when the neighbour is gone', async () => {
+      const { source, service } = makeSource();
+      const viewer = viewerOf(librarian);
+      expect(await source.act('move-up', [JOB_ID], viewer)).toEqual([{ id: JOB_ID, outcome: 'done', status: 'queued' }]);
+      expect(service.reorderJob).toHaveBeenCalledWith(JOB_ID, librarian, [5], 'move-up');
+      expect(await source.act('move-to-top', [JOB_ID], viewer)).toEqual([{ id: JOB_ID, outcome: 'done', status: 'queued' }]);
+      expect(service.reorderJob).toHaveBeenLastCalledWith(JOB_ID, librarian, [5], 'move-to-top');
+      expect(await source.act('prioritize', [JOB_ID], viewer)).toEqual([{ id: JOB_ID, outcome: 'skipped', status: 'queued' }]);
+      expect(service.reorderJob).toHaveBeenCalledTimes(2);
+      service.reorderJob.mockResolvedValueOnce(false);
+      expect(await source.act('move-down', [JOB_ID], viewer)).toEqual([{ id: JOB_ID, outcome: 'skipped', status: 'queued' }]);
+    });
+
     it("cancels through the book's Stop, as the viewer", async () => {
       const { source, service } = makeSource();
       expect(await source.act('cancel', [JOB_ID], viewerOf(librarian))).toEqual([{ id: JOB_ID, outcome: 'done', status: 'cancelled' }]);

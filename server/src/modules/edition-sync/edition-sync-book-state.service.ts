@@ -1,3 +1,5 @@
+import type { SQL } from 'drizzle-orm';
+import type { QueueDropOutcome, QueueMove } from '../../common/utils/fork-queue-reorder.utils';
 import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import type {
   EditionSyncBookState,
@@ -5,6 +7,7 @@ import type {
   EditionSyncRetryFailedResult,
   ReadAloudErrorCode,
   ReadAloudWorkerStage,
+  JobReorderRequest,
 } from '@bookorbit/types';
 
 import { LibraryScopeService } from '../../common/library-scope/library-scope.service';
@@ -120,6 +123,30 @@ export class EditionSyncBookStateService {
       );
       throw error;
     }
+  }
+
+  async reorderTo(user: RequestUser, bookId: number, targetId: number, place: JobReorderRequest['place'], scope: SQL): Promise<QueueDropOutcome> {
+    await this.books.verifyBookAccess(bookId, user);
+    const outcome = await this.repo.reorderTo(bookId, targetId, place, scope);
+    if (outcome === 'done') {
+      this.positionCache.clear();
+      this.scheduler.changed();
+      this.scheduler.poke();
+    }
+    return outcome;
+  }
+
+  async reorderQueuedBook(user: RequestUser, bookId: number, pinned: boolean, direction: QueueMove, scope: SQL): Promise<boolean> {
+    await this.books.verifyBookAccess(bookId, user);
+    const moved =
+      direction === 'move-to-top' || (!pinned && direction === 'move-up')
+        ? await this.repo.pinQueuedBook(bookId, direction === 'move-to-top' ? 'front' : 'back', scope)
+        : pinned && (await this.repo.reorderPinnedBook(bookId, scope, direction));
+    if (moved) {
+      this.positionCache.clear();
+      this.scheduler.changed();
+    }
+    return moved;
   }
 
   private async pin(bookId: number, retry: boolean): Promise<void> {

@@ -489,7 +489,7 @@ describe('WebSerialJobMoveService move failure handling', () => {
     await expect(service.moveJob(11, { seriesKey: 'm:2' }, USER)).rejects.toBeInstanceOf(ConflictException);
 
     expect(repo.pauseJob).toHaveBeenCalledWith(11);
-    expect(repo.restoreAfterMove).toHaveBeenCalledWith(11, 1234);
+    expect(repo.restoreAfterMove).toHaveBeenCalledWith(11);
     expect(repo.resumeJob).not.toHaveBeenCalled();
   });
 
@@ -527,6 +527,6 @@ describe('WebSerialJobMoveService move failure handling', () => {
     await expect(service.moveJob(11, { seriesKey: 'm:2' }, USER)).rejects.toThrow('changed while it was being moved');
 
     expect(repo.moveJob).not.toHaveBeenCalled();
-    expect(repo.restoreAfterMove).toHaveBeenCalledWith(11, 5000);
+    expect(repo.restoreAfterMove).toHaveBeenCalledWith(11);
   });
 });

@@ -6,7 +6,8 @@ import type {
   AudioConvertJobTrigger,
   AudioConvertResolvedCodec,
 } from '@bookorbit/types';
-import { boolean, integer, jsonb, pgTable, smallint, text, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { bigint, boolean, integer, jsonb, pgTable, smallint, text, timestamp, uuid, varchar } from 'drizzle-orm/pg-core';
 
 // Module-local table declarations for the fork tables created by AUDIO_CONVERT_SCHEMA_SQL. They are not
 // in the db/schema barrel, so drizzle-kit never sees them. Constraints and indexes live in the bootstrap SQL.
@@ -46,6 +47,9 @@ export interface AudioConvertWorkPaths {
 
 export const audioConvertJobs = pgTable('audio_convert_jobs', {
   id: uuid('id').primaryKey().defaultRandom(),
+  queueOrder: bigint('queue_order', { mode: 'number' })
+    .notNull()
+    .default(sql`nextval('audio_convert_queue_order_seq')`),
   bookId: integer('book_id').notNull(),
   libraryId: integer('library_id').notNull(),
   userId: integer('user_id'),

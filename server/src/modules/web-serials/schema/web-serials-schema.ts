@@ -376,6 +376,18 @@ const COLUMN_STATEMENTS = [
   `ALTER TABLE "${JOBS}" ADD COLUMN IF NOT EXISTS "current_unit" jsonb;`,
   `ALTER TABLE "${SETTINGS}" ADD COLUMN IF NOT EXISTS "queue_paused" boolean DEFAULT false NOT NULL;`,
   `ALTER TABLE "${JOBS}" ADD COLUMN IF NOT EXISTS "queue_order" bigint DEFAULT ${QUEUE_ORDER_DEFAULT} NOT NULL;`,
+  `DO $$ BEGIN
+    LOCK TABLE "${JOBS}" IN SHARE ROW EXCLUSIVE MODE;
+    IF to_regclass('web_serial_queue_back_seq') IS NULL THEN
+      CREATE SEQUENCE web_serial_queue_back_seq AS bigint START WITH 10000000000000;
+      WITH ranked AS (
+        SELECT id, row_number() OVER (ORDER BY queue_order, id) AS place FROM "${JOBS}"
+      )
+      UPDATE "${JOBS}" j SET queue_order = ranked.place FROM ranked WHERE j.id = ranked.id;
+      ALTER TABLE "${JOBS}" ALTER COLUMN queue_order SET DEFAULT nextval('web_serial_queue_back_seq');
+    END IF;
+  END $$;`,
+  `CREATE SEQUENCE IF NOT EXISTS web_serial_queue_front_seq AS bigint INCREMENT BY -1 START WITH -1;`,
   `ALTER TABLE "${SETTINGS}" ADD COLUMN IF NOT EXISTS "novel_index_daily_budget" integer DEFAULT 1500 NOT NULL;`,
   `ALTER TABLE "${SETTINGS}" ADD COLUMN IF NOT EXISTS "illustrator_backfill_done_at" timestamp with time zone;`,
   `ALTER TABLE "${NOVEL_INDEX}" ADD COLUMN IF NOT EXISTS "author" varchar(500);`,

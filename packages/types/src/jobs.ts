@@ -49,8 +49,9 @@ export type JobScope = (typeof JOB_SCOPES)[number];
 /**
  * `move-to-top` reorders a job within its requester's own jobs; `prioritize` moves it ahead of
  * everyone's. `continue` resumes interrupted work where it stopped.
+ * `move-up` and `move-down` swap neighbours; `start` starts the waiting work now.
  */
-export const JOB_ACTIONS = ["cancel", "pause", "resume", "retry", "continue", "dismiss", "move-to-top", "prioritize"] as const;
+export const JOB_ACTIONS = ["cancel", "pause", "resume", "retry", "continue", "dismiss", "move-to-top", "prioritize", "move-up", "move-down", "start"] as const;
 export type JobActionKind = (typeof JOB_ACTIONS)[number];
 
 /** `job`: one piece of work. `queue`: a summary row standing for a type's whole queue. */

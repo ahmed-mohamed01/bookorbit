@@ -31,6 +31,7 @@ import { EditionSyncRepository } from './edition-sync.repository';
 
 /** Ready rows re-verified per poke after a catalog change; bounds file stats per interval. */
 const RECHECK_BATCH_SIZE = 50;
+const CLAIM_RETRY_DELAY_MS = 100;
 
 interface ActiveRun {
   id: number;
@@ -173,10 +174,10 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
   }
 
   /** Starts an unscheduled run with no window; 409 when a run is active. */
-  async startManualRun(): Promise<EditionSyncAdminStatus> {
+  async startManualRun(expectedBookId?: number): Promise<EditionSyncAdminStatus> {
     if (!(await this.repo.isServerEnabled())) throw new BadRequestException(EDITION_SYNC_SERVER_DISABLED_MESSAGE);
     if (this.run || this.starting) throw new ConflictException('An edition sync run is already active');
-    await this.startRun('manual');
+    if (!(await this.startRun('manual', expectedBookId))) throw new ConflictException('The edition sync queue changed');
     return this.getAdminStatus();
   }
 
@@ -277,12 +278,13 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
     void this.startRun('scheduled').catch((err: unknown) => this.logFailure('edition_sync.run', Date.now(), err, 'scheduled run failed to start'));
   }
 
-  private async startRun(trigger: EditionSyncRunTrigger): Promise<void> {
-    if (this.run || this.starting) return;
+  private async startRun(trigger: EditionSyncRunTrigger, expectedBookId?: number): Promise<boolean> {
+    if (this.run || this.starting) return false;
     this.starting = true;
     try {
       const startedAt = new Date();
-      if (!(await this.repo.isServerEnabled())) return;
+      if (!(await this.repo.isServerEnabled())) return false;
+      if (expectedBookId !== undefined && (await this.repo.findNextQueuedBook({ pinnedOnly: false }))?.bookId !== expectedBookId) return false;
       const { runHours } = await this.repo.findAdminSettings();
       const windowUntil = computeWindowUntil(trigger, startedAt, runHours);
       const row = await this.repo.createRun(trigger, windowUntil);
@@ -305,6 +307,7 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
       );
       this.changed();
       void this.execute(run);
+      return true;
     } finally {
       this.starting = false;
     }
@@ -353,6 +356,10 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
 
       const windowOpen = isWindowOpen(run.windowUntil, new Date());
       const claim = await this.queue.claimNext({ pinnedOnly: run.pinnedOnly || !windowOpen, excludeBookIds: [...skip] });
+      if (claim === 'contended') {
+        if (!run.stopRequested) await this.sleep(CLAIM_RETRY_DELAY_MS);
+        continue;
+      }
       if (!claim) return run.pinnedOnly || windowOpen ? 'empty' : 'window_closed';
 
       run.currentBookId = claim.bookId;

@@ -61,6 +61,49 @@ function mockDb(
 const builderAt = (method: ReturnType<typeof vi.fn>, index = 0) => method.mock.results[index]!.value as ReturnType<typeof queryBuilder>;
 const whereSql = (builder: ReturnType<typeof queryBuilder>) => render(builder.where!.mock.calls[0]![0]);
 
+describe('WebSerialsRepository relative queue order', () => {
+  it.each([
+    [7, false, 'refused'],
+    [null, true, 'done'],
+  ] as const)('uses lane %s when a job is dropped on another owner’s job', async (userId, allowed, outcome) => {
+    const execute = vi
+      .fn<(query: SQL) => Promise<{ rows: unknown[] }>>()
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          { id: 11, allowed: true, queued: true },
+          { id: 24, allowed, queued: true },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [{ id: 11 }, { id: 18 }, { id: 24 }] });
+    const transaction = vi.fn((work: (tx: { execute: typeof execute }) => Promise<unknown>) => work({ execute }));
+    const repo = new WebSerialsRepository({ transaction } as never);
+
+    await expect(repo.reorderTo(11, 24, 'after', userId)).resolves.toBe(outcome);
+    expect(render(execute.mock.calls[0]![0]).sql).toContain('pg_advisory_xact_lock');
+    const lock = render(execute.mock.calls[1]![0]);
+    expect(lock.sql).toContain(allowed ? '(true) AS allowed' : '(q.user_id = $1) AS allowed');
+    expect(execute).toHaveBeenCalledTimes(allowed ? 3 : 2);
+  });
+
+  it('skips if the neighbour left the queue before the drop', async () => {
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          { id: 11, allowed: true, queued: true },
+          { id: 24, allowed: true, queued: false },
+        ],
+      });
+    const repo = new WebSerialsRepository({
+      transaction: (work: (tx: { execute: typeof execute }) => Promise<unknown>) => work({ execute }),
+    } as never);
+    await expect(repo.reorderTo(11, 24, 'before', 7)).resolves.toBe('skipped');
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('WebSerialsRepository settings', () => {
   it('reads the singleton row', async () => {
     const row = { id: 1, mangaUrl: 'http://m' };
@@ -251,10 +294,11 @@ describe('WebSerialsRepository jobs', () => {
   it('restores a paused job to the queue position it had', async () => {
     const db = mockDb({ update: [[{ id: 3 }]] });
 
-    await new WebSerialsRepository(db as never).restoreAfterMove(3, 1234);
+    await new WebSerialsRepository(db as never).restoreAfterMove(3);
 
     const builder = builderAt(db.update);
-    expect(builder.set!.mock.calls[0]![0]).toMatchObject({ status: 'queued', queueOrder: 1234 });
+    expect(builder.set!.mock.calls[0]![0]).toMatchObject({ status: 'queued' });
+    expect(builder.set!.mock.calls[0]![0]).not.toHaveProperty('queueOrder');
     expect(whereSql(builder).params).toEqual([3, 'paused']);
   });
 
@@ -276,7 +320,7 @@ describe('WebSerialsRepository jobs', () => {
     const builder = builderAt(db.update);
     const set = builder.set!.mock.calls[0]![0];
     expect(set).toMatchObject({ status: 'queued' });
-    expect(render(set.queueOrder).sql).toContain('extract(epoch from now())');
+    expect(render(set.queueOrder).sql).toContain('web_serial_queue_back_seq');
     expect(whereSql(builder).params).toEqual([3, 'paused']);
   });
 
@@ -287,17 +331,26 @@ describe('WebSerialsRepository jobs', () => {
 
     const builder = builderAt(db.update);
     const rendered = render(builder.set!.mock.calls[0]![0].queueOrder);
-    expect(rendered.sql).toContain('min("web_serial_jobs"."queue_order")');
-    expect(rendered.sql).toContain('- 1');
+    expect(rendered.sql).toContain('web_serial_queue_front_seq');
     expect(whereSql(builder).params).toEqual([3, 'queued']);
   });
 
   it('limits a non-admin priority jump to the owner queued jobs', async () => {
-    const db = mockDb({ update: [[{ id: 3 }]] });
-    await new WebSerialsRepository(db as never).moveJobToTop(3, 7);
-    const rendered = render(builderAt(db.update).set!.mock.calls[0]![0].queueOrder);
-    expect(rendered.sql).toContain('"web_serial_jobs"."user_id" =');
+    const db = mockDb({ execute: [{ rows: [] }, { rows: [{ id: 3 }] }] });
+    await expect(new WebSerialsRepository(db as never).moveJobToTop(3, 7)).resolves.toEqual({ id: 3 });
+    const rendered = render(db.execute.mock.calls[1]![0]);
+    expect(rendered.sql).toContain("status = 'queued' AND user_id =");
     expect(rendered.params).toContain(7);
+  });
+
+  it.each([true, false])('swaps the owner-scoped pair atomically, changed=%s', async (moved) => {
+    const db = mockDb({ execute: [{ rows: [] }, { rows: moved ? [{ id: 3 }, { id: 4 }] : [] }] });
+    await expect(new WebSerialsRepository(db as never).reorderJob(3, 7, 'move-up')).resolves.toBe(moved);
+    const rendered = render(db.execute.mock.calls[1]![0]);
+    expect(rendered.sql).toContain('q.user_id =');
+    expect(rendered.sql).toContain('(q.queue_order, q.id) < (t.queue_order, t.id)');
+    expect(rendered.sql).toContain('FOR UPDATE OF q');
+    expect(rendered.sql).toContain('SET queue_order = other.queue_order');
   });
 
   it('removes only a finished job', async () => {
@@ -359,7 +412,7 @@ describe('WebSerialsRepository jobs', () => {
     await expect(new WebSerialsRepository(db as never).requeueForRetry(3)).resolves.toBe(true);
 
     expect(whereSql(builderAt(db.update, 0)).params).toEqual([3, 'failed', 'completed_with_gaps']);
-    expect(render(builderAt(db.update, 0).set!.mock.calls[0]![0].queueOrder).sql).toContain('extract(epoch from now())');
+    expect(render(builderAt(db.update, 0).set!.mock.calls[0]![0].queueOrder).sql).toContain('web_serial_queue_back_seq');
     expect(builderAt(db.update, 1).set!.mock.calls[0]![0]).toMatchObject({ status: 'pending', error: null });
     expect(render(builderAt(db.update, 1).set!.mock.calls[0]![0].remoteRef).sql).toContain(
       "- 'attempts' - 'retryAt' - 'retryReason' - 'failureReason'",

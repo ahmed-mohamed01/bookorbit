@@ -1,3 +1,4 @@
+import type { QueueDropOutcome, QueueMove } from '../../common/utils/fork-queue-reorder.utils';
 import {
   AUDIO_CONVERT_ACTIVE_STATUSES,
   type AudioConvertEnabledResponse,
@@ -7,6 +8,7 @@ import {
   type AudioConvertRunResponse,
   type AudioConvertSettings,
   type AudioConvertStatus,
+  type JobReorderRequest,
 } from '@bookorbit/types';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import type { RequestUser } from '../../common/types/request-user';
@@ -173,6 +175,26 @@ export class AudioConvertService {
     const job = await this.repo.jobWithTitle(jobId);
     if (!job) throw new NotFoundException('Conversion not found');
     return job;
+  }
+
+  async reorderTo(
+    id: string,
+    targetId: string,
+    place: JobReorderRequest['place'],
+    user: RequestUser,
+    libraryIds: readonly number[] | null,
+  ): Promise<QueueDropOutcome> {
+    const job = await this.accessibleJob(id, user);
+    const outcome = await this.repo.reorderTo(id, targetId, place, job.libraryId, libraryIds);
+    if (outcome === 'done') this.changed(job.userId);
+    return outcome;
+  }
+
+  async reorderJob(jobId: string, user: RequestUser, libraryIds: readonly number[] | null, direction: QueueMove): Promise<boolean> {
+    const job = await this.accessibleJob(jobId, user);
+    const moved = await this.repo.reorderJob(job.id, job.libraryId, libraryIds, direction);
+    if (moved) this.changed(job.userId);
+    return moved;
   }
 
   /** Tells the Jobs area; `state` false when only progress moved. */

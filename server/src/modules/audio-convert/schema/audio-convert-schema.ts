@@ -72,6 +72,24 @@ DO $$ BEGIN
 	END IF;
 END $$;
 --> statement-breakpoint
+CREATE SEQUENCE IF NOT EXISTS audio_convert_queue_order_seq AS bigint START WITH 10000000000000;
+--> statement-breakpoint
+CREATE SEQUENCE IF NOT EXISTS audio_convert_queue_front_seq AS bigint INCREMENT BY -1 START WITH -1;
+--> statement-breakpoint
+ALTER TABLE audio_convert_jobs ADD COLUMN IF NOT EXISTS queue_order bigint;
+--> statement-breakpoint
+WITH ranked AS (
+  SELECT id, row_number() OVER (ORDER BY created_at, id) AS queue_order
+  FROM audio_convert_jobs WHERE queue_order IS NULL
+)
+UPDATE audio_convert_jobs j SET queue_order = ranked.queue_order FROM ranked WHERE j.id = ranked.id;
+--> statement-breakpoint
+ALTER TABLE audio_convert_jobs
+  ALTER COLUMN queue_order SET DEFAULT nextval('audio_convert_queue_order_seq'),
+  ALTER COLUMN queue_order SET NOT NULL;
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS audio_convert_jobs_claim_idx ON audio_convert_jobs (queue_order, id) WHERE status = 'queued';
+--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "audio_convert_jobs_book_idx" ON "audio_convert_jobs" USING btree ("book_id", "created_at" DESC);
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "audio_convert_jobs_library_idx" ON "audio_convert_jobs" USING btree ("library_id", "created_at" DESC);

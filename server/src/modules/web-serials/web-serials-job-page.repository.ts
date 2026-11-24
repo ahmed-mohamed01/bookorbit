@@ -65,6 +65,8 @@ export type WebSerialJobPageRow = Pick<
   rank: number;
   /** 1-based place among the owner's own queued jobs; 0 unless queued. */
   ownRank: number;
+  laneSize: number;
+  ownLaneSize: number;
   key: JobKey;
 };
 
@@ -125,9 +127,11 @@ export class WebSerialsJobPageRepository {
           laneId: sql<number>`lane.id`.as('lane_id'),
           place: sql<number>`lane.place`.as('place'),
           ownPlace: sql<number>`lane.own_place`.as('own_place'),
+          laneSize: sql<number>`lane.lane_size`.as('lane_size'),
+          ownLaneSize: sql<number>`lane.own_lane_size`.as('own_lane_size'),
         })
         .from(
-          sql`(select q.id, row_number() over (order by q.queue_order, q.id) as place, row_number() over (partition by q.user_id order by q.queue_order, q.id) as own_place from web_serial_jobs q where q.status = 'queued') lane`,
+          sql`(select q.id, row_number() over (order by q.queue_order, q.id) as place, row_number() over (partition by q.user_id order by q.queue_order, q.id) as own_place, count(*) over () as lane_size, count(*) over (partition by q.user_id) as own_lane_size from web_serial_jobs q where q.status = 'queued') lane`,
         ),
     );
     const status = webSerialJobs.status;
@@ -152,6 +156,8 @@ export class WebSerialsJobPageRepository {
         group: sql<number>`${group}`.mapWith(Number),
         rank: sql<number>`${rank}`.mapWith(Number),
         ownRank: sql<number>`coalesce(${lane.ownPlace}, 0)`.mapWith(Number),
+        laneSize: sql<number>`coalesce(${lane.laneSize}, 0)`.mapWith(Number),
+        ownLaneSize: sql<number>`coalesce(${lane.ownLaneSize}, 0)`.mapWith(Number),
         at,
       })
       .from(webSerialJobs)
@@ -189,7 +195,14 @@ export class WebSerialsJobPageRepository {
       )
       .orderBy(...keysetOrder(columns, query.view))
       .limit(query.limit);
-    return rows.map(({ finish, ...row }) => ({ ...row, rank: 0, ownRank: 0, key: { prefix: [finish], suffix: [], id: row.id } }));
+    return rows.map(({ finish, ...row }) => ({
+      ...row,
+      rank: 0,
+      ownRank: 0,
+      laneSize: 0,
+      ownLaneSize: 0,
+      key: { prefix: [finish], suffix: [], id: row.id },
+    }));
   }
 
   private failedShown(cutoffAt: Date): SQL {

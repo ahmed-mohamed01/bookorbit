@@ -1,3 +1,4 @@
+import { sql, type SQL } from 'drizzle-orm';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it, vi } from 'vitest';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -30,6 +31,34 @@ describe('EditionSyncRepository write guards', () => {
     expect(sqlText(conflict.setWhere)).toContain('files_changed_at');
     expect(sqlText(conflict.setWhere)).toContain('IS NOT DISTINCT FROM');
   });
+  it.each([true, false])('swaps two locked pinned timestamps or skips, moved=%s', async (moved) => {
+    const execute = vi
+      .fn<(query: SQL) => Promise<{ rows: unknown[] }>>()
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ target: 7, neighbour: 8 }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: moved ? [{ bookId: 7 }, { bookId: 8 }] : [] });
+    const transaction = vi.fn((work: (tx: { execute: typeof execute }) => Promise<unknown>) => work({ execute }));
+    const repo = new EditionSyncRepository({ transaction } as never);
+    await expect(repo.reorderPinnedBook(7, sql`AND b.library_id = 5`, 'move-up')).resolves.toBe(moved);
+    expect(sqlText(execute.mock.calls[1]![0])).toContain('(q.pinned_at, -q.book_id) < (t.pinned_at, -t.book_id)');
+    expect(sqlText(execute.mock.calls[1]![0])).toContain('AND b.library_id = 5');
+    expect(sqlText(execute.mock.calls[3]![0])).toContain('ORDER BY book_id FOR UPDATE');
+    expect(sqlText(execute.mock.calls[3]![0])).toContain('SET pinned_at = other.pinned_at');
+  });
+
+  it('skips a claim when another book moved ahead during preparation', async () => {
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ bookId: 8, pinned: true }] });
+    const insert = vi.fn();
+    const transaction = vi.fn((work: (tx: { execute: typeof execute; insert: typeof insert }) => Promise<unknown>) => work({ execute, insert }));
+    const repo = new EditionSyncRepository({ transaction } as never);
+    await expect(repo.claimIndexRow(7, 'job', new Date(), null, { pinnedOnly: true })).resolves.toBeNull();
+    expect(insert).not.toHaveBeenCalled();
+  });
+
   it('preserves the first pin unless explicitly retrying', async () => {
     const { repo, chain } = setup();
     await repo.pinBook(7, new Date(), false);
@@ -53,6 +82,66 @@ describe('EditionSyncRepository write guards', () => {
     expect(query).toContain('pinned_at');
     expect(query).toContain('IS NOT DISTINCT FROM');
     expect(chain.returning).toHaveBeenCalled();
+  });
+});
+
+describe('EditionSyncRepository relative queue order', () => {
+  function dropQueue(targetPinned: boolean | null) {
+    const execute = vi
+      .fn<(query: SQL) => Promise<{ rows: unknown[] }>>()
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ enabled: true }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [{ id: 7, allowed: true, pinned: false }, ...(targetPinned === null ? [] : [{ id: 12, allowed: true, pinned: targetPinned }])],
+      });
+    const transaction = vi.fn((work: (tx: { execute: typeof execute }) => Promise<unknown>) => work({ execute }));
+    return { execute, repo: new EditionSyncRepository({ transaction } as never) };
+  }
+
+  it.each([
+    ['before', '<'],
+    ['after', '>'],
+  ] as const)('promotes a backlog book %s a pin using its two new neighbours', async (place, compare) => {
+    const { execute, repo } = dropQueue(true);
+    execute.mockResolvedValueOnce({ rows: [{ moved: true, spread: false }] });
+    await expect(repo.reorderTo(7, 12, place, sql`AND b.library_id = 5`)).resolves.toBe('done');
+    const placement = sqlText(execute.mock.calls[4]![0]);
+    expect(placement).toContain(`(q.pinned_at, -q.book_id) ${compare} (a.pinned_at, -a.book_id)`);
+    expect(placement).toContain('a.pinned_at + (n.pinned_at - a.pinned_at) / 2');
+    expect(placement).toContain('AND b.library_id = 5');
+  });
+
+  it('spreads tight pin timestamps before retrying the new placement', async () => {
+    const { execute, repo } = dropQueue(true);
+    execute
+      .mockResolvedValueOnce({ rows: [{ moved: false, spread: true }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ moved: true, spread: false }] });
+    await expect(repo.reorderTo(7, 12, 'after', sql``)).resolves.toBe('done');
+    expect(sqlText(execute.mock.calls[5]![0])).toContain("interval '2 microseconds'");
+    expect(sqlText(execute.mock.calls[6]![0])).toBe(sqlText(execute.mock.calls[4]![0]));
+  });
+
+  it('places a drop before the first backlog book at the end of the pinned lane', async () => {
+    const { execute, repo } = dropQueue(false);
+    execute.mockResolvedValueOnce({ rows: [{ id: 12 }] }).mockResolvedValueOnce({ rows: [{ moved: true, spread: false }] });
+    await expect(repo.reorderTo(7, 12, 'before', sql``)).resolves.toBe('done');
+    expect(sqlText(execute.mock.calls[4]![0])).toContain('i.pinned_at IS NULL');
+    expect(sqlText(execute.mock.calls[5]![0])).toContain("coalesce(a.pinned_at, n.pinned_at) + interval '1 microsecond'");
+  });
+
+  it('refuses ordering within the computed backlog', async () => {
+    const { execute, repo } = dropQueue(false);
+    execute.mockResolvedValueOnce({ rows: [{ id: 9 }] });
+    await expect(repo.reorderTo(7, 12, 'before', sql``)).resolves.toBe('refused');
+    expect(execute).toHaveBeenCalledTimes(5);
+  });
+
+  it('skips when the neighbour is gone', async () => {
+    const { execute, repo } = dropQueue(null);
+    await expect(repo.reorderTo(7, 12, 'after', sql``)).resolves.toBe('skipped');
+    expect(execute).toHaveBeenCalledTimes(4);
   });
 });
 
@@ -196,6 +285,21 @@ it.each([true, false])('builds the wanting CTE from default-on users (pinned=%s)
   expect(query).toContain('COALESCE(s.enabled, true)');
   expect(query).toContain("COALESCE(s.book_sync_mode, 'all_eligible')");
   expect(query).not.toContain('edition_sync_settings ');
+});
+
+it('checks the same wanting rules with the acting user excluded', async () => {
+  const execute = vi
+    .fn()
+    .mockResolvedValueOnce({ rows: [{ wanted: true }] })
+    .mockResolvedValueOnce({ rows: [{ wanted: false }] });
+  const repo = new EditionSyncRepository({ execute } as never);
+  await expect(repo.isWanted(12)).resolves.toBe(true);
+  await expect(repo.isWantedByAnotherUser(12, 7)).resolves.toBe(false);
+  const dialect = new PgDialect();
+  const anyUser = dialect.sqlToQuery(execute.mock.calls[0][0]);
+  const anotherUser = dialect.sqlToQuery(execute.mock.calls[1][0]);
+  expect(anotherUser.sql.replace(' AND u.id <> $1', '').replace(/\$(\d+)/g, (_, index) => `$${Number(index) - 1}`)).toBe(anyUser.sql);
+  expect(anotherUser.params).toEqual([7, ...anyUser.params]);
 });
 it.each(['countUnused', 'findUnused', 'deleteUnusedIndexRow'] as const)('%s does not depend on the server switch', async (method) => {
   const execute = vi.fn().mockResolvedValue({ rows: [] });

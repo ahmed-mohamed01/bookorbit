@@ -826,6 +826,16 @@ book-move and scanner paths the slot and flag cascade together.
 
 ## Current conflict surface (semantic, `-w`)
 
+### Jobs queue action hooks
+
+Measured with `git diff -w upstream/main --numstat`. Totals include the existing fork changes in each file.
+
+| Upstream file | Added | Removed | Hook |
+| --- | ---: | ---: | --- |
+| `server/src/app.module.ts` | 16 | 0 | Registers fork modules, including `ForkJobReorderModule` |
+| `packages/types/src/index.ts` | 11 | 0 | Exports fork contracts, including `fork-job-reorder` |
+| `packages/types/src/jobs.ts` | 13 | 1 | Shared action kinds for adjacent movement and starting |
+
 ### 2026-11-14 surface shrink after the v3.8.0 merge
 
 Measured on the v3.8.0 merge tree (`70c6a7cb0`, upstream `c77966cc5`) with
@@ -1353,6 +1363,39 @@ beside it). Schema: `edition_sync_user_settings`, `edition_sync_book_overrides`,
 `OVERLAY_SOURCE_RESOLVER`, `EPUB_DOM_SOURCE_RESOLVER`), the same pattern as
 `AudiobookshelfMetadataModule`. Every upstream injection is `@Optional()` with a no-op default, so
 with the module unregistered upstream behaves byte-for-byte as before (pinned by the seam tests).
+
+**Jobs queue:** Edition sync lists the running build, visible claimable pins, then individual backlog
+books in run order. The keyset limit applies across both waiting lanes. Backlog counts are cached per
+scope for 15 seconds, share in-flight reads, and are invalidated after successful queued actions.
+Administrators without edition sync access see the running build and visible backlog, with ranks
+that include the claimable pins. Edition sync users can move a book ranked below first to the
+front of the pinned lane, swap adjacent claimable pins or promote a backlog book to the back of the
+pinned lane. Cancel checks for other wanting users before writing an opt-out, and refuses without
+changing preferences when someone else wants the book. While the scheduler is idle, a server
+settings administrator can start a manual run from the first row in scope. The scheduler rechecks
+the global queue head when starting and retries after a bounded batch of lost claim races. When
+the server switch is off, pinned rows show Paused and link to `/settings/fork`, and backlog rows are hidden.
+
+`ForkJobReorderModule` is registered in `app.module.ts` and imports `JobsModule` for the exported
+source registry. Its session-only `POST /api/v1/fork/jobs/reorder` uses the Jobs view permissions.
+The fork-owned `ReorderableJobSource` interface adds relative placement to the three fork adapters.
+Audio conversions and web serials rotate the existing order keys over the affected range in the
+viewer's lane under the queue lock. Edition sync places a book between the neighbouring pins,
+spreads timestamps when the gap is too small, and treats the slot before the first visible backlog
+book as the end of the pinned lane. The page identifies the backlog head so other backlog slots
+stay unavailable. Only edition sync can express a drop after a row as before its next eligible row.
+Audio conversions and web serials send the row under the pointer with `place: 'after'` for after drops.
+A successful pin refreshes the count and wakes the scheduler. All three drops use
+the existing Jobs change notifications. Removing the route takes one import and one registration
+out of `app.module.ts`; removing the grip takes the client hooks in the conflict table above.
+
+**Other fork queues:** Web serial owners swap adjacent jobs within their own jobs, and managers swap
+in the global queue. Web serial bootstrap preserves the existing `queue_order, id` order with
+distinct keys and uses sequences for new, resumed and prioritized jobs. Convert to M4B uses an
+idempotent `queue_order bigint` bootstrap with a `created_at, id` backfill, front and back sequences,
+and a partial claim index. Library managers can swap within editable libraries or move a job
+ranked below first to the front. Claims and reorders use the same order and coordinate through transaction-level
+advisory locks. The adapters publish state changes through the existing Jobs notifications.
 
 **Plugin removal:** drop `EditionSyncModule` from `app.module.ts`, delete the owned files above, revert
 the server and client seams in the table (the read-along-via-index rows go with it: without

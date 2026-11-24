@@ -93,10 +93,8 @@ export class WebSerialJobMoveService {
     let moved = 0;
     let missing = 0;
     let pausedByMove = false;
-    let queueOrder = 0;
     try {
       const job = await this.jobs.getAccessibleJob(id, user);
-      queueOrder = job.queueOrder;
       this.assertMangaMove(job);
       const targetKey = parseSeriesKey(input.seriesKey);
       if (targetKey.kind !== 'manga')
@@ -194,7 +192,7 @@ export class WebSerialJobMoveService {
       return result;
     } catch (error) {
       if (pausedByMove) {
-        await this.repo.restoreAfterMove(id, queueOrder).catch(() => undefined);
+        await this.repo.restoreAfterMove(id).catch(() => undefined);
         this.jobs.changed(null);
       }
       const { errorClass, message } = describeError(error);

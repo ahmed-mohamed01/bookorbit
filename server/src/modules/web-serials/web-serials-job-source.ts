@@ -1,18 +1,19 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, type OnModuleInit } from '@nestjs/common';
-import { Permission, type JobActionKind, type JobCounts, type JobStatus, type JobSubject, type WebSerialJobStatus } from '@bookorbit/types';
+import {
+  Permission,
+  type JobActionKind,
+  type JobCounts,
+  type JobStatus,
+  type JobSubject,
+  type WebSerialJobStatus,
+  type JobReorderRequest,
+  type JobReorderResult,
+} from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
-import type {
-  JobAccess,
-  JobSource,
-  JobViewer,
-  SourceActionResult,
-  SourceCountQuery,
-  SourceItem,
-  SourceListQuery,
-  SourceRow,
-} from '../jobs/job-source';
+import type { JobAccess, JobViewer, SourceActionResult, SourceCountQuery, SourceItem, SourceListQuery, SourceRow } from '../jobs/job-source';
+import type { ReorderableJobSource } from '../fork-job-reorder/reorderable-job-source';
 import { JobSourceRegistry } from '../jobs/job-source.registry';
 import { isWebSerialsAdmin } from './web-serials-job-view.utils';
 import { WebSerialsJobPageRepository, type WebSerialJobActionRow, type WebSerialJobPageRow } from './web-serials-job-page.repository';
@@ -71,12 +72,17 @@ function moveAction(user: RequestUser): JobActionKind {
   return isWebSerialsAdmin(user) ? 'prioritize' : 'move-to-top';
 }
 
-function offered(job: Pick<WebSerialJobPageRow, 'status' | 'rank' | 'ownRank'>, user: RequestUser): JobActionKind[] {
+function offered(job: Pick<WebSerialJobPageRow, 'status' | 'rank' | 'ownRank' | 'laneSize' | 'ownLaneSize'>, user: RequestUser): JobActionKind[] {
   const actions: JobActionKind[] = [];
   if (RETRYABLE.has(job.status)) actions.push('retry');
   if (job.status === 'paused') actions.push('resume');
   if (PAUSABLE.has(job.status)) actions.push('pause');
-  if (job.status === 'queued' && (isWebSerialsAdmin(user) ? job.rank : job.ownRank) > 1) actions.push(moveAction(user));
+  if (job.status === 'queued') {
+    const admin = isWebSerialsAdmin(user);
+    const rank = admin ? job.rank : job.ownRank;
+    if (rank > 1) actions.push(moveAction(user), 'move-up');
+    if (rank < (admin ? job.laneSize : job.ownLaneSize)) actions.push('move-down');
+  }
   if (CANCELLABLE.has(job.status)) actions.push('cancel');
   return actions;
 }
@@ -112,7 +118,7 @@ function reason(job: WebSerialJobPageRow): string | null {
  * `WebSerialJobsService`, which checks ownership again. Removing a finished job stays on the queue page.
  */
 @Injectable()
-export class WebSerialsJobSource implements JobSource<WebSerialJobSourceRow>, OnModuleInit {
+export class WebSerialsJobSource implements ReorderableJobSource<WebSerialJobSourceRow>, OnModuleInit {
   readonly type = 'web-serial' as const;
   readonly failedWindowMs = FAILED_WINDOW_MS;
   private readonly logger = new Logger(WebSerialsJobSource.name);
@@ -132,7 +138,7 @@ export class WebSerialsJobSource implements JobSource<WebSerialJobSourceRow>, On
     return { own, all: own && isWebSerialsAdmin(user) };
   }
 
-  async list(query: SourceListQuery): Promise<WebSerialJobSourceRow[]> {
+  async list(query: SourceListQuery, viewer: JobViewer): Promise<WebSerialJobSourceRow[]> {
     const rows = await this.jobs.pageForJobs({
       view: query.view,
       owner: query.owner === null ? null : { id: query.owner.id },
@@ -141,7 +147,7 @@ export class WebSerialsJobSource implements JobSource<WebSerialJobSourceRow>, On
       typeIndex: query.typeIndex,
       limit: query.limit,
     });
-    return rows.map((job) => ({ nativeId: String(job.id), key: job.key, job, item: this.item(job) }));
+    return rows.map((job) => ({ nativeId: String(job.id), key: job.key, job, item: this.item(job, isWebSerialsAdmin(viewer.user)) }));
   }
 
   async counts(query: SourceCountQuery): Promise<JobCounts> {
@@ -166,8 +172,17 @@ export class WebSerialsJobSource implements JobSource<WebSerialJobSourceRow>, On
   }
 
   actions(row: WebSerialJobSourceRow, viewer: JobViewer): { actions: JobActionKind[]; note: string | null } {
-    if (!(viewer.access.all || row.job.userId === viewer.user.id)) return { actions: [], note: null };
+    if (!mayUse(viewer.user) || !(viewer.access.all || row.job.userId === viewer.user.id)) return { actions: [], note: null };
     return { actions: offered(row.job, viewer.user), note: null };
+  }
+
+  async reorderTo(id: string, targetId: string, place: JobReorderRequest['place'], viewer: JobViewer): Promise<JobReorderResult> {
+    if (!mayUse(viewer.user)) return { outcome: 'refused', status: null };
+    if (![id, targetId].every((value) => NATIVE_ID.test(value) && Number(value) <= 2_147_483_647)) {
+      return { outcome: 'skipped', status: null };
+    }
+    const outcome = await this.service.reorderTo(Number(id), Number(targetId), place, viewer.user);
+    return { outcome, status: outcome === 'done' ? 'queued' : null };
   }
 
   async act(action: JobActionKind, nativeIds: string[], viewer: JobViewer): Promise<SourceActionResult[]> {
@@ -187,12 +202,29 @@ export class WebSerialsJobSource implements JobSource<WebSerialJobSourceRow>, On
   private async actOn(action: JobActionKind, id: string, row: WebSerialJobActionRow | null, viewer: JobViewer): Promise<SourceActionResult> {
     const startedAt = Date.now();
     // A viewer who neither administers web serials nor owns the job cannot tell it from a missing one.
-    if (!row || !(viewer.access.all || row.userId === viewer.user.id)) return { id, outcome: 'not-found', status: null };
+    if (!mayUse(viewer.user) || !row || !(viewer.access.all || row.userId === viewer.user.id)) return { id, outcome: 'not-found', status: null };
     const result = (outcome: SourceActionResult['outcome'], current: WebSerialJobStatus = row.status): SourceActionResult => ({
       id,
       outcome,
       status: status(current),
     });
+    if (action === 'move-up' || action === 'move-down') {
+      const fields = `jobId=${row.id} userId=${viewer.user.id} direction=${action}`;
+      try {
+        const outcome = row.status === 'queued' && (await this.service.reorderJob(row.id, viewer.user, action)) ? 'done' : 'skipped';
+        this.logger.log(
+          `[web_serial.jobs_reorder] [end] ${fields} durationMs=${Date.now() - startedAt} outcome=${outcome} - download queue reordered`,
+        );
+        return result(outcome);
+      } catch (error) {
+        if (error instanceof NotFoundException) return result('skipped');
+        if (error instanceof ForbiddenException) return result('refused');
+        this.logger.warn(
+          `[web_serial.jobs_reorder] [fail] ${fields} durationMs=${Date.now() - startedAt} outcome=error errorClass=${error instanceof Error ? error.name : 'Error'} error="${sanitizeLogValue(error instanceof Error ? error.message : String(error))}" - download reorder failed`,
+        );
+        return result('error');
+      }
+    }
     if (!applies(action, row, viewer.user)) return result('skipped');
     try {
       const job = await this.run(action, row.id, viewer.user);
@@ -224,7 +256,7 @@ export class WebSerialsJobSource implements JobSource<WebSerialJobSourceRow>, On
     }
   }
 
-  private item(job: WebSerialJobPageRow): SourceItem {
+  private item(job: WebSerialJobPageRow, admin: boolean): SourceItem {
     const running = RUNNING.has(job.status);
     const counted = job.unitsTotal > 0;
     return {
@@ -236,7 +268,7 @@ export class WebSerialsJobSource implements JobSource<WebSerialJobSourceRow>, On
       done: counted ? job.unitsDone + job.unitsSkipped + job.unitsFailed : null,
       total: counted ? job.unitsTotal : null,
       percent: null,
-      position: job.status === 'queued' && job.rank > 0 ? job.rank : null,
+      position: job.status === 'queued' && job.rank > 0 ? (admin ? job.rank : job.ownRank) : null,
       requester: { id: job.userId, name: job.ownerName ?? '' },
       cost: null,
       createdAt: job.createdAt.toISOString(),

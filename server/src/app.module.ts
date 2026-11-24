@@ -117,6 +117,7 @@ import { AppAttestModule } from './modules/app-attest/app-attest.module';
 import { ReadAloudModule } from './modules/read-aloud/read-aloud.module';
 import { EditionSyncModule } from './modules/edition-sync/edition-sync.module';
 import { AudioConvertModule } from './modules/audio-convert/audio-convert.module';
+import { ForkJobReorderModule } from './modules/fork-job-reorder/fork-job-reorder.module';
 import { CoverThumbnailsModule } from './modules/cover-thumbnails/cover-thumbnails.module';
 import { PageLocatorModule } from './modules/page-locator/page-locator.module';
 import { YearReviewModule } from './modules/year-review/year-review.module';
@@ -254,6 +255,7 @@ import { BulkRunsModule } from './modules/bulk-runs/bulk-runs.module';
     ReadAloudModule,
     EditionSyncModule,
     AudioConvertModule,
+    ForkJobReorderModule,
     CoverThumbnailsModule,
     PageLocatorModule,
     YearReviewModule,

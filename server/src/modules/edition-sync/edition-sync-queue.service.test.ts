@@ -1,7 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { checkEditionSyncSources } from './edition-sync-source-check';
 vi.mock('./edition-sync-source-check', () => ({ checkEditionSyncSources: vi.fn() }));
-import { describe, expect, it, vi } from 'vitest';
+import { assert, describe, expect, it, vi } from 'vitest';
 
 import { EDITION_SYNC_CLEAR_BATCH_SIZE } from './edition-sync.constants';
 import { EditionSyncQueueService } from './edition-sync-queue.service';
@@ -41,8 +41,9 @@ describe('EditionSyncQueueService.claimNext', () => {
     const claim = await service.claimNext({ pinnedOnly: true });
     expect(repo.findNextQueuedBook).toHaveBeenCalledWith({ pinnedOnly: true });
     expect(claim).toMatchObject({ bookId: 4, pinned: true });
+    assert(claim && claim !== 'contended');
     expect(claim?.workerJobId).toMatch(/^[0-9a-f-]{36}$/);
-    expect(repo.claimIndexRow).toHaveBeenCalledWith(4, claim?.workerJobId, expect.any(Date), null);
+    expect(repo.claimIndexRow).toHaveBeenCalledWith(4, claim?.workerJobId, expect.any(Date), null, { pinnedOnly: true });
   });
 
   it('tells the Jobs area a build started, and nothing when the claim lost the race', async () => {
@@ -51,7 +52,8 @@ describe('EditionSyncQueueService.claimNext', () => {
     expect(jobChanges.notify).toHaveBeenCalledWith({ type: 'edition-sync', ownerId: null, state: true });
     jobChanges.notify.mockClear();
     repo.claimIndexRow.mockResolvedValue(null);
-    await service.claimNext({ pinnedOnly: true });
+    await expect(service.claimNext({ pinnedOnly: true })).resolves.toBe('contended');
+    expect(repo.claimIndexRow).toHaveBeenCalledTimes(4);
     expect(jobChanges.notify).not.toHaveBeenCalled();
   });
 
@@ -77,6 +79,7 @@ describe('EditionSyncQueueService.claimNext', () => {
     repo.findIndexRow.mockResolvedValue({ bookId: 4, workerJobId: 'old-job', ...row });
     workspace.inspect.mockResolvedValue({ isDirectory: () => true });
     const claim = await service.claimNext({ pinnedOnly: false });
+    assert(claim && claim !== 'contended');
     expect(claim?.workerJobId).not.toBe('old-job');
     expect(workspace.remove).toHaveBeenCalledWith('old-job');
     expect(workspace.remove.mock.invocationCallOrder[0]).toBeLessThan(repo.claimIndexRow.mock.invocationCallOrder[0]);
@@ -86,13 +89,14 @@ describe('EditionSyncQueueService.claimNext', () => {
     const { service, repo } = setup();
     repo.findIndexRow.mockResolvedValue({ bookId: 4, status: 'failed', workerJobId: 'old-job' });
     const claim = await service.claimNext({ pinnedOnly: false });
+    assert(claim && claim !== 'contended');
     expect(claim?.workerJobId).not.toBe('old-job');
   });
 
-  it('returns null when the queue is empty or another claim won', async () => {
+  it('rechecks the queue after a lost claim and returns null when it is empty', async () => {
     const { service, repo } = setup();
     repo.claimIndexRow.mockResolvedValueOnce(null);
-    await expect(service.claimNext({ pinnedOnly: false })).resolves.toBeNull();
+    await expect(service.claimNext({ pinnedOnly: false })).resolves.toMatchObject({ bookId: 4 });
     repo.findNextQueuedBook.mockResolvedValueOnce(null);
     await expect(service.claimNext({ pinnedOnly: false })).resolves.toBeNull();
   });

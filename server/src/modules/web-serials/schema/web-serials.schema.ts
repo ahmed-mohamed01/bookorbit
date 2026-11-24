@@ -121,7 +121,7 @@ export const webSerialJobs = pgTable(
     heartbeatAt: timestamp('heartbeat_at', { withTimezone: true }),
     queueOrder: bigint('queue_order', { mode: 'number' })
       .notNull()
-      .default(sql`((extract(epoch from now()) * 1000)::bigint)`),
+      .default(sql`nextval('web_serial_queue_back_seq')`),
   },
   (t) => [
     index('web_serial_jobs_user_created_idx').on(t.userId, t.createdAt.desc()),

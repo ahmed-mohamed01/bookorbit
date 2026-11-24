@@ -8,6 +8,7 @@ import {
   type AudiobookChapter,
   type AudiobookChapterSource,
   type ContentFilterRules,
+  type JobReorderRequest,
 } from '@bookorbit/types';
 import { Inject, Injectable } from '@nestjs/common';
 import { and, desc, eq, inArray, sql, type SQL } from 'drizzle-orm';
@@ -16,6 +17,13 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { escapeLikePattern } from '../../common/utils/accent-insensitive-search.utils';
 import { buildContentFilterClauses } from '../../common/utils/content-filter-sql.utils';
 import { isUniqueViolation } from '../../common/utils/db-error.utils';
+import {
+  lockQueueDropJobs,
+  rotateQueuedJobs,
+  swapQueuedJobs,
+  type QueueDropOutcome,
+  type QueueMove,
+} from '../../common/utils/fork-queue-reorder.utils';
 import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
 import { DB } from '../../db';
 import { deleteBookFilesWithHashInvalidation, recordBookFileHashHistory } from '../../db/book-file-hash-history';
@@ -33,6 +41,7 @@ import {
 type Db = NodePgDatabase<typeof schema>;
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
+const QUEUE_LOCK = sql`SELECT pg_advisory_xact_lock(1651470180, 1)`;
 const ACTIVE = sql`('waiting', 'queued', 'running')`;
 const AUDIO_FORMATS_SQL = sql.join(
   AUDIO_FORMAT_LIST.map((format) => sql`${format}`),
@@ -500,16 +509,60 @@ export class AudioConvertRepository {
     return job ?? null;
   }
 
+  async reorderTo(
+    id: string,
+    targetId: string,
+    place: JobReorderRequest['place'],
+    libraryId: number,
+    libraryIds: readonly number[] | null,
+  ): Promise<QueueDropOutcome> {
+    const table = sql`audio_convert_jobs`;
+    const scope = libraryIds === null ? sql`true` : sql`q.library_id = ANY(${sql.param([...libraryIds])}::integer[])`;
+    return this.db.transaction(async (tx) => {
+      await tx.execute(QUEUE_LOCK);
+      const { rows } = await tx.execute<{ id: string; queued: boolean; allowed: boolean }>(
+        lockQueueDropJobs(table, id, targetId, sql`${scope} AND (q.id <> ${id} OR q.library_id = ${libraryId})`),
+      );
+      const own = rows.find((row) => row.id === id);
+      const target = rows.find((row) => row.id === targetId);
+      if (own?.allowed === false || target?.allowed === false) return 'refused';
+      if (id === targetId || !own?.queued || !target?.queued) return 'skipped';
+      const moved = await tx.execute(rotateQueuedJobs(table, id, targetId, place, scope));
+      return moved.rows.length ? 'done' : 'skipped';
+    });
+  }
+
+  async reorderJob(id: string, libraryId: number, libraryIds: readonly number[] | null, direction: QueueMove): Promise<boolean> {
+    const scope = libraryIds === null ? sql`true` : sql`q.library_id = ANY(${sql.param([...libraryIds])}::integer[])`;
+    const targetScope = sql`q.library_id = ${libraryId} AND ${scope}`;
+    return this.db.transaction(async (tx) => {
+      await tx.execute(QUEUE_LOCK);
+      const query =
+        direction === 'move-to-top'
+          ? sql`UPDATE audio_convert_jobs q
+              SET queue_order = nextval('audio_convert_queue_front_seq')
+              WHERE q.id = ${id} AND q.status = 'queued' AND ${targetScope}
+                AND EXISTS (SELECT 1 FROM audio_convert_jobs ahead
+                  WHERE ahead.status = 'queued' AND (ahead.queue_order, ahead.id) < (q.queue_order, q.id))
+              RETURNING q.id`
+          : swapQueuedJobs(sql`audio_convert_jobs`, id, scope, direction, targetScope);
+      return rowsOf(await tx.execute(query)).length === (direction === 'move-to-top' ? 1 : 2);
+    });
+  }
+
   async claim(): Promise<AudioConvertJobRow | null> {
-    const result = rowsOf<{ id: string }>(
-      await this.db.execute(sql`UPDATE audio_convert_jobs SET status = 'running', stage = 'converting', progress = 0,
+    const result = await this.db.transaction(async (tx) => {
+      await tx.execute(QUEUE_LOCK);
+      return rowsOf<{ id: string }>(
+        await tx.execute(sql`UPDATE audio_convert_jobs SET status = 'running', stage = 'converting', progress = 0,
           started_at = now(), updated_at = now(), attempts = attempts + 1
         WHERE id = (
           SELECT id FROM audio_convert_jobs
           WHERE status = 'queued' AND (next_step_at IS NULL OR next_step_at <= now())
-          ORDER BY created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED)
+          ORDER BY queue_order, id LIMIT 1 FOR UPDATE SKIP LOCKED)
         RETURNING id`),
-    );
+      );
+    });
     return result[0] ? this.findJob(result[0].id) : null;
   }
 

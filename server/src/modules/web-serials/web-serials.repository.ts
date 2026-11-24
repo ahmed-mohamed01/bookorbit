@@ -1,4 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
+import {
+  lockQueueDropJobs,
+  rotateQueuedJobs,
+  swapQueuedJobs,
+  type QueueDropOutcome,
+  type QueueDirection,
+} from '../../common/utils/fork-queue-reorder.utils';
 import { and, asc, count, desc, eq, getTableColumns, gt, inArray, isNotNull, like, lt, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { alias } from 'drizzle-orm/pg-core';
@@ -13,6 +20,7 @@ import type {
   WebSerialPackaging,
   WebSerialPublishedRequest,
   WebSerialSelection,
+  JobReorderRequest,
 } from '@bookorbit/types';
 import {
   ACTIVE_WEB_SERIAL_JOB_STATUSES,
@@ -178,7 +186,8 @@ const CANCELLABLE_STATUSES: WebSerialJobStatus[] = [...ACTIVE_STATUSES, 'paused'
 const PAUSABLE_STATUSES: WebSerialJobStatus[] = [...ACTIVE_STATUSES];
 const IN_FLIGHT_ITEM_STATUSES: WebSerialJobItemStatus[] = ['fetching', 'importing'];
 const MOVABLE_ITEM_STATUSES: WebSerialJobItemStatus[] = ['pending', 'fetching', 'failed'];
-const QUEUE_ORDER_NOW = sql`((extract(epoch from now()) * 1000)::bigint)`;
+const QUEUE_ORDER_BACK = sql`nextval('web_serial_queue_back_seq')`;
+const QUEUE_LOCK = sql`SELECT pg_advisory_xact_lock(1651470180, 2)`;
 const DROPPED_HANDLE = sql`'{"handle": null, "member": null}'::jsonb`;
 const RETRY_AT = sql`(${webSerialJobItems.remoteRef}->>'retryAt')::timestamptz`;
 
@@ -620,13 +629,22 @@ export class WebSerialsRepository {
 
   /** Conditional on still being queued, so two ticks (or a cancel) cannot both win the job. */
   async claimQueuedJob(id: number): Promise<WebSerialJobRow | undefined> {
-    const now = new Date();
-    const [row] = await this.db
-      .update(webSerialJobs)
-      .set({ status: 'running', startedAt: sql`coalesce(${webSerialJobs.startedAt}, ${now})`, updatedAt: now })
-      .where(and(eq(webSerialJobs.id, id), eq(webSerialJobs.status, 'queued')))
-      .returning();
-    return row;
+    return this.db.transaction(async (tx) => {
+      await tx.execute(QUEUE_LOCK);
+      const now = new Date();
+      const [row] = await tx
+        .update(webSerialJobs)
+        .set({ status: 'running', startedAt: sql`coalesce(${webSerialJobs.startedAt}, ${now})`, updatedAt: now })
+        .where(
+          and(
+            eq(webSerialJobs.id, id),
+            eq(webSerialJobs.status, 'queued'),
+            sql`${webSerialJobs.id} = (SELECT id FROM web_serial_jobs WHERE status = 'queued' ORDER BY queue_order, id LIMIT 1)`,
+          ),
+        )
+        .returning();
+      return row;
+    });
   }
 
   /**
@@ -684,18 +702,65 @@ export class WebSerialsRepository {
   }
 
   async resumeJob(id: number): Promise<WebSerialJobId | undefined> {
-    return this.transitionJob(id, ['paused'], { status: 'queued', queueOrder: QUEUE_ORDER_NOW });
+    return this.transitionJob(id, ['paused'], { status: 'queued', queueOrder: QUEUE_ORDER_BACK });
   }
 
   /** Puts a job a failed move paused back where it stood in the queue. */
-  async restoreAfterMove(id: number, queueOrder: number): Promise<WebSerialJobId | undefined> {
-    return this.transitionJob(id, ['paused'], { status: 'queued', queueOrder });
+  async restoreAfterMove(id: number): Promise<WebSerialJobId | undefined> {
+    return this.transitionJob(id, ['paused'], { status: 'queued' });
   }
 
   async moveJobToTop(id: number, userId: number | null = null): Promise<WebSerialJobId | undefined> {
-    const scope = userId === null ? sql`true` : sql`${webSerialJobs.userId} = ${userId}`;
-    const lowest = sql`(select min(${webSerialJobs.queueOrder}) from ${webSerialJobs} where ${webSerialJobs.status} = 'queued' and ${scope})`;
-    return this.transitionJob(id, ['queued'], { queueOrder: sql`least(coalesce(${lowest}, ${QUEUE_ORDER_NOW}), ${QUEUE_ORDER_NOW}) - 1` });
+    return this.db.transaction(async (tx) => {
+      await tx.execute(QUEUE_LOCK);
+      if (userId !== null) {
+        const result = await tx.execute<{ id: number }>(sql`
+          WITH locked AS MATERIALIZED (
+            SELECT id, queue_order FROM web_serial_jobs
+            WHERE status = 'queued' AND user_id = ${userId}
+              AND queue_order <= (SELECT queue_order FROM web_serial_jobs WHERE id = ${id} AND status = 'queued' AND user_id = ${userId})
+            ORDER BY id FOR UPDATE
+          ), rotated AS (
+            SELECT id, CASE WHEN id = ${id} THEN min(queue_order) OVER ()
+              ELSE lead(queue_order) OVER (ORDER BY queue_order, id) END AS next_order
+            FROM locked WHERE EXISTS (SELECT 1 FROM locked WHERE id = ${id})
+          )
+          UPDATE web_serial_jobs j SET queue_order = rotated.next_order, updated_at = now()
+          FROM rotated WHERE j.id = rotated.id RETURNING j.id
+        `);
+        return result.rows.find((row) => row.id === id);
+      }
+      const [row] = await tx
+        .update(webSerialJobs)
+        .set({ queueOrder: sql`nextval('web_serial_queue_front_seq')`, updatedAt: new Date() })
+        .where(and(eq(webSerialJobs.id, id), eq(webSerialJobs.status, 'queued')))
+        .returning({ id: webSerialJobs.id });
+      return row;
+    });
+  }
+
+  async reorderTo(id: number, targetId: number, place: JobReorderRequest['place'], userId: number | null): Promise<QueueDropOutcome> {
+    const table = sql`web_serial_jobs`;
+    const scope = userId === null ? sql`true` : sql`q.user_id = ${userId}`;
+    return this.db.transaction(async (tx) => {
+      await tx.execute(QUEUE_LOCK);
+      const { rows } = await tx.execute<{ id: number; queued: boolean; allowed: boolean }>(lockQueueDropJobs(table, id, targetId, scope));
+      const own = rows.find((row) => row.id === id);
+      const target = rows.find((row) => row.id === targetId);
+      if (own?.allowed === false || target?.allowed === false) return 'refused';
+      if (id === targetId || !own?.queued || !target?.queued) return 'skipped';
+      const moved = await tx.execute(rotateQueuedJobs(table, id, targetId, place, scope));
+      return moved.rows.length ? 'done' : 'skipped';
+    });
+  }
+
+  async reorderJob(id: number, userId: number | null, direction: QueueDirection): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      await tx.execute(QUEUE_LOCK);
+      const scope = userId === null ? sql`true` : sql`q.user_id = ${userId}`;
+      const result = await tx.execute(swapQueuedJobs(sql`web_serial_jobs`, id, scope, direction));
+      return result.rows.length === 2;
+    });
   }
 
   async deleteFinishedJob(id: number): Promise<boolean> {
@@ -747,7 +812,7 @@ export class WebSerialsRepository {
           message: null,
           currentUnit: null,
           finishedAt: null,
-          queueOrder: QUEUE_ORDER_NOW,
+          queueOrder: QUEUE_ORDER_BACK,
           updatedAt: new Date(),
         })
         .where(and(eq(webSerialJobs.id, id), inArray(webSerialJobs.status, ['failed', 'completed_with_gaps'])))
@@ -789,7 +854,7 @@ export class WebSerialsRepository {
           message: null,
           currentUnit: null,
           finishedAt: null,
-          queueOrder: QUEUE_ORDER_NOW,
+          queueOrder: QUEUE_ORDER_BACK,
           updatedAt: new Date(),
         })
         .where(and(eq(webSerialJobs.id, jobId), inArray(webSerialJobs.status, RETRYABLE_JOB_STATUSES)));

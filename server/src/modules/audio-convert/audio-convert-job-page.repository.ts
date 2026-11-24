@@ -44,6 +44,7 @@ export type AudioConvertJobPageRow = Pick<
   ownerName: string | null;
   /** 1-based place among queued jobs in claim order; 0 unless queued. */
   rank: number;
+  laneSize: number;
   key: JobKey;
 };
 
@@ -72,7 +73,7 @@ export interface AudioConvertJobPageQuery extends AudioConvertJobScope {
   limit: number;
 }
 
-/** Convert to M4B jobs for the Jobs area. One worker claims queued jobs oldest first. */
+/** Convert to M4B jobs for the Jobs area. One worker claims queued jobs by queue order. */
 @Injectable()
 export class AudioConvertJobPageRepository {
   constructor(@Inject(DB) private readonly db: Db) {}
@@ -117,15 +118,18 @@ export class AudioConvertJobPageRepository {
   /** Running first, then queued jobs in claim order, then books still waiting in the automatic pipeline. */
   private async queuePage(query: AudioConvertJobPageQuery): Promise<AudioConvertJobPageRow[]> {
     // Aliased: drizzle renders column references unqualified, which inside a subquery would bind to the wrong row.
-    const lane = this.db
-      .$with('audio_convert_lane')
-      .as(
-        this.db
-          .select({ laneId: sql<string>`lane.id`.as('lane_id'), place: sql<number>`lane.place`.as('place') })
-          .from(
-            sql`(select q.id, row_number() over (order by q.created_at, q.id) as place from audio_convert_jobs q where q.status = 'queued') lane`,
-          ),
-      );
+    const libraries = query.libraryIds === null ? sql`` : sql`and q.library_id = ANY(${sql.param([...query.libraryIds])}::integer[])`;
+    const lane = this.db.$with('audio_convert_lane').as(
+      this.db
+        .select({
+          laneId: sql<string>`lane.id`.as('lane_id'),
+          place: sql<number>`lane.place`.as('place'),
+          laneSize: sql<number>`lane.lane_size`.as('lane_size'),
+        })
+        .from(
+          sql`(select q.id, row_number() over (order by q.queue_order, q.id) as place, count(*) over () as lane_size from audio_convert_jobs q where q.status = 'queued' ${libraries}) lane`,
+        ),
+    );
     const status = audioConvertJobs.status;
     const group = sql<number>`case when ${status} = 'running' then 0 when ${status} = 'queued' then 1 else 2 end`;
     const rank = sql<number>`case when ${status} = 'queued' then coalesce(${lane.place}, ${UNPLACED}) else 0 end`;
@@ -146,6 +150,7 @@ export class AudioConvertJobPageRepository {
         ...PAGE_COLUMNS,
         group: sql<number>`${group}`.mapWith(Number),
         rank: sql<number>`${rank}`.mapWith(Number),
+        laneSize: sql<number>`coalesce(${lane.laneSize}, 0)`.mapWith(Number),
         at,
       })
       .from(audioConvertJobs)
@@ -183,7 +188,12 @@ export class AudioConvertJobPageRepository {
       )
       .orderBy(...keysetOrder(columns, query.view))
       .limit(query.limit);
-    return rows.map(({ finish, ...row }) => ({ ...row, rank: 0, key: { prefix: [finish], suffix: [], id: row.id } }));
+    return rows.map(({ finish, ...row }) => ({
+      ...row,
+      rank: 0,
+      laneSize: 0,
+      key: { prefix: [finish], suffix: [], id: row.id },
+    }));
   }
 
   private failedShown(cutoffAt: Date): SQL {

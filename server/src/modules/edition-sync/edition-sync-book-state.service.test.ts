@@ -1,6 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
+import { sql } from 'drizzle-orm';
 import type { RequestUser } from '../../common/types/request-user';
 import { EDITION_SYNC_SERVER_DISABLED_MESSAGE } from './edition-sync.constants';
 import { EditionSyncBookStateService } from './edition-sync-book-state.service';
@@ -29,6 +30,8 @@ function setup(
     findIndexRow: vi.fn().mockResolvedValue(options.row ?? null),
     setOverride: vi.fn().mockResolvedValue(undefined),
     retryFailedBooks: vi.fn().mockResolvedValue(3),
+    pinQueuedBook: vi.fn().mockResolvedValue(true),
+    reorderPinnedBook: vi.fn().mockResolvedValue(true),
     pinBook: vi.fn().mockResolvedValue(undefined),
     markStale: vi.fn().mockResolvedValue(true),
     findQueuePosition: vi.fn().mockResolvedValue(142),
@@ -62,6 +65,31 @@ function setup(
   );
   return { service, repo, books, queue, scheduler, overlaySource, libraryScope, alignmentStatus };
 }
+
+describe('EditionSyncBookStateService.reorderQueuedBook', () => {
+  it('promotes backlog books to the back of the pinned lane and changes the Jobs state', async () => {
+    const { service, repo, books, scheduler } = setup();
+    const scope = sql`true`;
+    await expect(service.reorderQueuedBook(user, 10, false, 'move-up', scope)).resolves.toBe(true);
+    expect(books.verifyBookAccess).toHaveBeenCalledWith(10, user);
+    expect(repo.pinQueuedBook).toHaveBeenCalledWith(10, 'back', scope);
+    expect(scheduler.changed).toHaveBeenCalledOnce();
+    await expect(service.reorderQueuedBook(user, 10, false, 'move-down', scope)).resolves.toBe(false);
+    expect(repo.reorderPinnedBook).not.toHaveBeenCalled();
+    expect(scheduler.changed).toHaveBeenCalledOnce();
+  });
+
+  it('pins to the front and skips a pinned row when its neighbour disappears', async () => {
+    const { service, repo, scheduler } = setup();
+    const scope = sql`true`;
+    await expect(service.reorderQueuedBook(user, 10, true, 'move-to-top', scope)).resolves.toBe(true);
+    expect(repo.pinQueuedBook).toHaveBeenCalledWith(10, 'front', scope);
+    repo.reorderPinnedBook.mockResolvedValueOnce(false);
+    await expect(service.reorderQueuedBook(user, 10, true, 'move-down', scope)).resolves.toBe(false);
+    expect(repo.reorderPinnedBook).toHaveBeenCalledWith(10, scope, 'move-down');
+    expect(scheduler.changed).toHaveBeenCalledOnce();
+  });
+});
 
 describe('EditionSyncBookStateService.getState', () => {
   it('reports pin, run and edition facts', async () => {

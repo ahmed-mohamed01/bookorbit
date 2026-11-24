@@ -32,10 +32,22 @@ export class EditionSyncQueueService {
   /**
    * Marks the next book `running` and returns it; pinned books only when `pinnedOnly`. Reuses the
    * previous worker job id while its folder exists, so the worker resumes from its cached stages.
+   * Returns 'contended' if all claim attempts lost a race.
    */
-  async claimNext(options: { pinnedOnly: boolean; excludeBookIds?: readonly number[] }): Promise<EditionSyncClaim | null> {
-    const next = await this.repo.findNextQueuedBook(options);
-    if (!next) return null;
+  async claimNext(options: { pinnedOnly: boolean; excludeBookIds?: readonly number[] }): Promise<EditionSyncClaim | 'contended' | null> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const next = await this.repo.findNextQueuedBook(options);
+      if (!next) return null;
+      const claim = await this.claimBook(next, options);
+      if (claim) return claim;
+    }
+    return 'contended';
+  }
+
+  private async claimBook(
+    next: { bookId: number; pinned: boolean },
+    options: { pinnedOnly: boolean; excludeBookIds?: readonly number[] },
+  ): Promise<EditionSyncClaim | null> {
     const existing = await this.repo.findIndexRow(next.bookId);
     const filesChanged =
       !!existing &&
@@ -45,7 +57,7 @@ export class EditionSyncQueueService {
     const resumable =
       !filesChanged && existing?.workerJobId && RESUMABLE_STATUSES.has(existing.status) && (await this.hasWorkFolder(existing.workerJobId));
     const workerJobId = resumable && existing?.workerJobId ? existing.workerJobId : randomUUID();
-    const claimed = await this.repo.claimIndexRow(next.bookId, workerJobId, new Date(), existing?.filesChangedAt ?? null);
+    const claimed = await this.repo.claimIndexRow(next.bookId, workerJobId, new Date(), existing?.filesChangedAt ?? null, options);
     if (!claimed) return null;
     this.overlaySource.invalidateBook(next.bookId);
     this.changed();

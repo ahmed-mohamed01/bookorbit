@@ -110,6 +110,23 @@ describe('EditionSyncSchedulerService', () => {
     expect(repo.finishRun).toHaveBeenCalledWith(5, { stopReason: 'empty', booksIndexed: 2, booksFailed: 0, secondsIndexed: 7200 });
   });
 
+  it('refuses a Jobs start request once that book is no longer first', async () => {
+    const { service, repo } = setup();
+    repo.findNextQueuedBook.mockResolvedValueOnce({ bookId: 14, pinned: false });
+    await expect(service.startManualRun(12)).rejects.toBeInstanceOf(ConflictException);
+    expect(repo.createRun).not.toHaveBeenCalled();
+  });
+
+  it('retries a contended claim in the same run until the queue is actually empty', async () => {
+    const { service, repo, queue, indexer, finished } = setup();
+    queue.claimNext.mockResolvedValueOnce('contended').mockResolvedValueOnce(claimFor(4));
+    await service.startManualRun();
+    await finished();
+    expect(queue.claimNext).toHaveBeenCalledTimes(3);
+    expect(indexer.indexBook).toHaveBeenCalledWith(claimFor(4), expect.anything());
+    expect(repo.finishRun).toHaveBeenCalledWith(5, expect.objectContaining({ stopReason: 'empty', booksIndexed: 1 }));
+  });
+
   it('rejects a second manual run while one is active', async () => {
     const { service, queue } = setup();
     let release: (value: null) => void = () => undefined;

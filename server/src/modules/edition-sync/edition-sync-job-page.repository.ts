@@ -7,7 +7,16 @@ import { buildContentFilterClauses } from '../../common/utils/content-filter-sql
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
 import { afterPosition, keysetOrder, type JobKey, type JobPosition, type KeysetColumns } from '../jobs/job-keyset';
-import { ELIGIBLE_SQL, QUEUEABLE_ROW_SQL, WANTED_SQL, WANTING_USERS_CTE, libraryFilterSql, queueQuery } from './edition-sync.repository';
+import {
+  ELIGIBLE_SQL,
+  QUEUE_ORDER_SQL,
+  QUEUEABLE_ROW_SQL,
+  SETTLED_PIN_SQL,
+  WANTED_SQL,
+  WANTING_USERS_CTE,
+  libraryFilterSql,
+  queueQuery,
+} from './edition-sync.repository';
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -25,21 +34,23 @@ export interface EditionSyncJobPageRow {
   pinnedAt: Date | null;
   failedAt: Date | null;
   indexedAt: Date | null;
-  /** 1-based place among pinned books in claim order; 0 unless queued. */
+  /** 1-based place among visible waiting books in claim order; 0 unless queued. */
   rank: number;
+  pinnedCount: number;
   key: JobKey;
 }
 
 export type EditionSyncJobActionRow = {
   bookId: number;
-  status: 'running' | 'ready' | 'failed' | 'stale';
+  status: 'running' | 'ready' | 'failed' | 'stale' | 'queued';
   retryRequested: boolean;
+  pinned: boolean;
 };
 
 /**
  * Which books a read covers: the viewer's visible libraries (null for every library) and their
  * content filter, as the module's own books list applies them. `runningOnly` keeps the Queue to the
- * book being built, which is all the admin status shows someone who only manages the server.
+ * book being built and the unpinned backlog for someone who only manages the server.
  */
 export interface EditionSyncJobScope {
   libraryIds: readonly number[] | null;
@@ -49,6 +60,7 @@ export interface EditionSyncJobScope {
 
 export interface EditionSyncJobPageQuery extends EditionSyncJobScope {
   view: JobView;
+  includeBacklog?: boolean;
   cutoffAt: Date;
   after: JobPosition | null;
   typeIndex: number;
@@ -81,6 +93,7 @@ type RawPageRow = {
   indexedAt: Date | string | null;
   grp: number;
   rank: number;
+  pinnedCount: number;
   at: number | string;
 };
 
@@ -107,13 +120,14 @@ export class EditionSyncJobPageRepository {
   }
 
   /** The running build, the pinned books waiting, and the failures still inside the failed window. */
-  async countForJobs(scope: EditionSyncJobScope, cutoffAt: Date): Promise<EditionSyncJobCounts> {
+  async countForJobs(scope: EditionSyncJobScope, cutoffAt: Date, serverEnabled: boolean): Promise<EditionSyncJobCounts> {
     if (scope.libraryIds?.length === 0) return { running: 0, pinned: 0, failed: 0 };
+    const claimable = serverEnabled ? sql`AND ${SETTLED_PIN_SQL}` : sql``;
     const result = await this.db.execute<EditionSyncJobCounts>(sql`
       WITH ${WANTING_USERS_CTE}
       SELECT
         count(*) FILTER (WHERE i.status = 'running')::int AS "running",
-        count(*) FILTER (WHERE ${scope.runningOnly ? sql`false` : sql`i.status <> 'running' AND i.pinned_at IS NOT NULL AND ${QUEUEABLE_ROW_SQL} AND ${ELIGIBLE_SQL} AND ${WANTED_SQL}`})::int AS "pinned",
+        count(*) FILTER (WHERE ${scope.runningOnly ? sql`false` : sql`i.status <> 'running' AND i.pinned_at IS NOT NULL AND ${QUEUEABLE_ROW_SQL} AND ${ELIGIBLE_SQL} AND ${WANTED_SQL} ${claimable}`})::int AS "pinned",
         count(*) FILTER (WHERE ${scope.runningOnly ? sql`false` : sql`${FAILED_ROW} AND ${FINISH} > ${cutoffAt}`})::int AS "failed"
       FROM edition_sync_book_index i
       JOIN books b ON b.id = i.book_id
@@ -125,7 +139,7 @@ export class EditionSyncJobPageRepository {
   }
 
   /** Eligible, wanted books no run has pinned, which wait for the next scheduled or manual run. */
-  async countBacklog(scope: Omit<EditionSyncJobScope, 'runningOnly'>): Promise<number> {
+  async countBacklog(scope: EditionSyncJobScope): Promise<number> {
     if (scope.libraryIds?.length === 0) return 0;
     const result = await this.db.execute<{ count: number }>(
       queueQuery(sql`count(*)::int AS "count"`, sql`(i.book_id IS NULL OR i.pinned_at IS NULL) ${this.scoped(scope)}`),
@@ -133,18 +147,23 @@ export class EditionSyncJobPageRepository {
     return rowsOf<{ count: number }>(result)[0]?.count ?? 0;
   }
 
-  async findActionRows(bookIds: readonly number[], scope: Omit<EditionSyncJobScope, 'runningOnly'>): Promise<EditionSyncJobActionRow[]> {
+  async findActionRows(bookIds: readonly number[], scope: EditionSyncJobScope): Promise<EditionSyncJobActionRow[]> {
     if (bookIds.length === 0 || scope.libraryIds?.length === 0) return [];
-    const result = await this.db.execute<EditionSyncJobActionRow>(sql`
-      SELECT i.book_id AS "bookId", i.status, i.retry_requested AS "retryRequested"
-      FROM edition_sync_book_index i
-      JOIN books b ON b.id = i.book_id
-      WHERE i.book_id = ANY(${sql.param([...bookIds])}::integer[]) ${this.scoped(scope)}
+    const queued = sql`${QUEUEABLE_ROW_SQL} AND ${ELIGIBLE_SQL} AND ${WANTED_SQL}`;
+    const result = await this.db.execute<Omit<EditionSyncJobActionRow, 'status'> & { status: EditionSyncJobActionRow['status'] | null }>(sql`
+      WITH ${WANTING_USERS_CTE}
+      SELECT b.id AS "bookId",
+        CASE WHEN ${queued} THEN 'queued' ELSE i.status END AS status,
+        coalesce(i.retry_requested, false) AS "retryRequested", i.pinned_at IS NOT NULL AS pinned
+      FROM books b
+      JOIN libraries l ON l.id = b.library_id
+      LEFT JOIN edition_sync_book_index i ON i.book_id = b.id
+      WHERE b.id = ANY(${sql.param([...bookIds])}::integer[]) ${this.scoped(scope)}
+        ${scope.runningOnly ? sql`AND (i.status = 'running' OR (i.pinned_at IS NULL AND ${queued}))` : sql``}
     `);
-    return rowsOf<EditionSyncJobActionRow>(result);
+    return result.rows.filter((row): row is EditionSyncJobActionRow => row.status !== null);
   }
 
-  /** The book being built first, then pinned books in claim order. */
   private async queuePage(query: EditionSyncJobPageQuery): Promise<EditionSyncJobPageRow[]> {
     const columns: KeysetColumns = {
       prefix: [
@@ -155,29 +174,33 @@ export class EditionSyncJobPageRepository {
       id: { kind: 'number', expr: sql`q."bookId"` },
     };
     const scoped = this.scoped(query);
-    const candidates = query.runningOnly
-      ? sql`i.status = 'running'`
-      : sql`(i.status = 'running' OR i.pinned_at IS NOT NULL) AND (i.status = 'running' OR lane.book_id IS NOT NULL)`;
+    const pinned = sql`i.pinned_at IS NOT NULL`;
+    const laneColumns = sql`b.id AS "bookId", i.stage, i.progress, i.error_code AS "errorCode",
+      coalesce(i.created_at, b.added_at) AS "createdAt", i.last_attempt_at AS "lastAttemptAt", i.pinned_at AS "pinnedAt",
+      i.failed_at AS "failedAt", i.indexed_at AS "indexedAt", 'queued' AS status, 1 AS grp,
+      row_number() OVER (ORDER BY ${QUEUE_ORDER_SQL})::int AS rank,
+      (count(*) FILTER (WHERE i.pinned_at IS NOT NULL) OVER ())::int AS "pinnedCount",
+      (extract(epoch FROM coalesce(i.pinned_at, b.added_at)) * 1000000)::bigint AS at`;
+    const waiting = query.includeBacklog
+      ? queueQuery(laneColumns, sql`${SETTLED_PIN_SQL} ${scoped}`)
+      : sql`WITH ${WANTING_USERS_CTE}
+          SELECT ${laneColumns}
+          FROM edition_sync_book_index i
+          JOIN books b ON b.id = i.book_id
+          JOIN libraries l ON l.id = b.library_id
+          WHERE ${pinned} AND ${QUEUEABLE_ROW_SQL} AND ${ELIGIBLE_SQL} AND ${WANTED_SQL} ${scoped}`;
     const result = await this.db.execute<RawPageRow>(sql`
-      WITH ${WANTING_USERS_CTE}, lane AS (
-        SELECT i.book_id, row_number() OVER (ORDER BY i.pinned_at ASC, i.book_id DESC)::int AS place
+      WITH q AS (
+        SELECT ${PAGE_COLUMNS}, 'running' AS status, 0 AS grp, 0 AS rank, 0 AS "pinnedCount",
+          (extract(epoch FROM coalesce(i.last_attempt_at, i.created_at)) * 1000000)::bigint AS at
         FROM edition_sync_book_index i
         JOIN books b ON b.id = i.book_id
-        JOIN libraries l ON l.id = b.library_id
-        WHERE i.pinned_at IS NOT NULL AND ${QUEUEABLE_ROW_SQL} AND ${ELIGIBLE_SQL} AND ${WANTED_SQL} ${scoped}
-      ), q AS (
-        SELECT ${PAGE_COLUMNS},
-          CASE WHEN i.status = 'running' THEN 'running' ELSE 'queued' END AS status,
-          CASE WHEN i.status = 'running' THEN 0 ELSE 1 END AS grp,
-          CASE WHEN i.status = 'running' THEN 0 ELSE lane.place END AS rank,
-          (extract(epoch FROM CASE WHEN i.status = 'running' THEN coalesce(i.last_attempt_at, i.created_at) ELSE i.pinned_at END) * 1000000)::bigint AS at
-        FROM edition_sync_book_index i
-        JOIN books b ON b.id = i.book_id
-        LEFT JOIN lane ON lane.book_id = i.book_id
-        WHERE ${candidates} ${scoped}
+        WHERE i.status = 'running' ${scoped}
+        ${query.runningOnly && !query.includeBacklog ? sql`` : sql`UNION ALL (${waiting})`}
       )
       SELECT * FROM q
-      ${query.after ? sql`WHERE ${afterPosition(columns, 'queue', query.after, query.typeIndex)}` : sql``}
+      WHERE ${query.runningOnly ? sql`(q."pinnedAt" IS NULL OR q.grp = 0)` : sql`true`}
+        ${query.after ? sql`AND ${afterPosition(columns, 'queue', query.after, query.typeIndex)}` : sql``}
       ORDER BY ${sql.join(keysetOrder(columns, 'queue'), sql`, `)}
       LIMIT ${query.limit}
     `);
@@ -192,7 +215,7 @@ export class EditionSyncJobPageRepository {
         ? sql`${FAILED_ROW} AND ${FINISH} > ${query.cutoffAt}`
         : sql`(i.status = 'ready' OR (${FAILED_ROW} AND ${FINISH} <= ${query.cutoffAt}))`;
     const result = await this.db.execute<RawPageRow>(sql`
-      SELECT ${PAGE_COLUMNS}, i.status, 0 AS grp, 0 AS rank, (extract(epoch FROM ${FINISH}) * 1000000)::bigint AS at
+      SELECT ${PAGE_COLUMNS}, i.status, 0 AS grp, 0 AS rank, 0 AS "pinnedCount", (extract(epoch FROM ${FINISH}) * 1000000)::bigint AS at
       FROM edition_sync_book_index i
       JOIN books b ON b.id = i.book_id
       WHERE ${shown} ${this.scoped(query)}
@@ -215,13 +238,14 @@ export class EditionSyncJobPageRepository {
       pinnedAt: date(row.pinnedAt),
       failedAt: date(row.failedAt),
       indexedAt: date(row.indexedAt),
+      pinnedCount: Number(row.pinnedCount ?? 0),
       rank: row.status === 'queued' ? Number(row.rank) : 0,
       key: { prefix, suffix, id: row.bookId },
     };
   }
 
   /** Library and content filter on the book alias `b`, as `EditionSyncRepository.listScope` applies them. */
-  private scoped(scope: Pick<EditionSyncJobScope, 'libraryIds' | 'contentFilters'>): SQL {
+  scoped(scope: Pick<EditionSyncJobScope, 'libraryIds' | 'contentFilters'>): SQL {
     const clauses = scope.contentFilters ? buildContentFilterClauses(scope.contentFilters, this.db) : [];
     // The content filter clauses reference the unaliased "books" table, so they run in their own scope.
     const content = clauses.length > 0 ? sql`AND EXISTS (SELECT 1 FROM books WHERE books.id = b.id AND ${and(...clauses)})` : sql``;
