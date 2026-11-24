@@ -9,6 +9,7 @@ export interface MonitorAuthorCandidate {
   id: number
   name: string
   bookCount: number
+  workCount?: number
 }
 
 const initialFormats: MonitoredFormat[] = ['ebook', 'audiobook']
@@ -90,7 +91,7 @@ export function useMonitorAuthorAction() {
         name: author.name,
         providerIds: {},
         localAuthorId: author.id,
-        bookCount: author.bookCount,
+        bookCount: author.workCount ?? author.bookCount,
         imageUrl: null,
         coverBookId: null,
         genres: [],

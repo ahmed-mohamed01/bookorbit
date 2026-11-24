@@ -1166,6 +1166,16 @@ describe('MonitoredService', () => {
     expect(results[0].imageUrl).toBe('/api/v1/authors/62/thumbnail?t=1');
   });
 
+  it.each([
+    { workCount: 1, expected: 1 },
+    { workCount: 0, expected: 0 },
+    { workCount: undefined, expected: 2 },
+  ])('uses $expected for a local author with two books and workCount=$workCount', async ({ workCount, expected }) => {
+    const results = await searchService([], [{ id: 62, name: 'Alexander Olson', bookCount: 2, workCount }]).searchAuthors('Alexander Olson', viewer);
+
+    expect(results).toEqual([expect.objectContaining({ localAuthorId: 62, bookCount: expected })]);
+  });
+
   it('prefers the library photo over the Hardcover image', async () => {
     const hit = { ...stubOlson, image: { url: 'https://hardcover.example/olson.jpg' } };
     const results = await searchService([hit], [{ id: 62, name: 'Alexander Olson', bookCount: 3 }], '/api/v1/authors/62/thumbnail?t=1').searchAuthors(

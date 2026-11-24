@@ -11,13 +11,13 @@ import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { test } from "node:test";
-import { chapterAligned, classifySpine, markup, upgradeEpub } from "@storyteller-platform/align";
+import { chapterAligned, classifySpine, markup, upgradeEpub } from "@storyteller/align";
 import { validateRequest } from "../dist/validation.js";
 import { FAKE_PIPELINE, jobRequest, makeSandbox, stagesRun } from "./helpers.mjs";
 
-const alignRequire = createRequire(import.meta.resolve("@storyteller-platform/align"));
-const epubRequire = createRequire(alignRequire.resolve("@storyteller-platform/epub"));
-const { Epub } = await import(pathToFileURL(alignRequire.resolve("@storyteller-platform/epub")).href);
+const alignRequire = createRequire(import.meta.resolve("@storyteller/align"));
+const epubRequire = createRequire(alignRequire.resolve("@storyteller/epub"));
+const { Epub } = await import(pathToFileURL(alignRequire.resolve("@storyteller/epub")).href);
 const { ZipFile } = alignRequire("yazl");
 const yauzl = epubRequire("yauzl-promise");
 const sha256 = createHash("sha256").update("audio").digest("hex");

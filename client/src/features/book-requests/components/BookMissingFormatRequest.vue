@@ -12,7 +12,8 @@ import { submitFailureText } from '../composables/useRequestSubmission'
 /**
  * The format a book does not have yet, offered where the book's formats are listed: an ebook's
  * missing audiobook, or an audiobook's missing ebook. Requesting it here names this book, so when
- * the new format arrives it joins the book rather than becoming a second one beside it.
+ * the new format arrives it joins the book rather than becoming a second one beside it, wherever
+ * the book's library can hold that format.
  */
 const props = defineProps<{ book: BookDetail }>()
 
@@ -54,9 +55,7 @@ async function handleRequest() {
     toast.error(t('bookRequests.search.submitFailed'), { description: submitFailureText(failure, t) ?? undefined })
     return
   }
-  if (result.subscribed) toast.success(t('bookRequests.search.joinedExisting'))
-  else
-    toast.success(missing.value === 'audiobook' ? t('bookRequests.missingFormat.submittedAudiobook') : t('bookRequests.missingFormat.submittedEbook'))
+  toast.success(t(result.subscribed ? 'bookRequests.search.joinedExisting' : 'bookRequests.search.submitted'))
 }
 </script>
 

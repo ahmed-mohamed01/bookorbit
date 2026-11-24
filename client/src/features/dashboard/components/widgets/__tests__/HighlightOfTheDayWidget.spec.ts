@@ -1,4 +1,4 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, RouterLinkStub } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import type { useCoverVersions } from '@/features/book/composables/useCoverVersions'
 import type { HighlightOfTheDayWidgetData } from '@bookorbit/types'
@@ -11,7 +11,6 @@ const fetchHighlightOfTheDay = vi.fn<() => Promise<HighlightOfTheDayWidgetData |
 vi.mock('@/features/dashboard/api/dashboard-widget.api', () => ({
   fetchHighlightOfTheDay: () => fetchHighlightOfTheDay(),
 }))
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn<(...args: unknown[]) => void>() }) }))
 vi.mock('@/features/book/composables/useCoverVersions', () => ({
   useCoverVersions: () => ({ coverUrl }),
 }))
@@ -35,7 +34,7 @@ describe('HighlightOfTheDayWidget', () => {
       createdAt: '2026-01-01T00:00:00Z',
     })
     const wrapper = mount(HighlightOfTheDayWidget, {
-      global: { stubs: { BookCoverSurface: { template: '<div><slot /></div>' }, BookCoverArtwork: CoverArtworkStub } },
+      global: { stubs: { BookCoverSurface: { template: '<div><slot /></div>' }, BookCoverArtwork: CoverArtworkStub, RouterLink: RouterLinkStub } },
     })
     await flushPromises()
 

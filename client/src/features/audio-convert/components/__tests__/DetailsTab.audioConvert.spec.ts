@@ -35,7 +35,8 @@ vi.mock('@/features/book/composables/useDeleteBook', () => ({
     return {
       pendingId: { value: null },
       deleting: { value: false },
-      promptDelete: vi.fn<(id: number) => void>(),
+      editions: { value: null },
+      promptDelete: vi.fn<(id: number, source?: unknown) => void>(),
       cancelDelete: vi.fn<() => void>(),
       confirmDelete: vi.fn<() => void>(),
     }

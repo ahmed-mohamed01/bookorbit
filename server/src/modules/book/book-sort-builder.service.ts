@@ -3,6 +3,7 @@ import { AnyColumn, SQL, sql } from 'drizzle-orm';
 
 import { MAX_RANDOM_SORT_SEED, parseCustomSortFieldId } from '@bookorbit/types';
 import type { CustomMetadataFieldType, CustomMetadataFieldTypeMap, SortField, SortSpec } from '@bookorbit/types';
+import { bookLastReadAtSql } from '../../db/book-last-read';
 import {
   authors,
   bookAuthors,
@@ -58,6 +59,7 @@ const SORT_FIELD_MAP: Partial<Record<SortField, AnyColumn>> = {
   addedAt: books.addedAt,
   updatedAt: books.updatedAt,
   pageCount: bookMetadata.pageCount,
+  originalPublishedYear: bookMetadata.originalPublishedYear,
   publisher: bookMetadata.publisher,
   language: bookMetadata.language,
   metadataScore: bookMetadata.metadataScore,
@@ -123,9 +125,7 @@ export class BookSortBuilder {
         break;
       case 'lastReadAt':
         if (userId === undefined) throw new BadRequestException('lastReadAt sort requires an authenticated user');
-        result.push(
-          sql`(SELECT max(rp.last_read_at) FROM reading_progress rp INNER JOIN book_files bf ON rp.book_file_id = bf.id WHERE bf.book_id = books.id AND rp.user_id = ${userId}) ${sql.raw(D)} NULLS LAST`,
-        );
+        result.push(sql`${bookLastReadAtSql()} ${sql.raw(D)} NULLS LAST`);
         break;
       case 'finishedAt':
         if (userId === undefined) throw new BadRequestException('finishedAt sort requires an authenticated user');

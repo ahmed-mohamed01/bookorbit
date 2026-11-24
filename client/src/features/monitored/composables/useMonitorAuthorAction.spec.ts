@@ -122,6 +122,16 @@ describe('useMonitorAuthorAction', () => {
     wrapper.unmount()
   })
 
+  it('uses the local work count in the modal fallback for linked editions', async () => {
+    searchMock.mockResolvedValue([])
+    const { composable, wrapper } = mountComposable()
+
+    await composable.beginMonitor({ ...localAuthor, bookCount: 2, workCount: 1 })
+
+    expect(composable.target.value).toEqual(syntheticFallback())
+    wrapper.unmount()
+  })
+
   it('says so and opens nothing when the author is already monitored', async () => {
     searchMock.mockResolvedValue([searchResult({ localAuthorId: 7, alreadyMonitoredId: 'mon-1' })])
     const { composable, wrapper } = mountComposable()

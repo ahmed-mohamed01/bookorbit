@@ -32,7 +32,7 @@ describe('BookEditionsCard edition sync', () => {
   it('keeps the upstream header and footer when sync is not active', () => {
     const wrapper = mountCard({}, { 'header-action': '<span data-test="toggle" />' })
 
-    expect(wrapper.get('h3').text()).toBe('Editions')
+    expect(wrapper.get('h3').text()).toBe('Formats')
     expect(wrapper.find('[data-test="toggle"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('2 · ')
     expect(wrapper.text()).toMatch(/Files on disk\s*2$/)

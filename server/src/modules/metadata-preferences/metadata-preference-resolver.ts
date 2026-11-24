@@ -86,6 +86,8 @@ const FIELD_DEFAULTS: Partial<Record<MetadataField, Partial<FieldPreference>>> =
   // Google and Open Library carry no series.
   seriesName: { providers: [MetadataProviderKey.GOODREADS, MetadataProviderKey.AMAZON, MetadataProviderKey.KOBO] },
   seriesIndex: { providers: [MetadataProviderKey.GOODREADS, MetadataProviderKey.AMAZON, MetadataProviderKey.KOBO] },
+  // Only these two tell a work's first year apart from the edition's.
+  originalPublishedYear: { providers: [MetadataProviderKey.HARDCOVER, MetadataProviderKey.OPEN_LIBRARY] },
   // Only these list more than one series for a book. Extra series are added to the book's list, never swapped in.
   otherSeries: {
     mergeStrategy: 'mergeExisting',

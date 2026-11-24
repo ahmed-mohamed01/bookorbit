@@ -67,7 +67,7 @@ export class AmazonProductPageClient {
     const startedAt = Date.now();
     try {
       const response = await fetchWithThrottle(url, {
-        headers: amazonRequestHeaders(url, amazon.cookie),
+        headers: amazonRequestHeaders(amazon.cookie),
         signal: buildRequestSignal(PROVIDER_TIMEOUT_MS.SCRAPE, signal),
       });
       if (allowNotFound && response.status === 404) return { html: '', notFound: true };

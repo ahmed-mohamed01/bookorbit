@@ -4,6 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 
 import type { BookRequestDownloadRow, BookRequestRow } from '../../../db/schema';
+import { BOOK_REQUEST_DOWNLOAD_QUEUED } from '../book-request-events.service';
 import { PathMappingService } from '../download-clients/path-mapping.service';
 import { RequestImportService } from '../fulfillment/request-import.service';
 import { RequestBatchImportService } from './request-batch-import.service';
@@ -87,6 +88,7 @@ async function makeHarness(options: { useHardlinks?: boolean; stagesLocally?: bo
     updateUnit: vi.fn().mockResolvedValue(undefined),
   };
 
+  const events = { emit: vi.fn() };
   const importHook = new RequestBatchImportService(
     { getOrThrow: () => bookDockPath } as never,
     downloads as never,
@@ -97,6 +99,7 @@ async function makeHarness(options: { useHardlinks?: boolean; stagesLocally?: bo
     fulfillment as never,
     removal as never,
     batches as never,
+    events as never,
   );
   await importHook.onApplicationBootstrap();
 
@@ -131,6 +134,7 @@ async function makeHarness(options: { useHardlinks?: boolean; stagesLocally?: bo
     audit,
     removal,
     batches,
+    events,
     bookDockPath,
     appDataPath,
     downloadsPath,
@@ -359,6 +363,7 @@ describe('RequestBatchImportService through RequestImportService.importDownload'
           expect.objectContaining({ status: 'downloading', completedAt: null }),
         );
         expect(harness.requests.updateIf).toHaveBeenCalledWith(7, ['importing'], { status: 'downloading' });
+        expect(harness.events.emit).toHaveBeenCalledWith(BOOK_REQUEST_DOWNLOAD_QUEUED);
         expect(harness.batches.updateUnit).not.toHaveBeenCalled();
         expect(harness.dockRepo.createUnit).not.toHaveBeenCalled();
         expect(harness.requests.updateIf).not.toHaveBeenCalledWith(7, expect.anything(), expect.objectContaining({ status: 'failed' }));

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { basename } from 'node:path';
 
-import { BadRequestException, ConflictException, Injectable, NotFoundException, Optional, PreconditionFailedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException, PreconditionFailedException } from '@nestjs/common';
 import {
   AUDIOBOOK_MANIFEST_SCHEMA,
   AUDIOBOOK_MANIFEST_VERSION,
@@ -17,7 +17,8 @@ import type { RequestUser } from '../../common/types/request-user';
 import { isStoredPercentageChanged } from '../../common/utils/progress-percentage.utils';
 import { orderAudiobookTracks } from '../../common/utils/audiobook-chapters.utils';
 import type { BookmarkRow } from '../../db/schema';
-import { ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, AchievementEventsService } from '../achievement/achievement-events.service';
+import { AchievementEventsService, AUDIOBOOK_PROGRESS_CHANGED_EVENT } from '../achievement/achievement-events.service';
+import { ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED } from '../achievement/achievement-events.service';
 import { AudiobookChaptersService } from '../audiobook-chapters/audiobook-chapters.service';
 import { BookService } from '../book/book.service';
 import type { CreateAudiobookBookmarkDto } from './dto/create-audiobook-bookmark.dto';
@@ -30,6 +31,13 @@ type AudioFileRow = Awaited<ReturnType<AudiobookRepository['findAudioFiles']>>[n
 // Durations are stored as whole seconds, so a real position can sit up to half a second past the
 // rounded duration. Accept a little beyond it and clamp, rather than refusing the tail of a track.
 const DURATION_SLACK_MS = 1_000;
+
+// A track the scanner could not measure leaves no exact percentage. It is estimated against the
+// book's total instead, as the player's scrubber is, and kept short of the end: that track is
+// missing from the total, so an estimate can reach 100% long before the listener does.
+const ESTIMATED_PERCENTAGE_CEILING = 99;
+
+type PlaybackRow = NonNullable<Awaited<ReturnType<AudiobookRepository['findPlaybackState']>>>;
 
 interface ManifestContext {
   manifest: AudiobookManifest;
@@ -45,7 +53,7 @@ export class AudiobookService {
     private readonly repo: AudiobookRepository,
     private readonly bookService: BookService,
     private readonly audiobookChapters: AudiobookChaptersService,
-    @Optional() private readonly achievementEvents?: AchievementEventsService,
+    private readonly achievementEvents: AchievementEventsService,
   ) {}
 
   async getManifest(bookId: number, user: RequestUser): Promise<AudiobookManifest> {
@@ -116,9 +124,11 @@ export class AudiobookService {
     const positionMs = asset.durationMs === null ? dto.positionMs : Math.min(dto.positionMs, asset.durationMs);
     const elapsedBefore = context.manifest.assets.slice(0, fileIndex).reduce((sum, item) => sum + (item.durationMs ?? 0), 0);
     const absolutePositionMs = elapsedBefore + positionMs;
+    const totalDurationMs = context.manifest.totalDurationMs;
+    const measured = context.hasCompleteDurations;
     const percentage =
-      context.hasCompleteDurations && context.manifest.totalDurationMs > 0
-        ? Math.max(0, Math.min(100, (absolutePositionMs / context.manifest.totalDurationMs) * 100))
+      totalDurationMs > 0
+        ? Math.max(0, Math.min(measured ? 100 : ESTIMATED_PERCENTAGE_CEILING, (absolutePositionMs / totalDurationMs) * 100))
         : (previous?.percentage ?? 0);
     const values = {
       currentFileId: context.files[fileIndex]!.id,
@@ -134,13 +144,17 @@ export class AudiobookService {
         : await this.repo.updatePlaybackState(user.id, bookId, dto.baseRevision, values);
     if (!saved) throw new ConflictException('Playback state revision conflict');
 
-    const strongRereadEvidence = previous !== null && previous.percentage - percentage >= 10;
-    await this.bookService.autoUpdateReadStatusForProgress(
-      user.id,
-      { bookId, libraryId: context.libraryId },
-      percentage,
-      strongRereadEvidence ? { origin: 'bookorbit', strongRereadEvidence: true } : {},
-    );
+    // An estimate can run well ahead of the listener, so only a measured percentage moves the read
+    // status. Finishing a book on an estimate is what the duration check exists to prevent.
+    if (measured) {
+      const strongRereadEvidence = await this.isRereadEvidence(bookId, previous, percentage, context.positionsKey);
+      await this.bookService.autoUpdateReadStatusForProgress(
+        user.id,
+        { bookId, libraryId: context.libraryId },
+        percentage,
+        strongRereadEvidence ? { origin: 'bookorbit', strongRereadEvidence: true } : {},
+      );
+    }
     await this.bookService.syncEbookProgressForAudiobookPlayback(
       user,
       bookId,
@@ -149,9 +163,12 @@ export class AudiobookService {
       percentage,
       saved.capturedAt,
     );
+    if (!previous || Math.round(previous.percentage) !== Math.round(saved.percentage)) {
+      this.achievementEvents.emit(AUDIOBOOK_PROGRESS_CHANGED_EVENT, { userId: user.id, bookId });
+    }
     // No occurredAt from dto.capturedAt: the server-stamped updatedAt is the honest recency signal, and a backwards client clock would stall cross-format projection.
-    if (isStoredPercentageChanged(previous?.percentage, percentage)) {
-      this.achievementEvents?.emit(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, {
+    if (measured && isStoredPercentageChanged(previous?.percentage, percentage)) {
+      this.achievementEvents.emit(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, {
         userId: user.id,
         bookId,
         bookFileId: values.currentFileId,
@@ -216,6 +233,18 @@ export class AudiobookService {
     if (!(await this.repo.deleteAudioBookmark(user.id, bookId, bookmarkId))) {
       throw new NotFoundException('Audiobook bookmark not found');
     }
+  }
+
+  /**
+   * Falling ten points means the listener went back, but only between figures taken on the same
+   * tracks. One saved before a track was measured, added or replaced is not comparable, and an
+   * estimate is often ahead of the measured figure that replaces it. A position saved without a
+   * revision came through the older progress endpoint and keeps the plain comparison.
+   */
+  private async isRereadEvidence(bookId: number, previous: PlaybackRow | null, percentage: number, positionsKey: string): Promise<boolean> {
+    if (previous === null || previous.percentage - percentage < 10) return false;
+    if (previous.manifestRevision === null) return true;
+    return this.audiobookChapters.isPositionCompatible(bookId, previous.manifestRevision, positionsKey);
   }
 
   private async loadManifestContext(bookId: number, user: RequestUser): Promise<ManifestContext> {

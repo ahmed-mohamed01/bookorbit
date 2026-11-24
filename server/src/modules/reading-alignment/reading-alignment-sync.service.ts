@@ -32,6 +32,8 @@ const MAX_OCCURRED_AT_SKEW_MS = 5 * 60_000;
 const MIN_ANCHORS = 2;
 const DEFAULT_FINISH_THRESHOLD = 98;
 const MAX_PERCENTAGE = 100;
+// Mirrors upstream's private ESTIMATED_PERCENTAGE_CEILING in audiobook.service.ts; re-check at each merge.
+const UPSTREAM_ESTIMATE_CEILING = 99;
 
 type AdvancedSide = 'ebook' | 'audio';
 type ProjectionDirection = 'ebook_to_audio' | 'audio_to_ebook';
@@ -232,11 +234,16 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
     if (!isStrictlyNewer(advancedAt, ebookActiveAt)) return;
 
     const timeline = buildAudioTimeline(await this.repo.resolveAudioPlayOrder(pair.audioBookId));
-    if (timeline.incomplete || timeline.entries.length === 0) return;
+    if (timeline.incomplete || timeline.entries.length === 0 || timeline.totalSeconds <= 0) return;
 
-    // A finished audiobook marks the ebook complete at 100% even when anchor coverage stops short.
-    const finished = await this.isFinished(pair.audioBookId, audioProgress.percentage);
+    // A finished audiobook marks the ebook complete at 100% even when anchor coverage stops short. A stored
+    // percentage at or below the estimate ceiling may be an estimate far ahead of the listener, so only one
+    // above it counts; otherwise the position measured against the file timeline decides.
     const absoluteSeconds = filePositionToAbsoluteSeconds(timeline, audioProgress.currentFileId, audioProgress.positionSeconds);
+    const measuredPercentage = (absoluteSeconds / timeline.totalSeconds) * 100;
+    const finishPercentage =
+      audioProgress.percentage > UPSTREAM_ESTIMATE_CEILING ? Math.max(measuredPercentage, audioProgress.percentage) : measuredPercentage;
+    const finished = await this.isFinished(pair.audioBookId, finishPercentage);
     if (!this.trackMovement(`${payload.userId}:${pair.audioBookId}:audio`, absoluteSeconds, advancedAt.getTime())) {
       if (!finished || !(await this.isMarkedRead(payload.userId, pair.audioBookId))) {
         return this.logQuarantined(payload, pair, 'audio_to_ebook', startedAt);

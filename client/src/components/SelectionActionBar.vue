@@ -89,8 +89,10 @@ const props = withDefaults(
     link?: LinkSelectionState | null
     /** The selection holds books linked with others, which a delete leaves alone (G6). */
     linkedSelected?: boolean
+    /** Other editions of the selected books this user may delete; the confirmation offers to delete them too. */
+    otherEditions?: number
   }>(),
-  { metadataEditable: true, merge: null, link: null, linkedSelected: false },
+  { metadataEditable: true, merge: null, link: null, linkedSelected: false, otherEditions: 0 },
 )
 
 const emit = defineEmits<{
@@ -111,7 +113,7 @@ const emit = defineEmits<{
   'move-to-library': []
   merge: []
   link: []
-  delete: []
+  delete: [includeOtherEditions: boolean]
   exit: []
   /** Ask the bulk run in progress to stop. */
   'cancel-in-flight': []
@@ -126,6 +128,7 @@ const { search: searchSeriesName } = useSeriesNameSearch()
 const { search: searchLanguage } = useLanguageSearch()
 const confirmingDelete = ref(false)
 const deleteInput = ref('')
+const includeOtherEditions = ref(false)
 const exportMenuOpen = ref(false)
 const ratingMenuOpen = ref(false)
 const fieldMenuOpen = ref(false)
@@ -164,13 +167,13 @@ const mergeDisabledText = computed(() => {
 const linkDisabledText = computed(() => {
   switch (props.link?.disabledReason) {
     case 'queryScoped':
-      return t('book.link.disabled.queryScoped')
+      return t('book.editions.disabled.queryScoped')
     case 'tooFew':
-      return t('book.link.disabled.tooFew')
+      return t('book.editions.disabled.tooFew')
     case 'tooMany':
-      return t('book.link.disabled.tooMany', { max: BOOK_LINK_MAX_MEMBERS })
+      return t('book.editions.disabled.tooMany', { max: BOOK_LINK_MAX_MEMBERS })
     case 'notEditable':
-      return t('book.link.disabled.notEditable')
+      return t('book.editions.disabled.notEditable')
     default:
       return null
   }
@@ -227,9 +230,10 @@ function onExport(scope: ExportScope) {
 
 function onConfirmDelete() {
   if (!canConfirmDelete.value) return
-  emit('delete')
+  emit('delete', props.otherEditions > 0 && includeOtherEditions.value)
   confirmingDelete.value = false
   deleteInput.value = ''
+  includeOtherEditions.value = false
 }
 
 function openReadingStateEditor() {
@@ -257,6 +261,7 @@ function clearRating() {
 function cancelDelete() {
   confirmingDelete.value = false
   deleteInput.value = ''
+  includeOtherEditions.value = false
 }
 
 function lockAll() {
@@ -470,6 +475,7 @@ watch(
                   data-testid="action-bulk-set-rating"
                   :disabled="count === 0"
                   :class="[BTN_ICON, count > 0 ? BTN_PRIMARY : BTN_DISABLED]"
+                  :aria-label="t('components.selectionActionBar.setRating')"
                   @click="ratingMenuOpen = true"
                 >
                   <Star :size="ICON_SIZE" />
@@ -486,6 +492,7 @@ watch(
                   data-testid="action-bulk-edit-metadata"
                   :disabled="count === 0"
                   :class="[BTN_ICON, count > 0 ? BTN_PRIMARY : BTN_DISABLED]"
+                  :aria-label="t('components.selectionActionBar.openMetadataEditor')"
                   @click="emit('edit')"
                 >
                   <Pencil :size="ICON_SIZE" />
@@ -500,6 +507,7 @@ watch(
                   data-testid="action-edit-individually"
                   :disabled="count === 0"
                   :class="[BTN_ICON, count > 0 ? BTN_PRIMARY : BTN_DISABLED]"
+                  :aria-label="t('components.selectionActionBar.editIndividually')"
                   @click="emit('edit-individually')"
                 >
                   <SquareArrowOutUpRight :size="ICON_SIZE" />
@@ -516,6 +524,7 @@ watch(
                   data-testid="action-add-to-collection"
                   :disabled="count === 0"
                   :class="[BTN_ICON, count > 0 ? BTN_PRIMARY : BTN_DISABLED]"
+                  :aria-label="t('components.selectionActionBar.addToCollection')"
                   @click="emit('add-to-collection')"
                 >
                   <FolderPlus :size="ICON_SIZE" />
@@ -529,6 +538,7 @@ watch(
                 <button
                   :disabled="count === 0"
                   :class="[BTN_ICON, count > 0 ? BTN_DESTRUCTIVE : BTN_DISABLED]"
+                  :aria-label="t('components.selectionActionBar.removeFromCollection')"
                   @click="emit('remove-from-collection')"
                 >
                   <FolderMinus :size="ICON_SIZE" />
@@ -545,6 +555,7 @@ watch(
                   data-testid="action-send-email"
                   :disabled="count === 0"
                   :class="[BTN_ICON, count > 0 ? BTN_PRIMARY : BTN_DISABLED]"
+                  :aria-label="t('components.selectionActionBar.sendViaEmail')"
                   @click="emit('send')"
                 >
                   <Mail :size="ICON_SIZE" />
@@ -559,6 +570,7 @@ watch(
                   data-testid="action-download-files"
                   :disabled="count === 0"
                   :class="[BTN_ICON, count > 0 ? BTN_PRIMARY : BTN_DISABLED]"
+                  :aria-label="t('components.selectionActionBar.downloadFilesZip')"
                   @click="exportMenuOpen = true"
                 >
                   <Download :size="ICON_SIZE" />
@@ -661,7 +673,9 @@ watch(
                         >
                           <Link2 :size="14" :class="linkDisabledText !== null ? 'mt-0.5' : undefined" />
                           <span class="flex min-w-0 flex-col">
-                            <span :class="linkDisabledText !== null ? 'text-muted-foreground' : undefined">{{ t('book.link.action') }}</span>
+                            <span :class="linkDisabledText !== null ? 'text-muted-foreground' : undefined">{{
+                              t('book.editions.selectionAction')
+                            }}</span>
                             <span v-if="linkDisabledText" class="text-xs text-muted-foreground" data-testid="action-link-books-reason">{{
                               linkDisabledText
                             }}</span>
@@ -683,6 +697,7 @@ watch(
                   data-testid="action-delete"
                   :disabled="count === 0"
                   :class="[BTN_ICON, count > 0 ? BTN_DESTRUCTIVE : BTN_DISABLED]"
+                  :aria-label="t('components.selectionActionBar.deleteSelected')"
                   @click="confirmingDelete = true"
                 >
                   <Trash2 :size="ICON_SIZE" />
@@ -816,8 +831,16 @@ watch(
           <template v-else>
             <span class="flex flex-col px-3 whitespace-nowrap">
               <span class="text-sm font-semibold text-destructive">{{ t('components.selectionActionBar.deleteConfirm', { count }) }}</span>
-              <span v-if="linkedSelected" class="text-xs text-muted-foreground" data-testid="delete-linked-note">{{
-                t('book.link.selectionNotAffected')
+              <label
+                v-if="otherEditions > 0"
+                class="inline-flex cursor-pointer items-center gap-1.5 text-xs text-foreground"
+                data-testid="delete-include-editions"
+              >
+                <input v-model="includeOtherEditions" type="checkbox" class="size-3.5 accent-destructive" />
+                {{ t('book.editions.delete.includeOthers', { count: otherEditions }) }}
+              </label>
+              <span v-else-if="linkedSelected" class="text-xs text-muted-foreground" data-testid="delete-linked-note">{{
+                t('book.editions.othersNotAffected')
               }}</span>
             </span>
             <template v-if="count > 50">

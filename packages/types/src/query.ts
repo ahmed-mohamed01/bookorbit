@@ -38,6 +38,7 @@ export type StaticRuleField =
   | "seriesIndex"
   | "publishedDate"
   | "publishedYear"
+  | "originalPublishedYear"
   | "pageCount"
   | "author"
   | "authorGender"
@@ -126,6 +127,7 @@ export const FIELD_OPERATORS: Record<StaticRuleField, RuleOperator[]> = {
   fileSize: ["eq", "notEq", "gt", "gte", "lt", "lte", "between", "isEmpty", "isNotEmpty"],
   publishedDate: ["before", "after", "between", "withinLast", "moreThanAgo", "isEmpty", "isNotEmpty"],
   publishedYear: ["eq", "notEq", "gt", "gte", "lt", "lte", "between", "isEmpty", "isNotEmpty"],
+  originalPublishedYear: ["eq", "notEq", "gt", "gte", "lt", "lte", "between", "isEmpty", "isNotEmpty"],
   seriesIndex: ["eq", "notEq", "gt", "gte", "lt", "lte", "between", "isEmpty", "isNotEmpty"],
   pageCount: ["gt", "gte", "lt", "lte", "between", "isEmpty", "isNotEmpty"],
   addedAt: ["before", "after", "between", "withinLast", "moreThanAgo"],
@@ -248,7 +250,7 @@ export type GroupRule = {
  * - `fileSize` - fetched from `book_files.size_bytes` for the primary file (correlated subquery)
  * - `readProgress` - aggregated from `reading_progress.percentage` (per-user, correlated subquery)
  * - `readStatus` - from `user_book_status.status` (per-user, correlated subquery)
- * - `lastReadAt` - max `reading_progress.updated_at` across all files (per-user, correlated subquery)
+ * - `lastReadAt` - latest session start or saved reading progress across all files (per-user, correlated subquery)
  * - `startedAt` - from `user_book_status.started_at` (per-user, correlated subquery)
  * - `finishedAt` - from `user_book_status.finished_at` (per-user, correlated subquery)
  * - `rating` - from `user_book_ratings.rating` (per-user, correlated subquery)
@@ -272,6 +274,7 @@ export type StaticSortField =
   | "updatedAt"
   | "publishedDate"
   | "publishedYear"
+  | "originalPublishedYear"
   | "pageCount"
   | "rating"
   | "publisher"
@@ -311,6 +314,7 @@ export const SORT_FIELDS: StaticSortField[] = [
   "updatedAt",
   "publishedDate",
   "publishedYear",
+  "originalPublishedYear",
   "pageCount",
   "rating",
   "publisher",

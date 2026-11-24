@@ -10,6 +10,7 @@
     "loading": "Loading...",
     "search": "Search",
     "back": "Back",
+    "openInNewTab": "Open in new tab",
     "next": "Next",
     "previous": "Previous",
     "retry": "Retry",
@@ -2413,6 +2414,7 @@
         "authors": "Authors",
         "publisher": "Publisher",
         "publishedYear": "Published year",
+        "originalPublishedYear": "First published",
         "language": "Language",
         "pageCount": "Page count",
         "isbn": "ISBNs",
@@ -2590,6 +2592,7 @@
             "publisher": "No publisher",
             "isbn": "No ISBN",
             "publishedYear": "No published year",
+            "originalPublishedYear": "No first published year",
             "language": "No language",
             "pageCount": "No page count",
             "communityRating": "No community rating",
@@ -7124,7 +7127,8 @@
       "readCount": "{count} read"
     },
     "card": {
-      "missing": "Missing"
+      "missing": "Missing",
+      "moreActions": "More actions for {title}"
     },
     "file": {
       "primary": "Primary",
@@ -7249,6 +7253,7 @@
         "updatedAt": "Date Updated",
         "publishedDate": "Published Date",
         "publishedYear": "Published Year",
+        "originalPublishedYear": "First published",
         "pageCount": "Page Count",
         "rating": "Rating",
         "publisher": "Publisher",
@@ -7337,6 +7342,7 @@
         "seriesIndex": "Series Index",
         "publishedDate": "Published Date",
         "publishedYear": "Published Year",
+        "originalPublishedYear": "First published",
         "pageCount": "Page Count",
         "author": "Author",
         "authorGender": "Author Gender",
@@ -7536,12 +7542,15 @@
       "title": "Delete book?",
       "description": "This will permanently delete the book and all its metadata, files, reading progress, and bookmarks. This cannot be undone.",
       "keepsHistory": "Finished reads stay in each reader's history, under the book's title and author.",
-      "linkedNotAffected": "Books linked with this one are not affected."
+      "linkedNotAffected": "Books linked with this one are not affected.",
+      "deleted": "Book deleted",
+      "failed": "Could not delete the book"
     },
     "bulkEdit": {
       "title": "{count, plural, =0 {Edit metadata - # book} one {Edit metadata - # book} other {Edit metadata - # books}}",
       "instructions": "Toggle fields to edit, then configure values. Only toggled fields will be changed.",
       "invalidYear": "Enter a valid year (numbers only)",
+      "yearOutOfRange": "Enter a year from {min} to {max}",
       "clearWarning": "This will remove all {field} from the selected books.",
       "searchPlaceholder": "Search {field}...",
       "enterPlaceholder": "Enter {field}",
@@ -7554,7 +7563,28 @@
         "remove": "Remove",
         "replace": "Replace",
         "clear": "Clear"
-      }
+      },
+      "saved": "{count, plural, one {Updated the metadata of # book} other {Updated the metadata of # books}}",
+      "savedSomeLocked": "{count, plural, one {Updated # book; some locked fields were skipped} other {Updated # books; some locked fields were skipped}}",
+      "allLocked": "Every selected book has these fields locked, so nothing changed",
+      "saveFailed": "Could not update the metadata",
+      "saveError": "Something went wrong while saving the changes"
+    },
+    "bulkActions": {
+      "deleted": "{count, plural, one {Deleted # book} other {Deleted # books}}",
+      "deleteFailed": "Could not delete the books",
+      "rated": "{count, plural, one {Rated # book {rating}/5} other {Rated # books {rating}/5}}",
+      "ratedSkipped": "{count, plural, one {Rated # book {rating}/5} other {Rated # books {rating}/5}}; {skipped, plural, one {# locked book skipped} other {# locked books skipped}}",
+      "ratingCleared": "{count, plural, one {Cleared the rating of # book} other {Cleared the ratings of # books}}",
+      "ratingClearedSkipped": "{count, plural, one {Cleared the rating of # book} other {Cleared the ratings of # books}}; {skipped, plural, one {# locked book skipped} other {# locked books skipped}}",
+      "ratingFailed": "Could not update the rating",
+      "updated": "{count, plural, one {Updated # book} other {Updated # books}}",
+      "updatedSkipped": "{count, plural, one {Updated # book} other {Updated # books}}; {skipped, plural, one {# locked book skipped} other {# locked books skipped}}",
+      "updateFailed": "Could not update the selected books",
+      "locked": "{count, plural, one {Locked the metadata of # book} other {Locked the metadata of # books}}",
+      "unlocked": "{count, plural, one {Unlocked the metadata of # book} other {Unlocked the metadata of # books}}",
+      "lockFailed": "Could not lock the metadata",
+      "unlockFailed": "Could not unlock the metadata"
     },
     "bulkReadingState": {
       "title": "{count, plural, =0 {Update reading state} one {Update reading state for # book} other {Update reading state for # books}}",
@@ -7728,6 +7758,7 @@
         "highlights": "Highlights"
       },
       "discover": {
+        "editions": "Editions",
         "moreInSeries": "More in Series",
         "byAuthor": "By Author",
         "similarBooks": "Similar Books"
@@ -7860,6 +7891,7 @@
         "primary": "Primary",
         "peek": "Peek",
         "sendViaEmail": "Send via Email",
+        "moreActions": "More actions",
         "personalReview": {
           "title": "Personal Review",
           "toggleAria": "Toggle personal review",
@@ -7961,6 +7993,8 @@
         "resetHoldReleasing": "Releasing...",
         "resetHoldReleaseFailed": "Could not use this position. Try again.",
         "editions": "Editions",
+        "formatsCard": "Formats",
+        "firstPublished": "First published",
         "editionsSummary": "{count} · {size}",
         "moreFormats": "+{count} more",
         "filesOnDisk": "Files on disk",
@@ -8055,9 +8089,12 @@
         "noProviderRatings": "No provider ratings",
         "seriesLabel": "Series",
         "publisherLabel": "Publisher",
+        "editionNameLabel": "Edition name",
+        "editionNamePlaceholder": "Full Cast, 25th Anniversary",
         "languageLabel": "Language",
         "yearLabel": "Year",
         "pageCountLabel": "Page Count",
+        "firstPublishedLabel": "First published",
         "isbn13Label": "ISBN-13",
         "isbn10Label": "ISBN-10",
         "isbnCandidates": {
@@ -8168,6 +8205,7 @@
             "description": "Description",
             "publisher": "Publisher",
             "publishedDate": "Published",
+            "originalPublishedYear": "First published",
             "language": "Language",
             "pageCount": "Page count",
             "communityRating": "Community rating",
@@ -9863,6 +9901,9 @@
           "tooLarge": "This book's file is too large for a story guide.",
           "tooLong": "This book is longer than this server's limit of {limit} words.",
           "tooShort": "This book is too short for a story guide.",
+          "language": "Story guides support books in {languages}. This book's language isn't one of them yet.",
+          "languageNamed": "This book is in {language}. Story guides support books in {languages}.",
+          "languageUnsupported": "Story guides don't support this book's language yet.",
           "unreadable": "This book's file couldn't be read.",
           "lowCoverage": "The AI provider refused too much of this book. A different model may work.",
           "requester": "The person who started this build can no longer build story guides.",
@@ -9974,7 +10015,8 @@
         "lockField": "Lock field",
         "unlockField": "Unlock field",
         "clickToLock": "Click to lock",
-        "clickToUnlock": "Click to unlock"
+        "clickToUnlock": "Click to unlock",
+        "failed": "Could not update the locks"
       },
       "progress": {
         "complete": "{percent} complete"
@@ -10174,6 +10216,8 @@
         "description": "Description",
         "publisher": "Publisher",
         "publishedYear": "Published",
+        "editionName": "Edition name",
+        "originalPublishedYear": "First published",
         "language": "Language",
         "pageCount": "Page count",
         "series": "Series",
@@ -10525,6 +10569,101 @@
         "leadFailed": "The main book could not be changed."
       }
     },
+    "editions": {
+      "addAction": "Add edition...",
+      "selectionAction": "Group as editions...",
+      "remove": "Remove from editions",
+      "makeMain": "Make this the main edition",
+      "sheet": {
+        "title": "Editions of one book",
+        "description": "Group separate records of the same book, such as its audiobook, a translation or another printing, even across libraries. Each edition keeps its own files and reading progress.",
+        "selectedHeading": "{count, plural, one {# edition} other {# editions}}",
+        "mainHint": "The first one is the main edition. Where editions are listed together, each reader sees the one they read last, else the main edition.",
+        "confirm": "{count, plural, one {Group # edition} other {Group # editions}}",
+        "confirmEmpty": "Group editions",
+        "grouping": "Grouping...",
+        "grouped": "{count, plural, one {Grouped # edition} other {Grouped # editions}}",
+        "pickerHint": "Find another edition of this book in any library you can edit, such as its audiobook or a translation.",
+        "alreadyGrouped": "Already grouped with other editions",
+        "mainBadge": "Main edition",
+        "mainHintGrouped": "Some of these are already grouped as editions, so that group's main edition stays the main one. Where editions are listed together, each reader sees the one they read last, else the main edition.",
+        "overLimit": "{count, plural, one {That makes # edition, more than the {max} a book can have.} other {That makes # editions, more than the {max} a book can have.}}"
+      },
+      "suggestions": {
+        "heading": "Suggested editions",
+        "loading": "Looking for other editions...",
+        "failed": "Suggested editions could not be loaded.",
+        "otherFormat": "Other format",
+        "otherEdition": "Other edition",
+        "sameWorkAndTitle": "Same work, title and author",
+        "sameWork": "Same work on Hardcover or Open Library",
+        "titleAuthor": "Same title and author"
+      },
+      "strip": {
+        "label": "Editions",
+        "pill": "{label}, {formats}, in {library}",
+        "pillProgress": "{label}, {formats}, in {library}, {percent} read",
+        "pillFinished": "{label}, {formats}, in {library}, finished",
+        "pillMissing": "{label}, {formats}, in {library}, files missing",
+        "showAll": "{count, plural, one {All # edition} other {All # editions}}",
+        "showAllShort": "{count, plural, one {All #} other {All #}}",
+        "showAllLabel": "{count, plural, one {Show all # edition} other {Show all # editions}}"
+      },
+      "table": {
+        "edition": "Edition",
+        "format": "Format",
+        "published": "Published",
+        "narratedBy": "Narrated by",
+        "yourReading": "Your reading",
+        "main": "Main",
+        "viewing": "Viewing",
+        "titleInLibrary": "{title} · {library}",
+        "noNarrator": "Not narrated",
+        "moreNarrators": "{count, plural, one {+# more} other {+# more}}",
+        "finished": "Finished",
+        "reading": "Reading · {percent}",
+        "notStarted": "Not started",
+        "missing": "Files missing",
+        "actions": "Actions for {label}",
+        "open": "Open edition",
+        "makeMain": "Make main edition",
+        "add": "Add edition"
+      },
+      "card": {
+        "count": "{count, plural, one {# edition} other {# editions}}"
+      },
+      "disabled": {
+        "queryScoped": "Select the books one by one to group them as editions",
+        "tooFew": "Select at least two books to group as editions",
+        "tooMany": "{max, plural, one {Group up to # edition at a time} other {Group up to # editions at a time}}",
+        "notEditable": "Only books in libraries you can edit can be grouped as editions"
+      },
+      "delete": {
+        "groupLabel": "What to delete",
+        "this": "This edition",
+        "thisDetail": "{label}, {formats}, in {library}",
+        "all": "{count, plural, one {All # edition} other {All # editions}}",
+        "allDetail": "Also {labels}, in {libraries}",
+        "kept": "{count, plural, one {# edition is in a library you cannot delete from, so it stays.} other {# editions are in libraries you cannot delete from, so they stay.}}",
+        "deleted": "{count, plural, one {Deleted # edition} other {Deleted # editions}}",
+        "includeOthers": "{count, plural, one {Also delete # other edition} other {Also delete # other editions}}"
+      },
+      "toast": {
+        "removed": "Removed from its editions",
+        "madeMain": "This is now the main edition",
+        "madeMainOther": "{label} is now the main edition",
+        "removedOther": "{label} was removed from the editions"
+      },
+      "errors": {
+        "groupFailed": "The editions could not be grouped.",
+        "removeFailed": "The book could not be removed from its editions.",
+        "mainFailed": "The main edition could not be changed.",
+        "full": "{max, plural, one {A book can have at most # edition. Remove one first.} other {A book can have at most # editions. Remove some first.}}",
+        "notEditable": "One of these books is grouped with an edition you cannot edit."
+      },
+      "othersNotAffected": "Other editions of the selected books are not affected.",
+      "formatsWithEditions": "Formats: {formats}. Other editions: {editions}"
+    },
     "bulkRefresh": {
       "failed": "Failed to refresh metadata",
       "completed": "{processed, plural, one {Refreshed metadata for # book} other {Refreshed metadata for # books}}",
@@ -10702,6 +10841,7 @@
     },
     "sheet": {
       "saved": "Saved",
+      "waitingForExtraction": "Editing is available after embedded metadata has been read.",
       "providerMetadataFound": "Provider metadata found",
       "providerMetadataFoundEdited": "Provider metadata found - bulk apply will skip this file (you have edits)",
       "review": "Review",
@@ -11894,18 +12034,21 @@
       "scoreShort": "The imported file scored {score} against this request, below the {threshold} needed to file it automatically.",
       "scoreClears": "The imported file scored {score}, which clears the {threshold} needed to file it automatically.",
       "verificationOff": "Import checking is off, so this file was never scored against the request.",
+      "editionHeld": "The title and author match, but the file looks like an older edition than the one requested, so it is waiting for you.",
       "heldOnRequest": "This release was sent to be checked before filing, so it is waiting for you.",
       "reason": {
         "isbn_match": "Its ISBN is the one that was requested.",
         "above_threshold": "It looks like the book that was asked for.",
         "below_threshold": "Check the fields below and decide whether it is the right book.",
         "author_mismatch": "The title is close, but the author is somebody else.",
-        "no_title": "The file carries no readable title, so there was nothing to compare."
+        "no_title": "The file carries no readable title, so there was nothing to compare.",
+        "edition_mismatch": "The title and author match, but the file says it is an older edition than the one that was requested."
       },
       "field": {
         "title": "Title",
         "authors": "Author",
-        "isbn13": "ISBN"
+        "isbn13": "ISBN",
+        "year": "Year"
       },
       "verdict": {
         "match": "Matches",
@@ -12433,7 +12576,8 @@
         "grid": "Grid",
         "list": "List",
         "select": "Select",
-        "exitSelect": "Exit Select"
+        "exitSelect": "Exit Select",
+        "label": "View options"
       },
       "displayControls": {
         "display": "Display",
@@ -15431,6 +15575,8 @@
         "navigation": "Document navigation",
         "previousPage": "Previous page",
         "currentPage": "Current page",
+        "pageLabelDescription": "PDF page label: {label}",
+        "pageLabelRange": "{start}–{end}",
         "nextPage": "Next page",
         "zoomOut": "Zoom out",
         "zoomIn": "Zoom in",
@@ -16064,7 +16210,8 @@
   },
   "scanner": {
     "filesProgress": "{processed}/{total} files",
-    "booksFound": "{count, plural, =0 {no books found} one {# book found} other {# books found}}"
+    "booksFound": "{count, plural, =0 {no books found} one {# book found} other {# books found}}",
+    "booksAdded": "{count, plural, one {# new book added} other {# new books added}}"
   },
   "series": {
     "completion": {
@@ -16695,6 +16842,7 @@
         "series_position": "Same series position"
       },
       "notDuplicates": "Not duplicates",
+      "notEditions": "Not editions",
       "unknownAuthor": "Unknown author",
       "unknown": "Unknown",
       "none": "None",
@@ -16755,7 +16903,9 @@
         "main": "Main book",
         "merge": "Merge in",
         "link": "Link",
-        "other": "Other copy"
+        "other": "Other copy",
+        "mainEdition": "Main edition",
+        "otherEdition": "Other edition"
       },
       "keepCopy": "Keep {name}",
       "selectGroup": "Select {title}",
@@ -16856,12 +17006,14 @@
         "show": "{count, plural, one {Show # dismissed pair} other {Show # dismissed pairs}}",
         "hide": "Hide dismissed pairs",
         "restore": "Restore this pair",
-        "restored": "Pair restored. It can match again on the next scan."
+        "restored": "Pair restored. It can match again on the next scan.",
+        "withDetail": "{title} ({detail})"
       },
       "kinds": {
         "label": "Match type",
         "duplicate": "Duplicates",
-        "other_format": "Same book, other format"
+        "other_format": "Same book, other format",
+        "other_edition": "Other editions"
       },
       "actions": {
         "label": "Action",
@@ -16869,17 +17021,20 @@
         "delete": "Delete extras",
         "merge": "Merge into keeper",
         "link": "Link",
+        "linkEditions": "Group as editions",
         "skip": "Leave as is"
       },
       "reviewMerge": "Review merge",
       "reviewLink": "Review link",
+      "reviewEditions": "Review grouping",
       "mergeUnavailable": {
         "TOO_MANY_BOOKS": "Merge is not available: the group has more books than one merge can take.",
         "DIFFERENT_LIBRARIES": "Merge is not available: the books are in different libraries.",
         "FILE_PER_BOOK_LIBRARY": "Merge is not available: the library keeps one book per file.",
         "TARGET_NOT_PRESENT": "Merge is not available: the kept book's files are missing.",
         "BOTH_HAVE_AUDIO": "Merge is not available: more than one book has an audiobook.",
-        "linkOffered": "Link keeps them as separate books shown together."
+        "linkOffered": "Link keeps them as separate books shown together.",
+        "editionsOffered": "Group as editions keeps them as separate books shown together."
       },
       "crossLibrary": {
         "into": "Into {library}",
@@ -16908,7 +17063,8 @@
         "deleted": "Deleted",
         "linked": "Linked",
         "skipped": "Skipped",
-        "failed": "Failed"
+        "failed": "Failed",
+        "grouped": "Grouped"
       },
       "outcomeReasons": {
         "STALE": "changed since the scan",
@@ -18937,7 +19093,8 @@
       "koreaderDefaultHint": "The default applies to future downloads on devices using these credentials. Device settings can override it. Existing copies and interrupted downloads stay unchanged. Automatic preserves existing device choices.",
       "koreaderUseDefault": "Use credential default",
       "koreaderSaveFailed": "Could not save the KOReader EPUB delivery setting. Try again.",
-      "koreaderSaved": "KOReader EPUB delivery setting saved."
+      "koreaderSaved": "KOReader EPUB delivery setting saved.",
+      "bookOption": "{title} · {edition}"
     }
   },
   "webSerials": {

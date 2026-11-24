@@ -15,8 +15,8 @@ import { safeEntry } from "./validation.js";
 
 // Merge hazard: these are the ZIP dependencies shipped by the pinned STAlign/EPUB packages.
 // Resolve from their owners so pnpm deploy includes them without a second dependency/lockfile entry.
-const alignRequire = createRequire(import.meta.resolve("@storyteller-platform/align"));
-const epubRequire = createRequire(alignRequire.resolve("@storyteller-platform/epub"));
+const alignRequire = createRequire(import.meta.resolve("@storyteller/align"));
+const epubRequire = createRequire(alignRequire.resolve("@storyteller/epub"));
 interface ZipEntry {
   filename: string;
   uncompressedSize: number;

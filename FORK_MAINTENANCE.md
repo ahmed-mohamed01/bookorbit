@@ -215,7 +215,10 @@ Known pre-existing upstream failures (**not** caused by the fork): the
 `published-date.utils` timezone bug, which also fails `kobo.scraper.test.ts`; and since
 `acce1e15`, `SettingsNav.spec.ts` / `SettingsSidebar.spec.ts` (upstream's `SettingsNav.vue` now
 reaches the real router through `useBookRequestVisibility` -> `useAuth`, and its `vue-router` mock
-has no `createRouter`). Don't chase these during a merge.
+has no `createRouter`); and since `4881f1f5a`, an unhandled `refreshLibraries is not a function` from
+`AuthorDetailView.spec.ts` (upstream's `useDeleteBook` now calls `useLibraryCountsRefresh`, which its
+`useLibraries` mock lacks), so client vitest exits 1 with every test passing. Don't chase these during
+a merge.
 
 Fork-caused spec drift, which **is** ours to fix at merge time: upstream specs that count
 the permission catalog (`UserFormDrawer.spec.ts` expects one more than upstream because of
@@ -225,6 +228,90 @@ breaks it). Each is a one-line catch-up; make it rather than carry a red test.
 
 ### Merge log
 
+- **2026-11-24, upstream `6905a755e`, 43 commits.** 23 conflicted files. Upstream groups linked books as
+  editions of one work (`book_links`, edition strip and table, "Formats" card heading, per-work counts
+  through `workKeySql`, an "Other editions" duplicate scan, migration 0162 with `edition_name` and
+  `original_published_year`), idles background workers behind `IdlePoll`, opens cards, rows and tiles in
+  a new tab (`ActivateLink`, `useOpenInNewTab`), moves the read-aloud worker to the `@storyteller/*`
+  packages, splits scan Phase 3 into `readRegisteredMetadata` for the OPDS file repair, emits
+  `audiobook.progress-changed` for StoryGraph and estimates audiobook progress while a track is
+  unmeasured. Migration 0162 widens three upstream `*_kind_chk` CHECKs and touches no fork CHECK or
+  bootstrap SQL (no parking). Verdicts per "Reviewing changes" rule 5:
+  - **Replace.** `server/bin/kepubify/*`: upstream's rebuild is byte-identical to the fork's Go 1.27.4
+    binaries, so the divergence and its "Propose upstream" entry are gone. `audiobook.module.ts` is
+    upstream's again (it now imports `AchievementModule` itself); `audiobook.service.ts` takes upstream's
+    required `AchievementEventsService` and drops the fork's `@Optional()`.
+  - **Keep.** The fork's `book.progress-changed` emit from `putPlaybackState` stays beside upstream's
+    narrower `audiobook.progress-changed` (`{ userId, bookId }`, StoryGraph only): alignment needs
+    `bookFileId`, and the ABS push, Hardcover, achievements and `scan.gateway` listen to the fork event.
+    `AUDIO_POSITION_DERIVED` in `saveAudioProgress` stays too, since upstream emits only when the rounded
+    percentage changes. Upstream's unmeasured-track estimate (capped at 99) is not adopted by the
+    whisper projection or the ABS push, which need exact seconds, and the fork emit fires only on a
+    measured percentage (`measured && isStoredPercentageChanged`), as it did before the merge, when an
+    unmeasured book kept its previous figure; otherwise Hardcover would be sent a guess. The editions grouping is the complement of the
+    same-record model, not a replacement: formats stay in one record, separate editions use upstream's
+    links, which the fork never removed. No fork module reads `book_links`.
+  - **Merge hazards fixed.** `workers/read-aloud/src/rebuild.ts`, `rebuild-metadata.ts` and
+    `test/rebuild.test.mjs` resolve `@storyteller/align` and, through it, `@storyteller/epub` (and its
+    yazl, yauzl-promise and xmldom); the old names would have failed at module load. The Watchlist
+    Amazon probe calls `amazonRequestHeaders(cookie)` after upstream dropped the referer argument. In
+    `scanner.service.ts` the fork code git carried into `readRegisteredMetadata` needs `organizationMode`,
+    a required parameter placed before upstream's optional `regexContext`; upstream's OPDS repair
+    (`refreshRegisteredFile`) passes the library's mode with one added line, so the repair selects
+    sources exactly as a scan does. Leaving the providers out of the repair was tried and rejected in
+    review: it promotes `embedded` to the leading source, so a changed EPUB overwrote metadata.json
+    fields (authors, genres, series) and the new file stamp then hid it from later scans. With the
+    providers in, an unchanged sidecar is never flagged changed, so the repair reads nothing a scan of
+    the same change would not, with one difference: upstream's repair flags a file changed on an
+    inode-only replacement (same size and mtime) where a scan would not, so a regex library may re-read
+    an unchanged metadata.json or re-import an unchanged cover.jpg. That is idempotent. In a regex
+    library an unreadable metadata.json falls through to the EPUB, as it does on a scan.
+    `importProvidedCover` takes `{ id, primaryFileId? }`. The batch retry (`book-request-batch.service.ts`) and the
+    batch hold (`request-batch-import.service.ts`) emit `BOOK_REQUEST_DOWNLOAD_QUEUED`, because the
+    download monitor now idles at 60 s until woken; upstream's own emit already sits in the fork's
+    shared `handOff`, so batch grabs wake it too. The command palette keeps the fork's `select()` and
+    takes upstream's click, aux-click and Ctrl/Cmd+Enter handling; the location mapping moved into
+    `itemLocation` in `useCommandPaletteResults.ts`, which `activate` also uses, so Watchlist, web serial
+    and Hardcover rows open in a new tab as well. Crowdin re-added the fork-removed `readAloudSync` keys
+    to hu/ru; they were dropped again (this recurs every sync).
+  - **Latent, recorded.** `0100b9037` holds an older edition filed against a newer edition's request
+    by ISBN and year; fork batch rows and Watchlist requests carry no ISBN, so it cannot fire today.
+    If batch rows ever carry ISBN and year, null them in the `batch-unit-filing.service.ts` call.
+    `3c9c0e8db` now rewrites cover-page geometry on cover replacement, still inside the edition sync
+    "metadata-only" contract (image-only pages fingerprint as empty text). Audio conversion's
+    `requestMetadataFetch` inserts into the metadata queue without the orchestrator's wake, so that step
+    can wait up to 60 s more; upstream exports no public wake. A batch retry that lands within 15 s of
+    the monitor's last resume sweep waits up to 60 s even though it emits the wake (the sweep window is
+    skipped, `completed` is not an active status, and the poll backs off); no data is lost, and fixing it
+    needs either a one-line upstream edit in `onDownloadQueued` or a fork-side status change, so it is
+    deferred. Upstream now stores the unmeasured estimate in `audiobook_progress.percentage`, and two fork
+    readers still read that column: the ABS pull's first comparison (`syncedProgressAt` null, push off)
+    can skip one newer remote position against a stale estimate (deferred: compare on the measured
+    timeline), and the alignment projection decided "finished" from the stored percentage. The live run
+    showed Kobo sync reads a projected 100% as Finished, so that one is fixed here: `projectAudioToEbook`
+    measures the position against the file timeline and trusts the stored percentage only above 99,
+    which an estimate can never reach (`UPSTREAM_ESTIMATE_CEILING` mirrors upstream's private
+    `ESTIMATED_PERCENTAGE_CEILING`; a test reads `audiobook.service.ts` and fails if upstream changes
+    it). A read status is not used: under the same-record model it is shared with the ebook, so a
+    relisten of a read book would trust a stale estimate. KOReader never sends a finished status. The
+    fork's `audio-convert.utils.test.ts` stall test ("faststart pass") is timing-flaky (about 1 run in
+    3 in isolation); `audio-convert/` is untouched by this merge.
+    Also deferred: an estimate followed by an equal measured figure emits no fork event.
+  - **Follow-ups (each its own change, live-tested).** Rule 5 asks for adoptions in the same merge;
+    these are deferred because each needs wake wiring and its own live run: adopt `IdlePoll` in `audio-convert-queue` (2 s) and `web-serials-job-runner` (3 s); audit fork
+    counts that sit beside upstream's per-work counts; `ActivateLink` on Watchlist author and work
+    cards; `description-content` in `BookSynopsis.vue`; the mobile no-zoom rule on fork search inputs
+    and `MonitoredVirtualGrid.vue`; rename the edition sync "Sync # editions" copy to formats; the batch
+    retry wake above; a public metadata-queue wake for audio conversion. Done in this merge instead: the
+    Watchlist local author search and its monitor-modal fallback count works (`workCount ?? bookCount`),
+    so linked editions no longer count twice, and the palette's fork rows have `itemLocation` and
+    new-tab tests.
+  - Fork spec drift: `CommandPalette.spec.ts` (`itemLocation` mock), `NeglectedGemsWidget` and
+    `HighlightOfTheDayWidget` specs (`RouterLinkStub`), `BookEditionsCard.spec.ts` ("Formats"),
+    `DetailsTab.audioConvert.spec.ts` (`useDeleteBook` editions), `AuthorTile.spec.ts` and three
+    `BookCoverCard.spec.ts` cases that now hover first, as the fork card mounts its controls on hover.
+    Upstream's own `AuthorDetailView.spec.ts` prints an unhandled `refreshLibraries is not a function`
+    (its `useLibraries` mock predates `useLibraryCountsRefresh`); not ours.
 - **2026-11-19, upstream v3.9.0 + 9 (`c1dd6b4f1`), 40 commits.** 55 conflicted files. Upstream added AI
   providers, story guides and photo scans; a Jobs area (`JobSourceRegistry`, `JobChangesService`, the
   `/jobs` socket, `bulk_runs`); a rebuilt request drawer, release picker and request list with views,
@@ -798,7 +885,7 @@ are excluded.
 
 | File                                                                                                     | Semantic          | Owner         | Status                                                                                                  |
 | -------------------------------------------------------------------------------------------------------- | ----------------- | ------------- | ------------------------------------------------------------------------------------------------------- |
-| `scanner/scanner.service.ts`                                                                             | 287               | ABS           | Phase B (fork-internal shrink only; see rejected list)                                                  |
+| `scanner/scanner.service.ts`                                                                             | 353 (2026-11-24)  | ABS           | Phase B (fork-internal shrink only; see rejected list)                                                  |
 | `metadata/metadata.service.ts`                                                                           | 134               | ABS           | cover/sidecar precedence, no ABS identifiers                                                            |
 | `metadata-fetch/providers/hardcover/hardcover.client.ts` + `.types.ts`                                   | 168 / 114         | monitored     | author search, contributions, per-format editions; reuse `BOOK_FIELDS`                                  |
 | `user-book-status/reading-attempt.service.ts` / `.repository.ts`                                         | 61 / 37           | ABS           | irreducible core (origin-based dedupe, soft-delete aware)                                               |
@@ -815,7 +902,7 @@ are excluded.
 | `common/utils/ssrf.utils.ts`                                                                             | 0 (was 21)        | ABS           | byte-identical to upstream since 2026-11-19; fork callers use upstream's `isLinkLocalOrMetadataAddress` |
 | client `book-requests/components/RequestSearchPanel.vue`                                                 | 20                | monitored     | quick-monitor bell via `useMonitorGroupAction()` (was 75)                                               |
 | `.env.example` / `Dockerfile` / `config/config.ts`                                                       | 17 / 15 / 6       | alignment     | whisper stage + alignment config, additive                                                              |
-| `audiobook/audiobook.service.ts` / `.module.ts`                                                          | 14 / 3            | ABS+alignment | `book:progress-changed` emit from `putPlaybackState` - **propose upstream**                             |
+| `audiobook/audiobook.service.ts` / `.module.ts`                                                          | 12 / 0            | ABS+alignment | `book:progress-changed` emit from `putPlaybackState` - **propose upstream**                             |
 | `book-request/fulfillment/request-automation.service.ts` / `indexers/indexer-search.service.ts` / module | 13 / 11 / 4       | monitored     | `grabAllowed`, `IndexerSearchRequest` Pick, exports                                                     |
 | client `book/.../tabs/DetailsTab.vue`                                                                    | 191 (30+/161-)    | alignment     | `LinkBookControl` + `useBookProgressRefresh`; upstream read-aloud sync popover removed                  |
 | `metadata/metadata-extraction.service.ts`                                                                | 12                | ABS           | the extractor seam itself                                                                               |
@@ -1500,14 +1587,12 @@ shrinks the footprint.
 
 ### Propose upstream (each deletes fork lines for good)
 
-- `server/bin/kepubify/*`: the six bundled binaries are rebuilt with Go 1.27.4 (2026-11-19) for
-  CVE-2026-97054, which failed the image's Trivy gate. Same recipe as upstream's own rebuilds, proven
-  by reproducing upstream's Go 1.27.3 binaries byte for byte first: kepubify commit
+- Kepubify rebuild recipe (the fork's 2026-11-19 Go 1.27.4 binaries were taken upstream byte for byte
+  on 2026-11-24, so there is no divergence): kepubify commit
   `9546034bc023891af5ce30709de6ae2dcf264628`, `go get golang.org/x/sync@v0.24.0
 golang.org/x/text@v0.43.0`, then `CGO_ENABLED=0 go build -trimpath -ldflags="-s -w"
-./cmd/kepubify` per target (`GOARM=7` for linux-arm). The version string stays `v4-dev` and
-  converted books have identical entries and CRCs. Take upstream's binaries at the next merge that
-  rebuilds them.
+./cmd/kepubify` per target (`GOARM=7` for linux-arm). Reuse it if a Go CVE fails Trivy before
+  upstream rebuilds.
 - `client/src/features/book/components/BookListRow.vue`: one line, `:frame-aspect-ratio="coverAspectRatio"`
   on the row's `BookCoverArtwork` (2026-11-19). Upstream sizes the list row's cover box from the book's
   own ratio but lets the artwork fall back to the library's, so a 2/3 cover in a square-cover library is
@@ -1525,7 +1610,9 @@ golang.org/x/text@v0.43.0`, then `CGO_ENABLED=0 go build -trimpath -ldflags="-s 
 - `achievement-events.service.ts` / `koreader.service.ts`: the `occurredAt` widening, and
   the `audiobookshelf` member of the progress-source enums.
 - `audiobook.service.ts`: emit `book:progress-changed` from `putPlaybackState`; upstream's
-  web reader already emits it for ebooks.
+  web reader already emits it for ebooks. Since 2026-11-24 upstream emits a narrower
+  `audiobook.progress-changed` there (StoryGraph only); the alternative is to point Hardcover,
+  achievements and `scan.gateway` at that event and carry `bookFileId` in it.
 - ABS pull: it calls `syncEbookProgressForAudiobookPlayback` and emits `book:progress-changed`, the
   same pair upstream's player does; if upstream ever emits from `putPlaybackState`, both fork emits
   can go.

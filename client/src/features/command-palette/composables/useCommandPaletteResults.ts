@@ -502,51 +502,55 @@ export function useCommandPaletteResults(query: Ref<string>, tab: Ref<PaletteTab
     books.clear()
   }
 
-  function activate(item: PaletteItem): MonitoredAuthorSearchResult | undefined {
+  /** The page a row opens, or null for rows that run something instead of going somewhere. */
+  function itemLocation(item: PaletteItem): RouteLocationRaw | null {
     switch (item.kind) {
       case 'manga':
       case 'lightNovelEntry':
-        handlers.navigate({
+        return {
           path: '/web-serials',
           query: { series: formatSeriesParam(item.kind === 'manga' ? 'manga' : 'novel', item.entry.matchId) },
-        })
-        break
+        }
       case 'lightNovel':
-        handlers.navigate({
+        return {
           path: '/web-serials',
           query: item.suggestion.matchId
             ? { series: formatSeriesParam('novel', item.suggestion.matchId) }
             : { q: item.suggestion.title, kind: 'novel' },
-        })
-        break
+        }
       case 'seriesMore':
-        handlers.navigate({ path: '/web-serials', query: { q: trimmed.value, kind: item.seriesKind } })
-        break
+        return { path: '/web-serials', query: { q: trimmed.value, kind: item.seriesKind } }
+      case 'watchlist':
+        return { path: `/watchlist/authors/${item.hit.monitorAuthorId}`, query: { work: item.hit.work.id } }
+      case 'hardcoverBook':
+        return { path: '/requests', query: { title: item.book.title, author: item.book.authorNames[0] ?? '' } }
+      case 'book':
+      case 'reading':
+        return { name: 'book-detail', params: { bookId: item.book.id } }
+      case 'author':
+        return { name: 'author-detail', params: { id: item.author.id } }
+      case 'series':
+        return { name: 'series-detail', params: { seriesId: item.series.id } }
+      case 'place':
+      case 'setting':
+        return item.to
+      default:
+        return null
+    }
+  }
+
+  function activate(item: PaletteItem): MonitoredAuthorSearchResult | undefined {
+    const location = itemLocation(item)
+    if (location) {
+      handlers.navigate(location)
+      return
+    }
+    switch (item.kind) {
       case 'externalSearch':
         void searchExternal()
         break
-      case 'watchlist':
-        handlers.navigate({ path: `/watchlist/authors/${item.hit.monitorAuthorId}`, query: { work: item.hit.work.id } })
-        break
-      case 'hardcoverBook':
-        handlers.navigate({ path: '/requests', query: { title: item.book.title, author: item.book.authorNames[0] ?? '' } })
-        break
       case 'hardcoverAuthor':
         return item.author
-      case 'book':
-      case 'reading':
-        handlers.navigate({ name: 'book-detail', params: { bookId: item.book.id } })
-        break
-      case 'author':
-        handlers.navigate({ name: 'author-detail', params: { id: item.author.id } })
-        break
-      case 'series':
-        handlers.navigate({ name: 'series-detail', params: { seriesId: item.series.id } })
-        break
-      case 'place':
-      case 'setting':
-        handlers.navigate(item.to)
-        break
       case 'action':
         item.run()
         break
@@ -558,6 +562,7 @@ export function useCommandPaletteResults(query: Ref<string>, tab: Ref<PaletteTab
 
   return {
     activate,
+    itemLocation,
     sections,
     tabs,
     isSearching,

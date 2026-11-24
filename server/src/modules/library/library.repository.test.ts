@@ -3,6 +3,7 @@ vi.mock('drizzle-orm', () => ({
   eq: vi.fn((left: unknown, right: unknown) => ({ op: 'eq', left, right })),
   getTableColumns: vi.fn(() => ({})),
   inArray: vi.fn((left: unknown, right: unknown[]) => ({ op: 'inArray', left, right })),
+  or: vi.fn((...clauses: unknown[]) => ({ op: 'or', clauses })),
   isNotNull: vi.fn((value: unknown) => ({ op: 'isNotNull', value })),
   sql: vi.fn((strings: TemplateStringsArray, ...values: unknown[]) => ({ op: 'sql', text: strings.join(''), values })),
 }));
@@ -184,72 +185,42 @@ describe('LibraryRepository', () => {
     expect(pathsOrderBy).toHaveBeenCalledWith(libraries.displayOrder, libraries.name, libraryFolders.createdAt, libraryFolders.id);
   });
 
-  it('getStats aggregates counts, sizes, and format map', async () => {
-    const countChain = {
-      from: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue([{ count: 3 }]),
-      }),
-    };
+  function mockStatsRows(counts: unknown[], formats: unknown[], sizes: unknown[]) {
+    const grouped = (rows: unknown[]) => ({ where: vi.fn().mockReturnValue({ groupBy: vi.fn().mockResolvedValue(rows) }) });
+    db.select.mockReturnValueOnce({ from: vi.fn().mockReturnValue(grouped(counts)) });
+    for (const rows of [formats, sizes]) {
+      db.select.mockReturnValueOnce({ from: vi.fn().mockReturnValue({ innerJoin: vi.fn().mockReturnValue(grouped(rows)) }) });
+    }
+  }
 
-    const formatChain = {
-      from: vi.fn().mockReturnValue({
-        innerJoin: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            groupBy: vi.fn().mockResolvedValue([
-              { format: 'epub', count: 2, totalSize: '3000' },
-              { format: 'pdf', count: 1, totalSize: '700' },
-            ]),
-          }),
-        }),
-      }),
-    };
+  it('getStatsForLibraries reports primary and held formats for each requested library in three queries', async () => {
+    mockStatsRows(
+      [
+        { libraryId: 1, count: 3 },
+        { libraryId: 2, count: 1 },
+      ],
+      [
+        { libraryId: 1, format: 'epub', primaryCount: 2, heldCount: 2 },
+        { libraryId: 1, format: 'kepub', primaryCount: 0, heldCount: 2 },
+        { libraryId: 1, format: 'pdf', primaryCount: 1, heldCount: 1 },
+        { libraryId: 2, format: 'mp3', primaryCount: 1, heldCount: 1 },
+      ],
+      [
+        { libraryId: 1, totalSize: '3700' },
+        { libraryId: 2, totalSize: '406000000' },
+      ],
+    );
+    const stats = await repo.getStatsForLibraries([1, 2, 3]);
 
-    db.select.mockReturnValueOnce(countChain as any).mockReturnValueOnce(formatChain as any);
-
-    const stats = await repo.getStats(9);
-
-    expect(stats).toEqual({
+    expect(db.select).toHaveBeenCalledTimes(3);
+    expect(stats.get(1)).toEqual({
       totalBooks: 3,
       totalSizeBytes: 3700,
       formatCounts: { epub: 2, pdf: 1 },
+      heldFormatCounts: { epub: 2, kepub: 2, pdf: 1 },
     });
-  });
-
-  it('getStatsForLibraries aggregates every library in two queries', async () => {
-    const countChain = {
-      from: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          groupBy: vi.fn().mockResolvedValue([
-            { libraryId: 1, count: 3 },
-            { libraryId: 2, count: 1 },
-          ]),
-        }),
-      }),
-    };
-
-    const formatChain = {
-      from: vi.fn().mockReturnValue({
-        innerJoin: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            groupBy: vi.fn().mockResolvedValue([
-              { libraryId: 1, format: 'epub', count: 2, totalSize: '3000' },
-              { libraryId: 1, format: 'pdf', count: 1, totalSize: '700' },
-              { libraryId: 2, format: 'cbz', count: 1, totalSize: '500' },
-            ]),
-          }),
-        }),
-      }),
-    };
-
-    db.select.mockReturnValueOnce(countChain as any).mockReturnValueOnce(formatChain as any);
-
-    const stats = await repo.getStatsForLibraries([1, 2, 3]);
-
-    expect(db.select).toHaveBeenCalledTimes(2);
-    expect(stats.get(1)).toEqual({ totalBooks: 3, totalSizeBytes: 3700, formatCounts: { epub: 2, pdf: 1 } });
-    expect(stats.get(2)).toEqual({ totalBooks: 1, totalSizeBytes: 500, formatCounts: { cbz: 1 } });
-    // A library with no present books still gets an entry, so the caller never has to guess.
-    expect(stats.get(3)).toEqual({ totalBooks: 0, totalSizeBytes: 0, formatCounts: {} });
+    expect(stats.get(2)).toEqual({ totalBooks: 1, totalSizeBytes: 406_000_000, formatCounts: { mp3: 1 }, heldFormatCounts: { mp3: 1 } });
+    expect(stats.get(3)).toEqual({ totalBooks: 0, totalSizeBytes: 0, formatCounts: {}, heldFormatCounts: {} });
   });
 
   it('getStatsForLibraries issues no query for an empty id list', async () => {
@@ -258,24 +229,7 @@ describe('LibraryRepository', () => {
   });
 
   it('getStats throws when totalSizeBytes exceeds safe integer range', async () => {
-    const countChain = {
-      from: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue([{ count: 1 }]),
-      }),
-    };
-
-    const formatChain = {
-      from: vi.fn().mockReturnValue({
-        innerJoin: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            groupBy: vi.fn().mockResolvedValue([{ format: 'epub', count: 1, totalSize: '9007199254740992' }]),
-          }),
-        }),
-      }),
-    };
-
-    db.select.mockReturnValueOnce(countChain as any).mockReturnValueOnce(formatChain as any);
-
+    mockStatsRows([{ libraryId: 9, count: 1 }], [], [{ libraryId: 9, totalSize: '9007199254740992' }]);
     await expect(repo.getStats(9)).rejects.toThrow('totalSizeBytes exceeds Number.MAX_SAFE_INTEGER');
   });
 });

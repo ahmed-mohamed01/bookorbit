@@ -1,16 +1,20 @@
-import { mount } from '@vue/test-utils'
+import { config, mount, RouterLinkStub } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { MockInstance } from 'vitest'
 import BookCoverCard from '../BookCoverCard.vue'
 import type { BookCard } from '@bookorbit/types'
 import { nextTick, ref } from 'vue'
 import { COVER_ASPECT_RATIO_KEY } from '@/features/book/lib/cover-aspect-ratio'
 import { useDisplaySettings } from '@/composables/useDisplaySettings'
 
+config.global.stubs = { ...config.global.stubs, RouterLink: RouterLinkStub }
+
 const routerPushMock = vi.hoisted(() => vi.fn<(...args: unknown[]) => unknown>())
+const routerResolveMock = vi.hoisted(() => vi.fn<(...args: unknown[]) => { href: string }>(() => ({ href: '/resolved' })))
 
 vi.mock('vue-router', async (importOriginal) => {
   const actual = await importOriginal<typeof import('vue-router')>()
-  return { ...actual, useRoute: () => ({ fullPath: '/' }), useRouter: () => ({ push: routerPushMock }) }
+  return { ...actual, useRoute: () => ({ fullPath: '/' }), useRouter: () => ({ push: routerPushMock, resolve: routerResolveMock }) }
 })
 vi.mock('@/features/author/api/author', () => ({
   fetchAuthors: vi.fn<(...args: unknown[]) => unknown>(),
@@ -209,6 +213,28 @@ describe('BookCoverCard — cover aspect override', () => {
   })
 })
 
+describe('BookCoverCard - actions menu', () => {
+  const menuButtons = (wrapper: ReturnType<typeof mountCard>) =>
+    wrapper.findAll('button').filter((button) => button.find('.lucide-ellipsis-vertical, .lucide-more-vertical').exists())
+
+  it('names the menu after the book on the cover', async () => {
+    const wrapper = mountCard(presentBook)
+    await wrapper.get('.touch-manipulation').trigger('pointerenter')
+    const buttons = menuButtons(wrapper)
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0]!.attributes('aria-label')).toBe('More actions for Available Book')
+  })
+
+  it('names the menu in the label row below the cover too', () => {
+    cardInfoMode.value = 'below-cover'
+    const wrapper = mount(BookCoverCard, {
+      props: { book: { ...presentBook, title: null }, showLabel: true },
+      global: { ...globalStubs, provide: { [COVER_ASPECT_RATIO_KEY as symbol]: ref('2/3') } },
+    })
+    expect(wrapper.get('[data-testid="grid-card-kebab"]').attributes('aria-label')).toBe('More actions for Untitled')
+  })
+})
+
 describe('BookCoverCard - present state', () => {
   it('mounts hover controls on first keyboard focus and keeps them mounted', async () => {
     const wrapper = mountCard(presentBook)
@@ -271,6 +297,39 @@ describe('BookCoverCard - present state', () => {
     expect(dots).toHaveLength(2)
     expect(dots[0]!.attributes('data-linked')).toBeUndefined()
     expect(dots[1]!.attributes('data-linked')).toBe('true')
+  })
+
+  it('marks a card standing for several editions with the editions pill', () => {
+    const wrapper = mountCard({
+      ...presentBook,
+      linked: {
+        groupId: 1,
+        memberCount: 3,
+        books: [
+          { bookId: 50, libraryId: 4, formats: ['m4b'], mediaKind: 'audiobook' },
+          { bookId: 51, libraryId: 4, formats: ['epub'], mediaKind: 'ebook' },
+        ],
+      },
+    })
+
+    const pill = wrapper.get('[data-testid="card-editions-pill"]')
+    expect(pill.text()).toBe('3')
+    expect(pill.attributes('aria-label')).toBe('3 editions')
+  })
+
+  it('shows no editions pill on a book without other editions or in selection mode', () => {
+    expect(mountCard(presentBook).find('[data-testid="card-editions-pill"]').exists()).toBe(false)
+    const linked = mount(BookCoverCard, {
+      props: {
+        book: {
+          ...presentBook,
+          linked: { groupId: 1, memberCount: 2, books: [{ bookId: 50, libraryId: 4, formats: ['m4b'], mediaKind: 'audiobook' }] },
+        },
+        selectionMode: true,
+      },
+      global: { ...globalStubs, provide: { [COVER_ASPECT_RATIO_KEY as symbol]: ref('2/3') } },
+    })
+    expect(linked.find('[data-testid="card-editions-pill"]').exists()).toBe(false)
   })
 
   it('lists every format in the hover overlay for any style but the primary pill', async () => {
@@ -684,5 +743,155 @@ describe('BookCoverCard — grid card labels', () => {
       global: { ...globalStubs, provide: { [COVER_ASPECT_RATIO_KEY as symbol]: ref('2/3') } },
     })
     expect(wrapper.find('[data-testid="grid-card-label-primary"]').text()).toBe('Dune Chronicles #1.5')
+  })
+})
+
+describe('BookCoverCard - opening in a new tab', () => {
+  const detailsLocation = { name: 'book-detail', params: { bookId: 2 } }
+  let openSpy: MockInstance<typeof window.open>
+
+  beforeEach(() => {
+    routerResolveMock.mockClear()
+    openSpy = vi.spyOn(window, 'open').mockReturnValue(null)
+    thumbnailClickAction.value = 'details'
+  })
+
+  afterEach(() => {
+    openSpy.mockRestore()
+  })
+
+  it('opens the book details in a new tab on Ctrl+click without leaving the page', async () => {
+    const wrapper = mountCard(presentBook)
+
+    await wrapper.get('.group').trigger('click', { ctrlKey: true })
+
+    expect(routerResolveMock).toHaveBeenCalledWith(detailsLocation)
+    expect(openSpy).toHaveBeenCalledWith('/resolved', '_blank', 'noopener,noreferrer')
+    expect(routerPushMock).not.toHaveBeenCalled()
+  })
+
+  it('opens the book details in a new tab on Cmd+click', async () => {
+    const wrapper = mountCard(presentBook)
+
+    await wrapper.get('.group').trigger('click', { metaKey: true })
+
+    expect(openSpy).toHaveBeenCalledTimes(1)
+    expect(routerPushMock).not.toHaveBeenCalled()
+  })
+
+  it('opens the book details in a new tab on a middle click', async () => {
+    const wrapper = mountCard(presentBook)
+
+    await wrapper.get('.group').trigger('auxclick', { button: 1 })
+
+    expect(openSpy).toHaveBeenCalledWith('/resolved', '_blank', 'noopener,noreferrer')
+  })
+
+  it('ignores a right-button auxclick', async () => {
+    const wrapper = mountCard(presentBook)
+
+    await wrapper.get('.group').trigger('auxclick', { button: 2 })
+
+    expect(openSpy).not.toHaveBeenCalled()
+  })
+
+  it('still navigates in place on a plain click', async () => {
+    const wrapper = mountCard(presentBook)
+
+    await wrapper.get('.group').trigger('click')
+
+    expect(routerPushMock).toHaveBeenCalledWith(detailsLocation)
+    expect(openSpy).not.toHaveBeenCalled()
+  })
+
+  it('opens the reader in a new tab when a plain click would read the book', async () => {
+    thumbnailClickAction.value = 'reader'
+    const wrapper = mountCard(presentBook)
+
+    await wrapper.get('.group').trigger('click', { ctrlKey: true })
+
+    expect(routerResolveMock).toHaveBeenCalledWith({
+      name: 'reader',
+      params: { bookId: 2, fileId: 10 },
+      query: { format: 'epub' },
+    })
+    expect(openSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps Ctrl+click as selection while selecting', async () => {
+    const wrapper = mount(BookCoverCard, {
+      props: { book: presentBook, selectionMode: true },
+      global: { ...globalStubs, provide: { [COVER_ASPECT_RATIO_KEY as symbol]: ref('2/3') } },
+    })
+
+    await wrapper.get('.group').trigger('click', { ctrlKey: true })
+
+    expect(wrapper.emitted('select')).toHaveLength(1)
+    expect(openSpy).not.toHaveBeenCalled()
+  })
+
+  it('opens details in a new tab from the centre action on Ctrl+click', async () => {
+    const wrapper = mountCard(presentBook)
+    await wrapper.get('.touch-manipulation').trigger('pointerenter')
+
+    await wrapper.get('[data-testid="grid-card-primary-action"]').trigger('click', { ctrlKey: true })
+
+    expect(openSpy).toHaveBeenCalledTimes(1)
+    expect(routerPushMock).not.toHaveBeenCalled()
+  })
+
+  it('offers Open in new tab in the actions menu', async () => {
+    const wrapper = mountCard(presentBook)
+    await wrapper.get('.touch-manipulation').trigger('pointerenter')
+    const item = wrapper.findAll('div').find((candidate) => candidate.text() === 'Open in new tab' && candidate.element.children.length <= 1)
+
+    await item!.trigger('click')
+
+    expect(routerResolveMock).toHaveBeenCalledWith(detailsLocation)
+    expect(openSpy).toHaveBeenCalledTimes(1)
+  })
+
+  describe('below-cover labels', () => {
+    function mountWithLabels() {
+      return mount(BookCoverCard, {
+        props: { book: { ...presentBook, seriesId: 5, seriesName: 'Saga' }, showLabel: true },
+        global: { ...globalStubs, provide: { [COVER_ASPECT_RATIO_KEY as symbol]: ref('2/3') } },
+      })
+    }
+
+    beforeEach(() => {
+      cardInfoMode.value = 'below-cover'
+      gridCardPrimaryLabel.value = 'book-title'
+      gridCardSecondaryLabel.value = 'series-title'
+    })
+
+    it('renders the title and series labels as links to their pages', () => {
+      const wrapper = mountWithLabels()
+
+      const primary = wrapper.get('[data-testid="grid-card-label-primary"]')
+      const secondary = wrapper.get('[data-testid="grid-card-label-secondary"]')
+
+      expect(primary.element.tagName).toBe('A')
+      expect(secondary.element.tagName).toBe('A')
+      const targets = wrapper.findAllComponents(RouterLinkStub).map((link) => link.props('to'))
+      expect(targets).toContainEqual(detailsLocation)
+      expect(targets).toContainEqual({ name: 'series-detail', params: { seriesId: 5 }, query: { from: '/' } })
+    })
+
+    it('leaves a Ctrl+click on a label to the browser', async () => {
+      const wrapper = mountWithLabels()
+
+      await wrapper.get('[data-testid="grid-card-label-primary"]').trigger('click', { ctrlKey: true })
+
+      expect(routerPushMock).not.toHaveBeenCalled()
+      expect(openSpy).not.toHaveBeenCalled()
+    })
+
+    it('keeps an author label a button because its page is resolved by name', () => {
+      gridCardPrimaryLabel.value = 'author'
+      const wrapper = mountWithLabels()
+
+      expect(wrapper.get('[data-testid="grid-card-label-primary"]').element.tagName).toBe('BUTTON')
+    })
   })
 })

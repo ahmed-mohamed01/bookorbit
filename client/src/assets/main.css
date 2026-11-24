@@ -340,7 +340,7 @@ html[data-glow='off'] .shell-glow {
   @media (pointer: coarse) {
     .app-shell-inset,
     .app-shell-scroll {
-      touch-action: pan-y;
+      touch-action: pan-y pinch-zoom;
     }
 
     /* Prevent double-tap zoom on tappable controls while preserving normal taps. */
@@ -543,6 +543,41 @@ html[data-glow='off'] .shell-glow {
      module for why type="password" cannot be used here. */
   .input-secret {
     -webkit-text-security: disc;
+  }
+
+  /* ── Book description HTML ──────────────────────────────────
+     Preflight strips paragraph margins and list markers, so a
+     description shown without this class runs its paragraphs
+     together. The editor uses it too, so what it shows while
+     editing is what every other screen shows.
+  ────────────────────────────────────────────────────────────── */
+  .description-content {
+    & p {
+      @apply my-1.5;
+    }
+    /* An empty paragraph is a blank line in the editor; without
+       a character it would collapse to nothing everywhere else. */
+    & p:empty::before {
+      content: '\00a0';
+    }
+    & ul {
+      @apply list-disc pl-5;
+    }
+    & ol {
+      @apply list-decimal pl-5;
+    }
+    & blockquote {
+      @apply border-l-2 border-border pl-3 text-muted-foreground;
+    }
+    & a {
+      @apply text-primary underline;
+    }
+    & > :first-child {
+      @apply mt-0;
+    }
+    & > :last-child {
+      @apply mb-0;
+    }
   }
 
   .no-scrollbar {

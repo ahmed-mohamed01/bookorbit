@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import { Logger } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -219,6 +222,72 @@ describe('ReadingAlignmentSyncService', () => {
       await dispatch(service, audioEvent());
 
       expect(repo.projectReadingProgress).toHaveBeenCalledWith(USER_ID, EBOOK_FILE_ID, 100, NEWER);
+    });
+
+    it('projects the measured position when the stored percentage is a stale estimate', async () => {
+      const { service, repo } = build({
+        audioProgress: { currentFileId: AUDIO_FILE_A, positionSeconds: 80, percentage: 99, updatedAt: NEWER },
+        ebookProgress: undefined,
+        advancingReadStatus: { status: 'reading' },
+      });
+
+      await dispatch(service, audioEvent());
+
+      expect(repo.projectReadingProgress).toHaveBeenCalledWith(USER_ID, EBOOK_FILE_ID, 40, NEWER);
+    });
+
+    it('projects 100% when the listener reached the end without a read status', async () => {
+      const { service, repo } = build({
+        audioProgress: { currentFileId: AUDIO_FILE_B, positionSeconds: 100, percentage: 100, updatedAt: NEWER },
+        ebookProgress: undefined,
+        advancingReadStatus: { status: 'reading' },
+      });
+
+      await dispatch(service, audioEvent());
+
+      expect(repo.projectReadingProgress).toHaveBeenCalledWith(USER_ID, EBOOK_FILE_ID, 100, NEWER);
+    });
+
+    it('projects the measured position on a relisten when the book is read but the stored percentage is an estimate', async () => {
+      const { service, repo } = build({
+        audioProgress: { currentFileId: AUDIO_FILE_A, positionSeconds: 80, percentage: 99, updatedAt: NEWER },
+        ebookProgress: undefined,
+      });
+
+      await dispatch(service, audioEvent());
+
+      expect(repo.projectReadingProgress).toHaveBeenCalledWith(USER_ID, EBOOK_FILE_ID, 40, NEWER);
+    });
+
+    it('projects 100% when the stored percentage is complete but the measured position stops short of the threshold', async () => {
+      const { service, repo } = build({
+        audioProgress: { currentFileId: AUDIO_FILE_B, positionSeconds: 97.8, percentage: 100, updatedAt: NEWER },
+        ebookProgress: undefined,
+        advancingReadStatus: { status: 'reading' },
+        finishThreshold: 99,
+      });
+
+      await dispatch(service, audioEvent());
+
+      expect(repo.projectReadingProgress).toHaveBeenCalledWith(USER_ID, EBOOK_FILE_ID, 100, NEWER);
+    });
+
+    it('projects 100% when the stored percentage is complete and the current file is unknown', async () => {
+      const { service, repo } = build({
+        audioProgress: { currentFileId: 999, positionSeconds: 50, percentage: 100, updatedAt: NEWER },
+        ebookProgress: undefined,
+        advancingReadStatus: { status: 'reading' },
+      });
+
+      await dispatch(service, audioEvent());
+
+      expect(repo.projectReadingProgress).toHaveBeenCalledWith(USER_ID, EBOOK_FILE_ID, 100, NEWER);
+    });
+
+    it('relies on upstream still capping unmeasured estimates at 99%', () => {
+      const source = readFileSync(resolve(__dirname, '../audiobook/audiobook.service.ts'), 'utf8');
+
+      expect(source).toMatch(/const ESTIMATED_PERCENTAGE_CEILING = 99;/);
     });
   });
 

@@ -9,6 +9,7 @@ import type { BookRequestDownloadRow, BookRequestRow } from '../../../db/schema'
 import { BookDockRepository } from '../../book-dock/book-dock.repository';
 import { BookDockIngestService } from '../../book-dock/book-dock-ingest.service';
 import type { ReleasePlan, ReleaseUnit } from '../../scanner/lib/release-plan';
+import { BOOK_REQUEST_DOWNLOAD_QUEUED, BookRequestEventsService } from '../book-request-events.service';
 import { BookRequestRepository } from '../book-request.repository';
 import { BookRequestGateway } from '../book-request.gateway';
 import { BookRequestDownloadRepository } from '../fulfillment/book-request-download.repository';
@@ -43,6 +44,7 @@ export class RequestBatchImportService implements RequestImportHook, OnApplicati
     private readonly fulfillment: RequestFulfillmentService,
     private readonly removal: DownloadRemovalService,
     private readonly batches: BookRequestBatchRepository,
+    private readonly events: BookRequestEventsService,
   ) {
     this.bookDockPath = this.config.getOrThrow<string>('storage.bookDockPath');
   }
@@ -252,6 +254,7 @@ export class RequestBatchImportService implements RequestImportHook, OnApplicati
       completedAt: null,
       lastProgressAt: new Date(),
     });
+    this.events.emit(BOOK_REQUEST_DOWNLOAD_QUEUED);
     await this.requests.updateIf(request.id, ['importing'], { status: 'downloading' });
     this.logger.log(
       `[book_request.batch_import] [end] requestId=${request.id} downloadId=${download.id} missingUnits=${missing} durationMs=${Date.now() - started} - selected files are not complete yet, polling the client again`,

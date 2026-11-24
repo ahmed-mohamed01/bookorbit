@@ -171,7 +171,12 @@ useBookProgressRefresh(
 // sessions alone flashes the empty stage and then jumps back to the full layout.
 const blank = computed(
   () =>
-    !emptyStageDismissed.value && !loading.value && !attemptsLoading.value && (stats.value?.totalSessions ?? 0) === 0 && attempts.value.length === 0,
+    !emptyStageDismissed.value &&
+    !loading.value &&
+    !attemptsLoading.value &&
+    !stats.value?.lastReadAt &&
+    (stats.value?.totalSessions ?? 0) === 0 &&
+    attempts.value.length === 0,
 )
 
 // The data decides which of two layouts the tab settles into, so until the first load lands there

@@ -1,4 +1,4 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, RouterLinkStub } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import type { useCoverVersions } from '@/features/book/composables/useCoverVersions'
 import type { LongWaitWidgetData } from '@bookorbit/types'
@@ -11,7 +11,10 @@ const fetchLongWait = vi.fn<() => Promise<LongWaitWidgetData | null>>()
 vi.mock('@/features/dashboard/api/dashboard-widget.api', () => ({
   fetchLongWait: () => fetchLongWait(),
 }))
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn<(...args: unknown[]) => void>() }) }))
+vi.mock('vue-router', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('vue-router')>()),
+  useRouter: () => ({ push: vi.fn<(...args: unknown[]) => void>() }),
+}))
 vi.mock('@/features/book/composables/useCoverVersions', () => ({
   useCoverVersions: () => ({ coverUrl }),
 }))
@@ -45,7 +48,7 @@ function data(fileFormat: string | null): LongWaitWidgetData {
 function mountWidget(fileFormat: string | null) {
   fetchLongWait.mockResolvedValue(data(fileFormat))
   return mount(LongWaitWidget, {
-    global: { stubs: { BookCoverSurface: CoverSurfaceStub, BookCoverArtwork: CoverArtworkStub } },
+    global: { stubs: { BookCoverSurface: CoverSurfaceStub, BookCoverArtwork: CoverArtworkStub, RouterLink: RouterLinkStub } },
   })
 }
 

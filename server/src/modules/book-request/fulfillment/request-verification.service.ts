@@ -9,7 +9,13 @@ import {
 } from '@nestjs/common';
 import { access } from 'fs/promises';
 import { basename } from 'path';
-import { DEFAULT_BOOK_REQUEST_AUTOMATION_SETTINGS, NotificationType, UNSETTLED_BOOK_REQUEST_DOWNLOAD_STATUSES } from '@bookorbit/types';
+import {
+  canonicalizeBookRequestIsbn,
+  DEFAULT_BOOK_REQUEST_AUTOMATION_SETTINGS,
+  isBookRequestMediaKind,
+  NotificationType,
+  UNSETTLED_BOOK_REQUEST_DOWNLOAD_STATUSES,
+} from '@bookorbit/types';
 import type {
   BookDockMetadata,
   BookRequestStatus,
@@ -19,6 +25,7 @@ import type {
   BookRequestVerificationReason,
   BookRequestVerificationRow,
   BookRequestVerificationVerdict,
+  RequestDestination,
 } from '@bookorbit/types';
 
 import { normalizeMetadataIsbn } from '../../../common/text-match/isbn-normalize';
@@ -31,11 +38,14 @@ import {
 import { mainTitlePart, symmetricTitleSimilarity } from '../../../common/text-match/title-match';
 import type { RequestUser } from '../../../common/types/request-user';
 import { sanitizeLogValue } from '../../../common/utils/log-sanitize.utils';
-import type { BookRequestDownloadRow, BookRequestRow } from '../../../db/schema';
+import { parsePublishedYear } from '../../../common/utils/published-date.utils';
+import type { BookDockFileRow, BookRequestDownloadRow, BookRequestRow } from '../../../db/schema';
 import { BookDockEventsService, BOOK_DOCK_FILE_INGESTED } from '../../book-dock/book-dock-events.service';
 import { BookDockFinalizeService } from '../../book-dock/book-dock-finalize.service';
 import { BookDockRepository } from '../../book-dock/book-dock.repository';
 import { BookDockService } from '../../book-dock/book-dock.service';
+import { LibraryService } from '../../library/library.service';
+import { UploadValidatorService } from '../../upload/upload-validator.service';
 import { BookRequestGateway } from '../book-request.gateway';
 import { BookRequestNotifier } from '../book-request-notifier.service';
 import { BookRequestRepository } from '../book-request.repository';
@@ -60,6 +70,13 @@ const HELD_ON_REQUEST_REASON = 'the release was sent to be reviewed before it is
 
 const TITLE_WEIGHT = 0.7;
 const AUTHOR_WEIGHT = 0.3;
+
+/**
+ * How many years older than the requested edition an ebook has to say it is, while stating a
+ * different ISBN, before it is held as another edition. Providers and publishers disagree by a year
+ * or two about when one printing came out, which is not worth sending anyone to look at.
+ */
+const EDITION_YEAR_GAP = 3;
 
 /**
  * The two statuses a finished import may be filed from: the automatic path arrives at `importing`,
@@ -104,6 +121,8 @@ export class RequestVerificationService implements OnModuleInit {
     private readonly gateway: BookRequestGateway,
     private readonly settings: RequestAutomationSettingsService,
     private readonly companions: RequestCompanionService,
+    private readonly libraryService: LibraryService,
+    private readonly validator: UploadValidatorService,
   ) {}
 
   onModuleInit(): void {
@@ -144,7 +163,7 @@ export class RequestVerificationService implements OnModuleInit {
       this.logger.log(
         `[book_request.verify] [end] requestId=${joined.request.id} dockFileId=${fileId} enabled=false - verification is off, filing the import as grabbed`,
       );
-      await this.finalize(download, joined.request, fileId);
+      await this.finalize(download, joined.request, row);
       return;
     }
 
@@ -164,7 +183,7 @@ export class RequestVerificationService implements OnModuleInit {
       return;
     }
 
-    await this.finalize(download, joined.request, fileId);
+    await this.finalize(download, joined.request, row);
   }
 
   /** The sender's own request to look first outranks a passing score and verification being off. */
@@ -175,8 +194,8 @@ export class RequestVerificationService implements OnModuleInit {
     await this.fulfillment.holdForReview(download, request, HELD_ON_REQUEST_REASON);
   }
 
-  private async finalize(download: BookRequestDownloadRow, request: BookRequestRow, fileId: number): Promise<void> {
-    const filed = await this.fileIntoLibrary(download, request, fileId);
+  private async finalize(download: BookRequestDownloadRow, request: BookRequestRow, file: BookDockFileRow): Promise<void> {
+    const filed = await this.fileIntoLibrary(download, request, file);
     if (!filed.ok) await this.fulfillment.holdForReview(download, request, filed.reason);
   }
 
@@ -188,7 +207,7 @@ export class RequestVerificationService implements OnModuleInit {
   private async fileIntoLibrary(
     download: BookRequestDownloadRow,
     request: BookRequestRow,
-    fileId: number,
+    file: BookDockFileRow,
   ): Promise<{ ok: true; bookId: number | null } | { ok: false; reason: string }> {
     // The two halves of a pair can finish within moments of each other. Filed side by side, each
     // would find the other not yet landed and both would become books of their own; one after the
@@ -196,24 +215,26 @@ export class RequestVerificationService implements OnModuleInit {
     return this.serializeByPair(request, async () => {
       // Read again inside the turn: the half that filed first may have just pointed this one at its book.
       const current = (await this.requests.findById(request.id))?.request ?? request;
-      return this.fileIntoLibraryNow(download, current, fileId);
+      return this.fileIntoLibraryNow(download, current, file);
     });
   }
 
   private async fileIntoLibraryNow(
     download: BookRequestDownloadRow,
     request: BookRequestRow,
-    fileId: number,
+    file: BookDockFileRow,
   ): Promise<{ ok: true; bookId: number | null } | { ok: false; reason: string }> {
-    const join = await this.companions.resolveJoin(request);
+    const join = await this.companions.resolveJoin(request, file.fileName);
+    const fallback = join ? null : await this.resolvePinnedFormatFallback(request, file.fileName);
+    const libraryId = join?.libraryId ?? fallback?.libraryId ?? request.targetLibraryId;
 
     // A request with no folder still has a library; take its first folder rather than falling
     // through to the Book Dock's global default, which is usually unset and never the point here.
-    const folderId = join?.folderId ?? request.targetFolderId ?? (await this.resolveFolder(request.targetLibraryId));
+    const folderId = join?.folderId ?? fallback?.folderId ?? request.targetFolderId ?? (await this.resolveFolder(libraryId));
     if (folderId === null) return { ok: false, reason: 'the destination library has no folder to file the book into' };
 
-    const result = await this.finalizeService.finalizeManagedFile(fileId, {
-      libraryId: join?.libraryId ?? request.targetLibraryId ?? undefined,
+    const result = await this.finalizeService.finalizeManagedFile(file.id, {
+      libraryId: libraryId ?? undefined,
       folderId,
       ...(join ? { joinBook: join.joinBook } : {}),
     });
@@ -234,13 +255,14 @@ export class RequestVerificationService implements OnModuleInit {
       matchedBookId: result.bookId ?? null,
       bookDockFileId: null,
       statusReason: null,
+      ...(fallback && { targetBookId: null, targetLibraryId: fallback.libraryId, targetFolderId: fallback.folderId }),
     });
     if (!filed) {
       // The bytes did become a book, so the attempt is settled either way rather than left for the
       // resume sweep to offer up again every fifteen seconds.
       await this.downloads.updateIf(download.id, UNSETTLED_BOOK_REQUEST_DOWNLOAD_STATUSES, { status: 'imported', importedAt: new Date() });
       this.logger.warn(
-        `[book_request.verify] [fail] requestId=${request.id} downloadId=${download.id} dockFileId=${fileId} bookId=${result.bookId ?? 'none'} - the request was settled while this import was being filed, so the book was filed but the request was left alone`,
+        `[book_request.verify] [fail] requestId=${request.id} downloadId=${download.id} dockFileId=${file.id} bookId=${result.bookId ?? 'none'} - the request was settled while this import was being filed, so the book was filed but the request was left alone`,
       );
       this.gateway.emitChanged();
       return { ok: false, reason: 'the request was settled while this import was being filed' };
@@ -261,6 +283,28 @@ export class RequestVerificationService implements OnModuleInit {
     this.gateway.emitChanged();
 
     return { ok: true, bookId: result.bookId ?? null };
+  }
+
+  private async resolvePinnedFormatFallback(request: BookRequestRow, fileName: string): Promise<RequestDestination | null> {
+    const { targetBookId, companionRequestId, targetLibraryId, mediaKind } = request;
+    if (targetBookId === null || companionRequestId !== null || targetLibraryId === null || !isBookRequestMediaKind(mediaKind)) return null;
+
+    // A book-page request stores the source library as its destination before the file is known.
+    // Dropping the join alone would still file there. An approved destination that accepts the file stays in effect.
+    const target = await this.dockRepo.findLibraryFormats(targetLibraryId);
+    if (!target || this.validator.isAllowedByLibrary(fileName, target.allowedFormats)) return null;
+
+    const fallback = await this.settings.resolveDestinationFor(mediaKind);
+    if (fallback.libraryId === null || fallback.folderId === null || fallback.libraryId === targetLibraryId) return null;
+    const library = await this.dockRepo.findLibraryFormats(fallback.libraryId);
+    if (!library || !this.validator.isAllowedByLibrary(fileName, library.allowedFormats)) return null;
+
+    if (request.selfServe) {
+      const fulfiller = request.fulfillerUserId ?? request.userId;
+      const reachable = await this.libraryService.findUserIdsWithAccess(fallback.libraryId, [fulfiller]);
+      if (!reachable.has(fulfiller)) return null;
+    }
+    return fallback;
   }
 
   /**
@@ -385,11 +429,12 @@ export class RequestVerificationService implements OnModuleInit {
    */
   async fileHeldImport(requestId: number, user: RequestUser): Promise<void> {
     const { request, download, fileId } = await this.loadHeld(requestId);
-    if (fileId === null || download === null) {
+    const file = fileId === null ? undefined : await this.dockRepo.findById(fileId);
+    if (!file || download === null) {
       throw new BadRequestException('The Library Dock entry this request was held over is gone, so there is nothing left to file');
     }
 
-    const filed = await this.fileIntoLibrary(download, request, fileId);
+    const filed = await this.fileIntoLibrary(download, request, file);
     if (!filed.ok) {
       this.logger.warn(
         `[book_request.force_file] [fail] requestId=${requestId} dockFileId=${fileId} userId=${user.id} error="${sanitizeLogValue(filed.reason)}" - approver could not file the held import`,
@@ -516,16 +561,20 @@ export class RequestVerificationService implements OnModuleInit {
 }
 
 /**
- * ISBN13 agreement is decisive when both sides carry one. A mismatch is not, because a different
- * edition of the same work has a different ISBN and is still the right book, so it falls through
- * to the title and author comparison rather than failing outright.
+ * ISBN13 agreement is decisive when both sides carry one. A mismatch alone is not, because an ISBN
+ * names one format of one edition and a request's is often just the one a provider listed first, so
+ * it falls through to the title and author comparison rather than failing outright. The exception
+ * is a file that also says it is years older than the requested edition: see `findOlderEdition`.
  *
  * Every path returns the field-by-field comparison as well as the number, because a bare score is
  * unactionable: an approver deciding whether to file this anyway needs to see that the title
  * gained a "Book 1 (Unabridged)" suffix, not that something somewhere came to 65.
  */
 export function verifyAgainstRequest(
-  request: Pick<BookRequestRow, 'title' | 'subtitle' | 'authors' | 'seriesName' | 'seriesIndex' | 'isbn13'>,
+  request: Pick<
+    BookRequestRow,
+    'title' | 'subtitle' | 'authors' | 'seriesName' | 'seriesIndex' | 'isbn10' | 'isbn13' | 'publishedYear' | 'mediaKind'
+  >,
   fetched: BookDockMetadata | null,
   embedded: BookDockMetadata | null,
   threshold: number = DEFAULT_VERIFICATION_THRESHOLD,
@@ -544,7 +593,7 @@ export function verifyAgainstRequest(
   const titleScore = importedTitle ? bestTitleSimilarity(request.title, request.subtitle, importedTitle) : 0;
   const authorScore = requestedAuthors.length && importedAuthors.length ? bestPairSimilarity(requestedAuthors, importedAuthors) : null;
 
-  const rows = (isbnVerdict: BookRequestVerificationVerdict): BookRequestVerificationRow[] => [
+  const rows = (isbnVerdict: BookRequestVerificationVerdict, olderEdition: OlderEdition | null = null): BookRequestVerificationRow[] => [
     {
       field: 'title',
       requested: joinTitle(request.title, request.subtitle),
@@ -560,6 +609,18 @@ export function verifyAgainstRequest(
     // The normalizer answers '' rather than null for a missing ISBN, and an empty row would
     // read as a blank value rather than as a field neither side filled in.
     { field: 'isbn13', requested: requestedIsbn || null, imported: importedIsbn || null, verdict: isbnVerdict },
+    // Shown only when it is what held the import: elsewhere a year is not compared, and a row
+    // that never affects the outcome would invite approvers to read it as if it did.
+    ...(olderEdition
+      ? [
+          {
+            field: 'year' as const,
+            requested: String(olderEdition.requestedYear),
+            imported: String(olderEdition.importedYear),
+            verdict: 'mismatch' as const,
+          },
+        ]
+      : []),
   ];
 
   if (requestedIsbn && importedIsbn && requestedIsbn === importedIsbn) {
@@ -599,6 +660,19 @@ export function verifyAgainstRequest(
   const score = Math.round(combined * 100);
   const passed = score >= threshold;
 
+  // Looked for only once the file would otherwise be filed, so it can add a hold and never changes
+  // why an import that already failed did.
+  const olderEdition = passed ? findOlderEdition(request, fetched, embedded) : null;
+  if (olderEdition) {
+    return {
+      score: 0,
+      passed: false,
+      reason: `the file is from ${olderEdition.importedYear}, ${olderEdition.requestedYear - olderEdition.importedYear} years before the ${olderEdition.requestedYear} edition that was requested, and carries a different ISBN`,
+      code: 'edition_mismatch',
+      rows: rows('mismatch', olderEdition),
+    };
+  }
+
   return {
     score,
     passed,
@@ -608,6 +682,55 @@ export function verifyAgainstRequest(
     code: passed ? 'above_threshold' : 'below_threshold',
     rows: rows(isbnVerdict),
   };
+}
+
+interface OlderEdition {
+  requestedYear: number;
+  importedYear: number;
+}
+
+/**
+ * The one case where a different ISBN counts against an import: an ebook whose own metadata names
+ * an ISBN other than the requested one and a year at least `EDITION_YEAR_GAP` years before the
+ * requested edition's. A request for a textbook's third edition that receives its first is the
+ * case; both editions share a title and an author, so nothing else in the score can tell them apart.
+ *
+ * Neither signal is enough alone. An ISBN names one format of one edition, so an epub rarely
+ * carries the print ISBN a request holds, and a year drifts with each provider's idea of "published".
+ *
+ * The limits are each there to keep a correct import from being held:
+ * - The evidence is the file's own metadata. A provider's match is a guess at the edition, so it can
+ *   only clear an import, never convict one. A file that states no ISBN or year, and a request that
+ *   names no edition (no ISBN, or no year), keep being judged on title and author.
+ * - Only a file older than the request. Providers often report a work's first publication year, so a
+ *   newer file is the ordinary case rather than a different edition.
+ * - Only ebooks. An audiobook's ISBN and date describe a recording, and its tags are rarely trustworthy.
+ * - Only the request's own ISBN clears an import. The other ISBNs a request carries come from every
+ *   edition its search results grouped together, so one of them proves nothing about this one.
+ */
+function findOlderEdition(
+  request: Pick<BookRequestRow, 'isbn10' | 'isbn13' | 'publishedYear' | 'mediaKind'>,
+  fetched: BookDockMetadata | null,
+  embedded: BookDockMetadata | null,
+): OlderEdition | null {
+  if (request.mediaKind !== 'ebook') return null;
+
+  const requestedIsbn = canonicalizeBookRequestIsbn(request.isbn10, request.isbn13);
+  const requestedYear = parsePublishedYear(request.publishedYear);
+  const embeddedIsbn = canonicalizeBookRequestIsbn(embedded?.isbn10, embedded?.isbn13);
+  const embeddedYear = statedYear(embedded);
+  if (requestedIsbn === null || requestedYear === undefined || embeddedIsbn === null || embeddedYear === null) return null;
+
+  if (embeddedIsbn === requestedIsbn || canonicalizeBookRequestIsbn(fetched?.isbn10, fetched?.isbn13) === requestedIsbn) return null;
+
+  // The newest year any source states, so a provider that places the file in the requested era
+  // outweighs a file that says otherwise.
+  const importedYear = Math.max(embeddedYear, statedYear(fetched) ?? embeddedYear);
+  return requestedYear - importedYear >= EDITION_YEAR_GAP ? { requestedYear, importedYear } : null;
+}
+
+function statedYear(metadata: BookDockMetadata | null): number | null {
+  return parsePublishedYear(metadata?.publishedYear) ?? parsePublishedYear(metadata?.publishedDate) ?? null;
 }
 
 function resolveImportedSeriesIndex(

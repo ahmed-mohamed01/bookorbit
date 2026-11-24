@@ -667,7 +667,7 @@ export class MonitoredService {
         name: author.name,
         providerIds: {},
         localAuthorId: author.id,
-        bookCount: author.bookCount,
+        bookCount: author.workCount ?? author.bookCount,
         imageUrl: localPhotoUrls[index],
         coverBookId: author.coverBookId,
         genres: [],

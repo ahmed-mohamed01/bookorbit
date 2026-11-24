@@ -1,4 +1,4 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, RouterLinkStub } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import type { useCoverVersions } from '@/features/book/composables/useCoverVersions'
 import type { NeglectedGemsWidgetData } from '@bookorbit/types'
@@ -11,7 +11,6 @@ const fetchNeglectedGems = vi.fn<() => Promise<NeglectedGemsWidgetData>>()
 vi.mock('@/features/dashboard/api/dashboard-widget.api', () => ({
   fetchNeglectedGems: () => fetchNeglectedGems(),
 }))
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn<(...args: unknown[]) => void>() }) }))
 vi.mock('@/features/book/composables/useCoverVersions', () => ({
   useCoverVersions: () => ({ coverUrl }),
 }))
@@ -31,7 +30,7 @@ describe('NeglectedGemsWidget', () => {
       gems: [{ coverVersion: 'face-v3', bookId: 8, title: 'Hyperion', hasCover: true, rating: 5, waitingDays: 400, genre: null }],
     })
     const wrapper = mount(NeglectedGemsWidget, {
-      global: { stubs: { BookCoverSurface: { template: '<div><slot /></div>' }, BookCoverArtwork: CoverArtworkStub } },
+      global: { stubs: { BookCoverSurface: { template: '<div><slot /></div>' }, BookCoverArtwork: CoverArtworkStub, RouterLink: RouterLinkStub } },
     })
     await flushPromises()
 

@@ -3,12 +3,12 @@ import { createRequire } from "node:module";
 import { posix } from "node:path";
 import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
-import { chapterAligned, classifySpine, markup, upgradeEpub, type ReportV4 } from "@storyteller-platform/align";
+import { chapterAligned, classifySpine, markup, upgradeEpub, type ReportV4 } from "@storyteller/align";
 import { RebuildMismatchError } from "./rebuild-error.js";
 import type { StageContext } from "./pipeline-contract.js";
 
-const alignRequire = createRequire(import.meta.resolve("@storyteller-platform/align"));
-const epubRequire = createRequire(alignRequire.resolve("@storyteller-platform/epub"));
+const alignRequire = createRequire(import.meta.resolve("@storyteller/align"));
+const epubRequire = createRequire(alignRequire.resolve("@storyteller/epub"));
 const { DOMParser, XMLSerializer } = epubRequire("@xmldom/xmldom") as {
   DOMParser: new (options: { onError: () => void }) => { parseFromString(text: string, type: string): Document };
   XMLSerializer: new () => { serializeToString(document: Document): string };
@@ -95,7 +95,7 @@ async function verifyReplayExclusions(context: StageContext, entries: MetadataEn
     throw new RebuildMismatchError("Cannot parse timing index report");
   }
   if (!Array.isArray(report?.spine)) throw new RebuildMismatchError("Missing timing index report spine");
-  const { Epub } = (await import(pathToFileURL(alignRequire.resolve("@storyteller-platform/epub")).href)) as {
+  const { Epub } = (await import(pathToFileURL(alignRequire.resolve("@storyteller/epub")).href)) as {
     Epub: { from(path: string): Promise<Parameters<typeof classifySpine>[0]> };
   };
   const epub = await Epub.from(context.paths.markedEpubPath);

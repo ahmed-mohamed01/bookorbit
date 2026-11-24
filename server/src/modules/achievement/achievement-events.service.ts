@@ -11,6 +11,7 @@ export const ACHIEVEMENT_EVENT_BACKFILL = 'achievement.backfill';
 export const ACHIEVEMENT_EVENT_ACHIEVEMENT_AWARDED = 'achievement.awarded';
 export const ACHIEVEMENT_EVENT_BOOK_RATING_CHANGED = 'book.rating-changed';
 export const ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED = 'book.progress-changed';
+export const AUDIOBOOK_PROGRESS_CHANGED_EVENT = 'audiobook.progress-changed';
 export const ACHIEVEMENT_EVENT_BOOK_HARDCOVER_EDITION_CHANGED = 'book.hardcover-edition-changed';
 // An audiobook position written as a side effect of reading the same book’s ebook. Kept apart from
 // BOOK_PROGRESS_CHANGED so progress listeners (achievements, Hardcover, alignment) do not count it twice.
@@ -74,6 +75,8 @@ export interface AudioPositionDerivedPayload {
   userId: number;
   bookId: number;
 }
+
+export type AudiobookProgressChangedPayload = Pick<BookProgressChangedPayload, 'userId' | 'bookId'>;
 
 export interface BookHardcoverEditionChangedPayload {
   userId: number;

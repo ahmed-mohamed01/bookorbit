@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, mount } from '@vue/test-utils'
 import { computed, ref } from 'vue'
+import type { RouteLocationRaw } from 'vue-router'
 import { i18n } from '@/i18n'
 import { catalogEntry, suggestion } from '@/features/web-serials/__tests__/fixtures'
 import type { PaletteItem } from '../composables/useCommandPaletteResults'
@@ -12,12 +13,19 @@ vi.mock('@/features/book-requests/composables/useBookRequestVisibility', () => (
   useBookRequestVisibility: () => ({ showBookRequests: ref(true) }),
 }))
 
-const state = vi.hoisted(() => ({ activate: vi.fn<(item: PaletteItem) => void>(), items: [] as PaletteItem[] }))
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn<(to: unknown) => Promise<void>>() }) }))
-vi.mock('../composables/useCommandPalette', () => ({ useCommandPalette: () => ({ isOpen: ref(true), closePalette: vi.fn<() => void>() }) }))
+const state = vi.hoisted(() => ({
+  activate: vi.fn<(item: PaletteItem) => void>(),
+  itemLocation: vi.fn<(item: PaletteItem) => RouteLocationRaw | null>(),
+  resolve: vi.fn<(to: RouteLocationRaw) => { href: string }>(),
+  closePalette: vi.fn<() => void>(),
+  items: [] as PaletteItem[],
+}))
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn<(to: unknown) => Promise<void>>(), resolve: state.resolve }) }))
+vi.mock('../composables/useCommandPalette', () => ({ useCommandPalette: () => ({ isOpen: ref(true), closePalette: state.closePalette }) }))
 vi.mock('../composables/useCommandPaletteResults', () => ({
   useCommandPaletteResults: () => ({
     activate: state.activate,
+    itemLocation: state.itemLocation,
     sections: computed(() => [{ id: 'serials', label: 'Light novels', items: state.items }]),
     tabs: ref([]),
     isSearching: ref(true),
@@ -40,6 +48,9 @@ const slot = { template: '<div><slot /></div>' }
 function render(items: PaletteItem[]) {
   state.items = items
   state.activate.mockClear()
+  state.itemLocation.mockReset().mockReturnValue(null)
+  state.resolve.mockReset()
+  state.closePalette.mockClear()
   return mount(CommandPalette, {
     global: {
       plugins: [i18n],
@@ -91,6 +102,33 @@ describe('palette serial rows', () => {
     await rows[1]!.trigger('click')
     expect(state.activate).toHaveBeenLastCalledWith({ kind: 'seriesMore', seriesKind: 'manga', key: 'more' })
   })
+})
+
+it('opens a Watchlist row in a new tab on Ctrl+Enter and keeps the palette open', async () => {
+  const { workFixture } = await import('@/features/monitored/testing/work-fixture')
+  const item: PaletteItem = {
+    kind: 'watchlist',
+    key: 'watchlist:work-1',
+    hit: { work: workFixture(), authorName: 'A', monitorAuthorId: 'a', authorModes: { ebook: 'off', audiobook: 'off' } },
+  }
+  const wrapper = render([item])
+  const location = { path: '/watchlist/authors/a', query: { work: 'work-1' } }
+  const href = '/watchlist/authors/a?work=work-1'
+  state.itemLocation.mockReturnValue(location)
+  state.resolve.mockReturnValue({ href })
+  const open = vi.spyOn(window, 'open').mockReturnValue(null)
+
+  try {
+    await wrapper.get('input').trigger('keydown', { key: 'Enter', ctrlKey: true })
+
+    expect(state.itemLocation).toHaveBeenCalledWith(item)
+    expect(state.resolve).toHaveBeenCalledWith(location)
+    expect(open).toHaveBeenCalledExactlyOnceWith(href, '_blank', 'noopener,noreferrer')
+    expect(state.activate).not.toHaveBeenCalled()
+    expect(state.closePalette).not.toHaveBeenCalled()
+  } finally {
+    open.mockRestore()
+  }
 })
 
 it('keeps skeletons out of options and keyboard activation', async () => {

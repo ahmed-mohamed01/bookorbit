@@ -9,8 +9,10 @@ import AppIcon from '@/components/AppIcon.vue'
 import AuthorPortrait from '@/features/author/components/AuthorPortrait.vue'
 import BookFormatChip from '@/features/book/components/BookFormatChip.vue'
 import { useCoverVersions } from '@/features/book/composables/useCoverVersions'
+import { cardEditionCount } from '@/features/book/lib/book-editions'
 import { bookFormatEntries } from '@/features/book/lib/book-formats'
 import BookUploadModal from '@/features/library/components/BookUploadModal.vue'
+import { useOpenInNewTab } from '@/composables/useOpenInNewTab'
 import { formatNumber, formatPercent } from '@/i18n/formatters'
 import MonitorAuthorModal from '@/features/monitored/components/MonitorAuthorModal.vue'
 import MonitoredFormatStatusChip from '@/features/monitored/components/MonitoredFormatStatusChip.vue'
@@ -25,6 +27,7 @@ import PaletteCover from './PaletteCover.vue'
 const { t } = useI18n()
 const router = useRouter()
 const { coverUrl } = useCoverVersions()
+const { openInNewTab, openInNewTabIfRequested } = useOpenInNewTab()
 const { isOpen, closePalette } = useCommandPalette()
 
 const monitorResult = ref<MonitoredAuthorSearchResult | null>(null)
@@ -50,12 +53,8 @@ function openUpload() {
   uploadOpen.value = true
 }
 
-const { activate, sections, tabs, isSearching, loading, settled, hasMoreBooks, loadingMoreBooks, loadMoreBooks, clear } = useCommandPaletteResults(
-  query,
-  tab,
-  isOpen,
-  { openUpload, navigate },
-)
+const { activate, itemLocation, sections, tabs, isSearching, loading, settled, hasMoreBooks, loadingMoreBooks, loadMoreBooks, clear } =
+  useCommandPaletteResults(query, tab, isOpen, { openUpload, navigate })
 
 const flatItems = computed(() => sections.value.flatMap((section) => section.items.filter(isSelectable)))
 const resultCount = computed(() => flatItems.value.filter((item) => !['more', 'externalSearch', 'seriesMore', 'skeleton'].includes(item.kind)).length)
@@ -146,11 +145,26 @@ function handleKeydown(event: KeyboardEvent) {
     const item = flatItems.value[activeIndex.value]
     if (!item) return
     event.preventDefault()
+    const location = itemLocation(item)
+    if (location && (event.ctrlKey || event.metaKey)) {
+      openInNewTab(location)
+      return
+    }
     select(item)
   } else if (event.key === 'Tab' && tabs.value.length > 1) {
     event.preventDefault()
     cycleTab(event.shiftKey ? -1 : 1)
   }
+}
+
+/** Ctrl/Cmd+click and middle-click open the page in a new tab and leave the palette open for the next result. */
+function handleItemClick(item: PaletteItem, event: MouseEvent) {
+  if (openInNewTabIfRequested(event, itemLocation(item))) return
+  select(item)
+}
+
+function handleItemAuxClick(item: PaletteItem, event: MouseEvent) {
+  openInNewTabIfRequested(event, itemLocation(item))
 }
 
 function hover(item: PaletteItem) {
@@ -184,6 +198,13 @@ function bookSubtitle(item: PaletteItem) {
 function seriesLabel(item: PaletteItem) {
   if (item.kind !== 'book' || !item.book.seriesName) return ''
   return item.book.seriesIndex ? `${item.book.seriesName} #${item.book.seriesIndex}` : item.book.seriesName
+}
+
+/** A result that stands for several editions says so; its format chips show only the edition it opens. */
+function editionCountLabel(item: PaletteItem) {
+  if (item.kind !== 'book') return ''
+  const count = cardEditionCount(item.book)
+  return count > 0 ? t('book.editions.card.count', { count }) : ''
 }
 
 function progressOf(item: PaletteItem) {
@@ -314,7 +335,8 @@ const highlightClass = 'rounded-[2px] bg-(--shell-accent-tint) font-semibold tex
               class="flex w-full cursor-pointer items-center gap-3 rounded-md px-2.5 text-start"
               :class="[indexOf(item) === activeIndex ? 'bg-accent' : '', rowSizeClass(item)]"
               @mousemove="hover(item)"
-              @click="select(item)"
+              @click="handleItemClick(item, $event)"
+              @auxclick="handleItemAuxClick(item, $event)"
             >
               <template v-if="item.kind === 'skeleton'">
                 <span class="h-12 w-8 shrink-0 animate-pulse rounded-[2px] bg-muted motion-reduce:animate-none" aria-hidden="true" />
@@ -542,6 +564,7 @@ const highlightClass = 'rounded-[2px] bg-(--shell-accent-tint) font-semibold tex
                       ·
                       <i>{{ seriesLabel(item) }}</i>
                     </template>
+                    <template v-if="editionCountLabel(item)"> · {{ editionCountLabel(item) }}</template>
                   </span>
                 </span>
                 <span v-if="item.kind === 'reading'" class="flex shrink-0 items-center gap-2 text-xs text-muted-foreground tabular-nums">

@@ -3,6 +3,7 @@ import { ACTIVE_BOOK_REQUEST_STATUSES } from '@bookorbit/types';
 import type { ReleaseFileInspection, ReleaseSelectionManifest } from '@bookorbit/types';
 
 import type { RequestUser } from '../../../common/types/request-user';
+import { BOOK_REQUEST_DOWNLOAD_QUEUED } from '../book-request-events.service';
 import { BookRequestBatchService } from './book-request-batch.service';
 
 function user(): RequestUser {
@@ -61,6 +62,7 @@ function makeService(options: { inspection?: ReleaseFileInspection; adapterType?
   const adapter = { status: vi.fn().mockResolvedValue([]) };
   const registry = { require: vi.fn().mockReturnValue(adapter) };
   const gateway = { emitChanged: vi.fn() };
+  const events = { emit: vi.fn() };
   const service = new BookRequestBatchService(
     requests as never,
     batches as never,
@@ -71,8 +73,9 @@ function makeService(options: { inspection?: ReleaseFileInspection; adapterType?
     downloads as never,
     registry as never,
     gateway as never,
+    events as never,
   );
-  return { service, requests, batches, fulfillment, clients, requestService, downloads, adapter, registry, gateway };
+  return { service, requests, batches, fulfillment, clients, requestService, downloads, adapter, registry, gateway, events };
 }
 
 describe('BookRequestBatchService.create', () => {
@@ -306,7 +309,7 @@ describe('BookRequestBatchService.retry', () => {
   }
 
   it('resets the request, units and download in one go and announces the change', async () => {
-    const { service, requests, batches, downloads, gateway, adapter } = retryHarness();
+    const { service, requests, batches, downloads, gateway, adapter, events } = retryHarness();
 
     await service.retry(user(), 21);
 
@@ -325,6 +328,7 @@ describe('BookRequestBatchService.retry', () => {
     });
     expect(downloads.setFilesPendingSince).toHaveBeenCalledWith(11, null);
     expect(downloads.updateIf).not.toHaveBeenCalledWith(11, expect.anything(), expect.objectContaining({ bookDockFileId: expect.anything() }));
+    expect(events.emit).toHaveBeenCalledWith(BOOK_REQUEST_DOWNLOAD_QUEUED);
     expect(gateway.emitChanged).toHaveBeenCalled();
   });
 

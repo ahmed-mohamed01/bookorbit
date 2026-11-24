@@ -237,6 +237,7 @@ function onChaptersChanged() {
             @moved="handleMovedToLibrary"
             @merged="handleBookMerged"
             @links-changed="refreshLinks"
+            @refetch="handleBookRefetch"
           />
           <EditMetadataTab
             v-else-if="tab === 'edit' && canEditMetadata"

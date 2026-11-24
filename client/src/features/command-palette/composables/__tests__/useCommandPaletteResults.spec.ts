@@ -14,7 +14,7 @@ import type {
   MonitoredCatalogSearchHit,
   SeriesSummary,
 } from '@bookorbit/types'
-import { useCommandPaletteResults, type PaletteTab } from '../useCommandPaletteResults'
+import { useCommandPaletteResults, type PaletteItem, type PaletteTab } from '../useCommandPaletteResults'
 
 const mocks = vi.hoisted(() => ({
   capabilities: vi.fn<typeof fetchCapabilities>(),
@@ -168,6 +168,76 @@ describe('useCommandPaletteResults', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  describe('itemLocation', () => {
+    it.each([
+      {
+        item: {
+          kind: 'watchlist',
+          key: 'watchlist',
+          hit: {
+            work: workFixture({ id: 'work-7' }),
+            authorName: 'A',
+            monitorAuthorId: 'author-3',
+            authorModes: { ebook: 'off', audiobook: 'off' },
+          },
+        },
+        location: { path: '/watchlist/authors/author-3', query: { work: 'work-7' } },
+      },
+      {
+        item: { kind: 'manga', key: 'manga', entry: catalogEntry({ matchId: '11' }) },
+        location: { path: '/web-serials', query: { series: 'manga:11' } },
+      },
+      {
+        item: { kind: 'lightNovelEntry', key: 'novel-entry', entry: catalogEntry({ kind: 'novel', matchId: '12' }) },
+        location: { path: '/web-serials', query: { series: 'novel:12' } },
+      },
+      {
+        item: { kind: 'lightNovel', key: 'matched-novel', suggestion: suggestion({ matchId: '13' }) },
+        location: { path: '/web-serials', query: { series: 'novel:13' } },
+      },
+      {
+        item: { kind: 'lightNovel', key: 'unmatched-novel', suggestion: suggestion({ title: 'The Long Night' }) },
+        location: { path: '/web-serials', query: { q: 'The Long Night', kind: 'novel' } },
+      },
+      {
+        item: { kind: 'seriesMore', key: 'more-manga', seriesKind: 'manga' },
+        location: { path: '/web-serials', query: { q: 'Final', kind: 'manga' } },
+      },
+      {
+        item: {
+          kind: 'hardcoverBook',
+          key: 'hardcover-book',
+          book: { slug: 'final', title: 'Final Book', authorNames: ['A', 'B'], coverUrl: null, seriesName: null },
+        },
+        location: { path: '/requests', query: { title: 'Final Book', author: 'A' } },
+      },
+      { item: { kind: 'externalSearch', key: 'external-search', label: 'Search', providers: ['hardcover'] }, location: null },
+      {
+        item: {
+          kind: 'hardcoverAuthor',
+          key: 'hardcover-author',
+          author: {
+            name: 'A',
+            providerIds: { hardcover: '1' },
+            localAuthorId: null,
+            bookCount: null,
+            imageUrl: null,
+            coverBookId: null,
+            genres: [],
+            alreadyMonitoredId: null,
+          },
+        },
+        location: null,
+      },
+      { item: { kind: 'action', key: 'action', label: 'Run', icon: {}, run: () => {} }, location: null },
+    ] satisfies { item: PaletteItem; location: object | null }[])('returns the location for $item.key', ({ item, location }) => {
+      const { itemLocation, query } = setup()
+      query.value = '  Final  '
+
+      expect(itemLocation(item)).toEqual(location)
+    })
   })
 
   it('offers Customize sidebar as an action that opens sidebar edit mode', async () => {

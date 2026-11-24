@@ -329,6 +329,16 @@ describe('DetailsTab cover surface', () => {
     expect(layout.element.classList).not.toContain('@min-[46rem]/book-detail:grid-rows-[minmax(0,1fr)_clamp(11.25rem,29%,17.5rem)]')
   })
 
+  it('styles the synopsis with the same description rules as the editor', async () => {
+    const wrapper = mountDetails(makeBook({ description: '<p>First paragraph.</p><p>Second paragraph.</p>' }))
+    await flushPromises()
+
+    const synopsis = wrapper.get('[data-test="synopsis-copy"]')
+
+    expect(synopsis.classes()).toContain('description-content')
+    expect(synopsis.findAll('p').map((paragraph) => paragraph.text())).toEqual(['First paragraph.', 'Second paragraph.'])
+  })
+
   it('uses the responsive synopsis clamp until the full description is opened', async () => {
     const wrapper = mountDetails(makeBook({ description: '<p>A synopsis</p>' }))
     await flushPromises()
@@ -824,6 +834,42 @@ describe('DetailsTab cover surface', () => {
         }),
       ],
     ])
+    expect(wrapper.emitted('refetch')).toBeUndefined()
+  })
+
+  it('takes the server view of a book with editions again after its reading state is reset', async () => {
+    mocks.hasPermission.mockImplementation((permission) => permission === 'library_edit_metadata')
+    const linked = {
+      bookId: 13,
+      libraryId: 1,
+      libraryName: 'Audio',
+      title: 'Dune',
+      formats: ['m4b'],
+      mediaKind: 'audiobook' as const,
+      status: 'present',
+      isLead: false,
+    }
+    const wrapper = mountDetails(makeBook({ linkedBooks: [linked] }))
+    await flushPromises()
+
+    mocks.api.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/reset-reading-state')) {
+        return response({
+          readStatus: { status: 'unread', source: 'manual', startedAt: null, finishedAt: null, updatedAt: '2026-07-09T12:00:00.000Z' },
+        })
+      }
+      if (url.includes('/kobo-state')) return response({ eligibleForKoboSync: false, syncCollections: [], readingState: null, snapshots: [] })
+      if (url.includes('/koreader/books/')) return response(null)
+      if (url.startsWith('/api/v1/reading-progress')) return response({ items: [] })
+      if (url.includes('/progress') || url.includes('/collections/membership')) return response([])
+      return response({})
+    })
+
+    wrapper.findComponent({ name: 'ResetReadingStateDialog' }).vm.$emit('confirm')
+    await flushPromises()
+
+    expect(wrapper.emitted('refetch')).toHaveLength(1)
   })
 
   it('hands held KOReader devices to the reset hold notice and releases them for this book', async () => {

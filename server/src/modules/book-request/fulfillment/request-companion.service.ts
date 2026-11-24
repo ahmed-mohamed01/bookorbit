@@ -2,8 +2,10 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { BookRequestMediaKind, BookRequestStatus } from '@bookorbit/types';
 
 import type { BookRequestRow } from '../../../db/schema';
+import { UploadValidatorService } from '../../upload/upload-validator.service';
 import { BookRequestNotifier } from '../book-request-notifier.service';
 import { BookRequestRepository } from '../book-request.repository';
+import { libraryTakesMedium } from '../library-takes-medium';
 
 /**
  * Where a companion can be settled from when the half that just landed brought its format too:
@@ -33,6 +35,7 @@ export class RequestCompanionService {
   constructor(
     private readonly requests: BookRequestRepository,
     private readonly notifier: BookRequestNotifier,
+    private readonly validator: UploadValidatorService,
   ) {}
 
   /**
@@ -41,9 +44,10 @@ export class RequestCompanionService {
    * Either the book the request names, which it follows wherever that book now lives, or the book
    * its companion already landed as, when that is in the library this request is headed for. Never
    * a book that already has this format - that would be a second copy of it, not a second format -
-   * and never in a library where a book is a single file, because there is no folder to share.
+   * never in a library where a book is a single file, because there is no folder to share, and never
+   * in a library that keeps this format out, because the files would be refused on arrival.
    */
-  async resolveJoin(request: BookRequestRow): Promise<BookJoin | null> {
+  async resolveJoin(request: BookRequestRow, fileName: string): Promise<BookJoin | null> {
     let bookId = request.targetBookId;
     const followsBook = bookId !== null;
 
@@ -55,6 +59,8 @@ export class RequestCompanionService {
 
     const placement = await this.requests.findBookPlacement(bookId);
     if (!placement || placement.status !== 'present' || placement.organizationMode !== 'book_per_folder') return null;
+    if (!libraryTakesMedium(placement.allowedFormats, request.mediaKind)) return null;
+    if (!this.validator.isAllowedByLibrary(fileName, placement.allowedFormats)) return null;
     if (!followsBook && placement.libraryId !== request.targetLibraryId) return null;
     if ((await this.requests.findBookMediaKinds(bookId)).has(request.mediaKind as BookRequestMediaKind)) return null;
 

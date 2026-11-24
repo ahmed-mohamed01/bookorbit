@@ -2,6 +2,7 @@ import { NotFoundException } from '@nestjs/common';
 import { NotificationType, type BookDockMetadata } from '@bookorbit/types';
 
 import type { BookRequestDownloadRow } from '../../../db/schema';
+import { UploadValidatorService } from '../../upload/upload-validator.service';
 import { RequestVerificationService, verifyAgainstRequest } from './request-verification.service';
 
 type RequestSnapshot = Parameters<typeof verifyAgainstRequest>[0];
@@ -128,6 +129,138 @@ describe('verifyAgainstRequest', () => {
 });
 
 /**
+ * The case a title and an author cannot catch: two editions of one work agree on both. A request for
+ * the third edition of a textbook that receives its first carries the same title and author, and
+ * only the ISBN and the year can tell them apart.
+ */
+describe('verifyAgainstRequest against an older edition of the requested work', () => {
+  const THIRD_EDITION_ISBN = '9781324072553';
+  const FIRST_EDITION_ISBN = '9780393923599';
+
+  function ebookRequest(overrides: Partial<RequestSnapshot> = {}): RequestSnapshot {
+    return request({
+      title: 'An Introduction to Moral Philosophy',
+      authors: ['Jonathan Wolff'],
+      mediaKind: 'ebook',
+      isbn13: THIRD_EDITION_ISBN,
+      publishedYear: 2025,
+      ...overrides,
+    });
+  }
+
+  function file(overrides: Partial<BookDockMetadata> = {}): BookDockMetadata {
+    return metadata({
+      title: 'An Introduction to Moral Philosophy',
+      authors: ['Jonathan Wolff'],
+      isbn13: FIRST_EDITION_ISBN,
+      publishedYear: 2017,
+      ...overrides,
+    });
+  }
+
+  const yearRow = (outcome: ReturnType<typeof verifyAgainstRequest>) => outcome.rows.find((row) => row.field === 'year');
+
+  it('holds the first edition requested as the third, however well the title and author score', () => {
+    const outcome = verifyAgainstRequest(ebookRequest(), null, file());
+
+    expect(outcome).toMatchObject({ passed: false, score: 0, code: 'edition_mismatch' });
+    expect(outcome.reason).toContain('8 years before the 2025 edition');
+    expect(outcome.rows.find((row) => row.field === 'isbn13')).toMatchObject({ requested: THIRD_EDITION_ISBN, verdict: 'mismatch' });
+    expect(yearRow(outcome)).toEqual({ field: 'year', requested: '2025', imported: '2017', verdict: 'mismatch' });
+  });
+
+  it('holds on the gap itself and files one year short of it', () => {
+    expect(verifyAgainstRequest(ebookRequest(), null, file({ publishedYear: 2022 }))).toMatchObject({ passed: false, code: 'edition_mismatch' });
+    expect(verifyAgainstRequest(ebookRequest(), null, file({ publishedYear: 2023 }))).toMatchObject({ passed: true, code: 'above_threshold' });
+  });
+
+  it('reads the year from a published date when the file states no bare year', () => {
+    const outcome = verifyAgainstRequest(ebookRequest(), null, file({ publishedYear: null, publishedDate: '2017-08-01' }));
+
+    expect(outcome).toMatchObject({ passed: false, code: 'edition_mismatch' });
+  });
+
+  it('files a file that is newer than the request, which is how a first-publication year looks', () => {
+    const outcome = verifyAgainstRequest(ebookRequest({ publishedYear: 1965 }), null, file({ publishedYear: 2019 }));
+
+    expect(outcome).toMatchObject({ passed: true, code: 'above_threshold' });
+    expect(yearRow(outcome)).toBeUndefined();
+  });
+
+  it('files the same edition when the epub spells the requested ISBN as an ISBN-10', () => {
+    const outcome = verifyAgainstRequest(
+      ebookRequest({ isbn13: '9780441013593', publishedYear: 2019 }),
+      null,
+      file({ isbn13: null, isbn10: '0441013597', publishedYear: 2005 }),
+    );
+
+    expect(outcome.passed).toBe(true);
+  });
+
+  it('files an audiobook, whose ISBN and date describe a recording rather than an edition of the text', () => {
+    const outcome = verifyAgainstRequest(ebookRequest({ mediaKind: 'audiobook' }), null, file());
+
+    expect(outcome.passed).toBe(true);
+  });
+
+  it('judges a request that names no edition on title and author alone', () => {
+    expect(verifyAgainstRequest(ebookRequest({ isbn13: null }), null, file()).passed).toBe(true);
+    expect(verifyAgainstRequest(ebookRequest({ publishedYear: null }), null, file()).passed).toBe(true);
+  });
+
+  it('judges a file that states no ISBN or no year of its own on title and author alone', () => {
+    expect(verifyAgainstRequest(ebookRequest(), null, file({ isbn13: null })).passed).toBe(true);
+    expect(verifyAgainstRequest(ebookRequest(), null, file({ publishedYear: null })).passed).toBe(true);
+  });
+
+  it('does not let a provider match convict a file whose own metadata says nothing', () => {
+    const guess = metadata({
+      title: 'An Introduction to Moral Philosophy',
+      authors: ['Jonathan Wolff'],
+      isbn13: FIRST_EDITION_ISBN,
+      publishedYear: 2017,
+    });
+    const outcome = verifyAgainstRequest(
+      ebookRequest(),
+      guess,
+      metadata({ title: 'An Introduction to Moral Philosophy', authors: ['Jonathan Wolff'] }),
+    );
+
+    expect(outcome.passed).toBe(true);
+  });
+
+  it('files a file whose own ISBN is foreign when the provider matched it to the requested edition', () => {
+    const matched = metadata({
+      title: 'An Introduction to Moral Philosophy',
+      authors: ['Jonathan Wolff'],
+      isbn13: THIRD_EDITION_ISBN,
+      publishedYear: 2025,
+    });
+
+    expect(verifyAgainstRequest(ebookRequest(), matched, file()).passed).toBe(true);
+  });
+
+  it('files a file whose own year is old when the provider places it in the requested era', () => {
+    const matched = metadata({ title: 'An Introduction to Moral Philosophy', authors: ['Jonathan Wolff'], publishedYear: 2025 });
+
+    expect(verifyAgainstRequest(ebookRequest(), matched, file()).passed).toBe(true);
+  });
+
+  it('keeps the usual reason when the title already failed, rather than renaming it an edition problem', () => {
+    const outcome = verifyAgainstRequest(ebookRequest(), null, file({ title: 'A Completely Different Book' }));
+
+    expect(outcome).toMatchObject({ passed: false, code: 'below_threshold' });
+    expect(yearRow(outcome)).toBeUndefined();
+  });
+
+  it('holds the edition regardless of how low the operator sets the bar', () => {
+    const outcome = verifyAgainstRequest(ebookRequest(), null, file(), 0);
+
+    expect(outcome).toMatchObject({ passed: false, code: 'edition_mismatch' });
+  });
+});
+
+/**
  * The right number depends on an instance's own trackers and metadata providers, so the operator
  * moves it. What must not move is the shape: one score, measured against whatever it was told.
  */
@@ -165,7 +298,9 @@ describe('RequestVerificationService against the configured threshold', () => {
   function makeService(threshold: number, verificationEnabled = true, overrides: { requestSettled?: boolean; holdForReview?: boolean } = {}) {
     const events = { on: vi.fn() };
     const dockRepo = {
-      findById: vi.fn().mockResolvedValue({ id: 100, fetchedMetadata: metadata({ authors: ['F. Herbert'] }), embeddedMetadata: null }),
+      findById: vi
+        .fn()
+        .mockResolvedValue({ id: 100, fileName: 'dune.epub', fetchedMetadata: metadata({ authors: ['F. Herbert'] }), embeddedMetadata: null }),
     };
     const dock = { discardFile: vi.fn().mockResolvedValue(undefined) };
     const finalizeService = { finalizeManagedFile: vi.fn().mockResolvedValue({ success: true, bookId: 55 }) };
@@ -213,6 +348,8 @@ describe('RequestVerificationService against the configured threshold', () => {
       gateway as never,
       settings as never,
       companions as never,
+      {} as never,
+      new UploadValidatorService(),
     );
 
     service.onModuleInit();
@@ -369,7 +506,17 @@ describe('verifyAgainstRequest comparison rows', () => {
 });
 
 describe('RequestVerificationService review surface', () => {
-  const heldRequest = { ...request(), id: 7, status: 'needs_review', bookDockFileId: 100, targetLibraryId: 2, targetFolderId: 3 };
+  const heldRequest = {
+    ...request(),
+    id: 7,
+    status: 'needs_review',
+    bookDockFileId: 100,
+    targetLibraryId: 2,
+    targetFolderId: 3,
+    targetBookId: null,
+    companionRequestId: null,
+    selfServe: false,
+  };
 
   function makeService(
     overrides: {
@@ -396,6 +543,7 @@ describe('RequestVerificationService review surface', () => {
         },
       ),
       findUnitFiles: vi.fn().mockResolvedValue(overrides.unitFiles ?? []),
+      findLibraryFormats: vi.fn(),
     };
     const dock = { discardFile: vi.fn().mockResolvedValue(undefined) };
     const finalizeService = {
@@ -427,8 +575,10 @@ describe('RequestVerificationService review surface', () => {
         verificationEnabled: overrides.verificationEnabled ?? true,
         verificationThreshold: overrides.threshold ?? 70,
       }),
+      resolveDestinationFor: vi.fn(),
     };
     const companions = { resolveJoin: vi.fn().mockResolvedValue(null), handOn: vi.fn().mockResolvedValue(false) };
+    const libraryService = { findUserIdsWithAccess: vi.fn().mockResolvedValue(new Set()) };
 
     const service = new RequestVerificationService(
       { on: vi.fn() } as never,
@@ -442,9 +592,11 @@ describe('RequestVerificationService review surface', () => {
       gateway as never,
       settings as never,
       companions as never,
+      libraryService as never,
+      new UploadValidatorService(),
     );
 
-    return { service, dock, dockRepo, finalizeService, downloads, requests, notifier, gateway, fulfillment, companions };
+    return { service, dock, dockRepo, finalizeService, downloads, requests, notifier, gateway, fulfillment, companions, settings, libraryService };
   }
 
   it('describes a loose single file from the anchor row, which already describes it fully', async () => {
@@ -671,6 +823,60 @@ describe('RequestVerificationService review surface', () => {
     expect(finalizeService.finalizeManagedFile).toHaveBeenCalledWith(100, { libraryId: 8, folderId: 9, joinBook: join.joinBook });
   });
 
+  describe('a held audiobook pinned to an ebook', () => {
+    function pinnedImport(requestRow: Record<string, unknown> = {}) {
+      const fixture = makeService({
+        requestRow: { mediaKind: 'audiobook', targetBookId: 42, ...requestRow },
+        dockRow: { id: 100, fileName: 'dune.mp3' },
+      });
+      fixture.dockRepo.findLibraryFormats.mockImplementation((id: number) =>
+        Promise.resolve({ allowedFormats: id === 2 ? ['epub', 'm4b'] : ['mp3'] }),
+      );
+      fixture.settings.resolveDestinationFor.mockResolvedValue({ libraryId: 8, folderId: 9 });
+      return fixture;
+    }
+
+    it('files to the audiobook default and clears the obsolete join after a successful retry', async () => {
+      const { service, finalizeService, requests, settings } = pinnedImport();
+
+      await service.fileHeldImport(7, { id: 9 } as never);
+
+      expect(settings.resolveDestinationFor).toHaveBeenCalledWith('audiobook');
+      expect(finalizeService.finalizeManagedFile).toHaveBeenCalledWith(100, { libraryId: 8, folderId: 9 });
+      expect(requests.updateIf).toHaveBeenCalledWith(
+        7,
+        expect.any(Array),
+        expect.objectContaining({ status: 'available', targetBookId: null, targetLibraryId: 8, targetFolderId: 9 }),
+      );
+    });
+
+    it('keeps a compatible destination already chosen at approval', async () => {
+      const { service, finalizeService, settings } = pinnedImport({ targetLibraryId: 5, targetFolderId: 6 });
+
+      await service.fileHeldImport(7, { id: 9 } as never);
+
+      expect(finalizeService.finalizeManagedFile).toHaveBeenCalledWith(100, { libraryId: 5, folderId: 6 });
+      expect(settings.resolveDestinationFor).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { name: 'the default also excludes MP3', defaultFormats: ['m4b'], selfServe: false },
+      { name: 'the self-fulfiller cannot reach the default', defaultFormats: ['mp3'], selfServe: true },
+    ])('keeps the original filing error when $name', async ({ defaultFormats, selfServe }) => {
+      const { service, dockRepo, finalizeService, libraryService, requests } = pinnedImport({ selfServe, userId: 4, fulfillerUserId: 12 });
+      dockRepo.findLibraryFormats.mockImplementation((id: number) =>
+        Promise.resolve({ allowedFormats: id === 2 ? ['epub', 'm4b'] : defaultFormats }),
+      );
+      finalizeService.finalizeManagedFile.mockResolvedValue({ success: false, message: 'This library does not allow .mp3 files' });
+
+      await expect(service.fileHeldImport(7, { id: 9 } as never)).rejects.toThrow('This library does not allow .mp3 files');
+
+      expect(finalizeService.finalizeManagedFile).toHaveBeenCalledWith(100, { libraryId: 2, folderId: 3 });
+      expect(requests.updateIf).not.toHaveBeenCalled();
+      if (selfServe) expect(libraryService.findUserIdsWithAccess).toHaveBeenCalledWith(8, [12]);
+    });
+  });
+
   it('hands the book that landed on to the other half of the pair', async () => {
     const { service, companions } = makeService();
 
@@ -684,7 +890,8 @@ describe('RequestVerificationService review surface', () => {
    * of their own. The second has to start only once the first has finished.
    */
   it('files the two halves of a pair one after the other rather than side by side', async () => {
-    const { service, finalizeService, requests, downloads } = makeService();
+    const { service, dockRepo, finalizeService, requests, downloads } = makeService();
+    dockRepo.findById.mockImplementation((id: number) => Promise.resolve({ id, fileName: id === 100 ? 'dune.epub' : 'dune.mp3' }));
     const halves = new Map([
       [7, { ...heldRequest, id: 7, companionRequestId: 8, bookDockFileId: 100 }],
       [8, { ...heldRequest, id: 8, mediaKind: 'audiobook', companionRequestId: 7, bookDockFileId: 101 }],

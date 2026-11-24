@@ -30,6 +30,7 @@ import type { MetadataDiffApply } from '@/features/book/composables/useMetadataD
 import { formatBytes } from '@/lib/formatting'
 import { toDisplayCoverUrl } from '@/features/book/lib/metadata-fetch'
 import { withOtherSeries } from '@/features/book/lib/metadata-diff-fields'
+import { effectiveMetadata, isAwaitingMetadataExtraction } from '../lib/file-display'
 
 const { t } = useI18n()
 
@@ -46,7 +47,7 @@ const destination = useBookDestination({ defaultToFirstLibrary: true })
 const { search: searchSeries } = useSeriesNameSearch()
 const { libraryId: targetLibraryId, folderId: targetFolderId, hasDestination, fetchLibraries: fetchLibs } = destination
 
-const meta = computed(() => props.file.selectedMetadata ?? props.file.embeddedMetadata ?? ({} as BookDockMetadata))
+const awaitingExtraction = computed(() => isAwaitingMetadataExtraction(props.file))
 
 const metaView = ref<'editor' | 'search' | 'diff'>('editor')
 /** Metadata fetched earlier, compared on its own without a search. */
@@ -83,9 +84,10 @@ function normalizedSeriesIndex(): string | null {
 }
 
 watch(
-  () => props.file.id,
-  () => {
-    const m = meta.value
+  [() => props.file.id, awaitingExtraction],
+  ([, waiting]) => {
+    if (waiting) return
+    const m = effectiveMetadata(props.file) ?? {}
     passthroughMetadata.value = { ...m }
     form.title = m.title ?? ''
     form.subtitle = m.subtitle ?? ''
@@ -101,6 +103,13 @@ watch(
     form.seriesIndex = m.seriesIndex != null ? String(m.seriesIndex) : ''
     form.genres = m.genres?.join(', ') ?? ''
     selectedCoverUrl.value = m.coverUrl ?? ''
+  },
+  { immediate: true },
+)
+
+watch(
+  () => props.file.id,
+  () => {
     metaView.value = 'editor'
 
     destination.reset(props.file.targetLibraryId, props.file.targetFolderId)
@@ -507,7 +516,7 @@ onMounted(() => {
       </div>
 
       <!-- Metadata editor view -->
-      <template v-if="metaView === 'editor'">
+      <template v-if="metaView === 'editor' || awaitingExtraction">
         <div class="flex-1 overflow-y-auto px-4 py-4 space-y-3">
           <p v-if="file.errorMessage" class="text-xs text-red-500 bg-red-500/10 rounded-lg p-2">{{ file.errorMessage }}</p>
 
@@ -519,7 +528,10 @@ onMounted(() => {
             </button>
           </div>
 
-          <div v-if="hasFetchedMetadata" class="flex items-center gap-2.5 p-3 rounded-lg border border-amber-500/30 bg-amber-500/5">
+          <p v-if="awaitingExtraction" class="text-sm text-muted-foreground" role="status">
+            {{ t('bookDock.sheet.waitingForExtraction') }}
+          </p>
+          <div v-else-if="hasFetchedMetadata" class="flex items-center gap-2.5 p-3 rounded-lg border border-amber-500/30 bg-amber-500/5">
             <Wand2 class="size-4 text-amber-600 dark:text-amber-400 shrink-0" />
             <p class="flex-1 text-sm text-amber-700 dark:text-amber-300">
               {{ file.metadataEditedAt ? t('bookDock.sheet.providerMetadataFoundEdited') : t('bookDock.sheet.providerMetadataFound') }}
@@ -532,7 +544,7 @@ onMounted(() => {
             </button>
           </div>
 
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div v-if="!awaitingExtraction" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label class="sm:col-span-2">
               <span class="text-xs font-medium text-muted-foreground">{{ t('bookDock.field.title') }}</span>
               <input
@@ -671,6 +683,7 @@ onMounted(() => {
           </button>
           <div class="flex items-center gap-2">
             <button
+              v-if="!awaitingExtraction"
               class="flex items-center gap-1.5 h-8 px-3.5 rounded-lg text-primary-foreground text-sm font-medium transition-all active:scale-95"
               style="
                 background: linear-gradient(to right, var(--primary), color-mix(in oklch, var(--primary) 65%, oklch(0.7 0.25 280)));

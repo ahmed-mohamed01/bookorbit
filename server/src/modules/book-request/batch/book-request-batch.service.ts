@@ -6,6 +6,7 @@ import type { BatchUnitView, BookRequestStatus, BookRequestDownloadStatus } from
 import { isUniqueViolation } from '../../../common/utils/db-error.utils';
 import { sanitizeLogValue } from '../../../common/utils/log-sanitize.utils';
 import type { RequestUser } from '../../../common/types/request-user';
+import { BOOK_REQUEST_DOWNLOAD_QUEUED, BookRequestEventsService } from '../book-request-events.service';
 import { BookRequestRepository } from '../book-request.repository';
 import { BookRequestGateway } from '../book-request.gateway';
 import { BookRequestService } from '../book-request.service';
@@ -38,6 +39,7 @@ export class BookRequestBatchService {
     private readonly downloads: BookRequestDownloadRepository,
     private readonly registry: DownloadClientRegistry,
     private readonly gateway: BookRequestGateway,
+    private readonly events: BookRequestEventsService,
   ) {}
 
   async settleAvailable(requestId: number, reason: string): Promise<boolean> {
@@ -232,7 +234,7 @@ export class BookRequestBatchService {
   /**
    * Sends a failed batch back through the import without downloading anything: the finished
    * torrent is still in the client, so only the BookOrbit side of the batch is reset. The monitor's
-   * resume sweep picks the `completed` download up and re-imports it.
+   * resume sweep picks the `completed` download up and re-imports it, up to a minute later when it swept moments ago.
    */
   async retry(user: RequestUser, requestId: number): Promise<void> {
     const startedAt = Date.now();
@@ -286,6 +288,7 @@ export class BookRequestBatchService {
         throw new BadRequestException(NOT_RETRYABLE);
       }
       await this.downloads.setFilesPendingSince(download.id, null);
+      this.events.emit(BOOK_REQUEST_DOWNLOAD_QUEUED);
       this.gateway.emitChanged();
 
       this.logger.log(
