@@ -60,7 +60,7 @@ describe('AiSetupFlow', () => {
 
   it('gives a feature one row per slot it runs on', async () => {
     const built = await card();
-    expect(built?.table?.rows).toHaveLength(4);
+    expect(built?.table?.rows).toHaveLength(5);
     expect(built?.table?.rows[0][1].text).toEqual({ key: 'setupOverview.ai.slots.fast' });
   });
 

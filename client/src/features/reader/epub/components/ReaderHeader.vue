@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import {
   ArrowLeft,
   BookOpen,
+  Library,
   BookText,
   Bookmark,
   BookmarkCheck,
@@ -28,6 +29,7 @@ import { useFullscreen } from '../../shared/composables/useFullscreen'
 const { t } = useI18n()
 
 const props = defineProps<{
+  knowledgeAvailable?: boolean
   chapterTitle: string
   isBookmarked: boolean
   settingsOpen: boolean
@@ -46,6 +48,7 @@ const emit = defineEmits<{
   back: []
   toggleSidebar: []
   toggleSearch: []
+  toggleKnowledge: []
   toggleBookmark: []
   'update:settingsOpen': [open: boolean]
   toggleFullscreen: []
@@ -74,6 +77,10 @@ const listenAriaLabel = computed(() => {
   // Fork: the narration is the audiobook, read along from the book's timing index.
   return props.narrationViaIndex ? t('reader.header.listenViaTimingIndex') : t('reader.header.listenWithNarration')
 })
+
+function toggleKnowledge() {
+  emit('toggleKnowledge')
+}
 
 function onSettingsOpenChange(open: boolean) {
   emit('update:settingsOpen', open)
@@ -164,6 +171,13 @@ function getFooterModeTooltip(mode: 0 | 1 | 2): string {
           </button>
         </TooltipTrigger>
         <TooltipContent>{{ ttsTooltip }}</TooltipContent>
+      </Tooltip>
+
+      <Tooltip v-if="knowledgeAvailable">
+        <TooltipTrigger as-child
+          ><button class="viewer-btn" :aria-label="t('bookKnowledge.title')" @click="toggleKnowledge"><Library :size="18" /></button
+        ></TooltipTrigger>
+        <TooltipContent>{{ t('bookKnowledge.title') }}</TooltipContent>
       </Tooltip>
 
       <Tooltip>

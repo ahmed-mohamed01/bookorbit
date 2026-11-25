@@ -31,6 +31,7 @@ export interface AiAdapterRequest {
   effort?: AiEffort;
   /** The admin chose the level for the slot, so it is sent even where a feature's own would be left out. */
   effortChosen?: boolean;
+  temperature?: number;
   /** Optional parameters this connection and model rejected before, left out from now on. */
   omit: ReadonlySet<string>;
   /** Ask for the reply as server-sent events. Plain text only: no JSON, no schema. */

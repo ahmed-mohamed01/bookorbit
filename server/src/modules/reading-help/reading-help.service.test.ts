@@ -48,6 +48,7 @@ function setup(options: { enabled?: boolean; fast?: boolean; careful?: boolean; 
       'story-guides': defaultFeatureSettings('story-guides'),
       'vision-scan': defaultFeatureSettings('vision-scan'),
       'reading-help': { ...defaultFeatureSettings('reading-help'), enabled: options.enabled ?? true },
+      'book-knowledge': defaultFeatureSettings('book-knowledge'),
     },
     budget: { monthlyBudget: null, buildsPerMonth: null },
     privacy: {},

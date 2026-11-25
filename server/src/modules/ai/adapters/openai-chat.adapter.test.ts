@@ -93,6 +93,10 @@ describe('OpenAiChatAdapter', () => {
       expect(body.messages[0].content).toContain('JSON schema');
     });
 
+    it('sends the temperature the caller asked for', () => {
+      expect(bodyOf(adapter.buildRequest(target, request({ temperature: 1 }))).temperature).toBe(1);
+    });
+
     it('sends reasoning_effort only when effort is asked', () => {
       expect(bodyOf(adapter.buildRequest(target, request({ effort: 'medium' }))).reasoning_effort).toBe('medium');
       expect(bodyOf(adapter.buildRequest(target, request())).reasoning_effort).toBeUndefined();

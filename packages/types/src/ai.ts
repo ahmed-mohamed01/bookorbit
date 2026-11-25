@@ -38,7 +38,7 @@ export function isAiEffort(value: unknown): value is AiEffort {
 }
 
 /** AI features the server knows. Settings, ledger rows and budgets are keyed by these ids. */
-export const AI_FEATURES = ["story-guides", "vision-scan", "reading-help"] as const;
+export const AI_FEATURES = ["story-guides", "vision-scan", "reading-help", "book-knowledge"] as const;
 export type AiFeatureId = (typeof AI_FEATURES)[number];
 
 export const AI_CONNECTION_LIMITS = {
@@ -333,6 +333,14 @@ export const AI_FEATURE_DEFINITIONS = {
   },
   "reading-help": {
     id: "reading-help",
+    slots: ["fast"],
+    optionalSlots: ["careful"],
+    limits: {},
+    runs: "requests",
+    perReader: true,
+  },
+  "book-knowledge": {
+    id: "book-knowledge",
     slots: ["fast"],
     optionalSlots: ["careful"],
     limits: {},

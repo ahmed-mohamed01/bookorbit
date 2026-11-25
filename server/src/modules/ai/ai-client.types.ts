@@ -42,6 +42,8 @@ export interface AiRequest {
   maxOutputTokens: number;
   /** The reasoning effort asked of a model that supports it. */
   effort?: AiEffort;
+  /** Sampling temperature; unset sends 0. */
+  temperature?: number;
   jobId?: string;
   signal?: AbortSignal;
   /** The choice a job started with, so a slot changed mid-job does not move it. */

@@ -62,7 +62,7 @@ export class OpenAiChatAdapter implements AiAdapter {
     // `max_tokens` is the form most servers take; OpenAI's reasoning models want the newer name.
     if (!omit.has('max_tokens')) body.max_tokens = request.maxOutputTokens;
     else if (!omit.has('max_completion_tokens')) body.max_completion_tokens = request.maxOutputTokens;
-    if (!omit.has('temperature')) body.temperature = 0;
+    if (!omit.has('temperature')) body.temperature = request.temperature ?? 0;
 
     if (json === 'schema' && request.schema) {
       body.response_format = {

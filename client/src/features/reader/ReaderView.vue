@@ -51,6 +51,7 @@ import ReaderSidebar from './epub/components/ReaderSidebar.vue'
 import ReaderSettingsPanel from './epub/components/ReaderSettingsPanel.vue'
 import NewerPositionDialog from './epub/components/NewerPositionDialog.vue'
 import SelectionPopup from './epub/components/SelectionPopup.vue'
+import KnowledgeReaderHost from '@/features/book-knowledge/components/KnowledgeReaderHost.vue'
 import ReaderSearchPanel from './epub/components/ReaderSearchPanel.vue'
 import NoteDialog from './shared/components/NoteDialog.vue'
 import DictionaryPopover from './epub/components/DictionaryPopover.vue'
@@ -87,7 +88,8 @@ const isPeekMode = computed(() => {
   const mode = route.query.mode
   return (Array.isArray(mode) ? mode[0] : mode) === 'peek'
 })
-const trackingEnabled = computed(() => !isPeekMode.value)
+const knowledgeHost = ref<InstanceType<typeof KnowledgeReaderHost> | null>(null)
+const trackingEnabled = computed(() => !isPeekMode.value && !knowledgeHost.value?.visitActive)
 const isTtsAvailable = normalizedFileFormat === 'epub'
 
 const containerRef = ref<HTMLElement | null>(null)
@@ -190,6 +192,8 @@ function handleToggleBookmark() {
 function closeAnyPanel() {
   if (showTapZones.value) {
     showTapZones.value = false
+  } else if (knowledgeHost.value?.isOpen) {
+    knowledgeHost.value.close()
   } else if (showSearch.value) {
     closeSearch()
   } else if (showSidebar.value) {
@@ -1548,6 +1552,10 @@ function navigateChapterFromSidebar(href: string) {
   void navigateFromSidebar(href)
 }
 
+function toggleKnowledge() {
+  knowledgeHost.value?.toggle()
+}
+
 function closeSearch() {
   onSearchClear()
   searchInitialQuery.value = ''
@@ -1607,6 +1615,8 @@ onUnmounted(() => {
       :class="headerVisible && !showTapZones ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-full pointer-events-none'"
       @back="router.back()"
       @toggleSidebar="showSidebar = !showSidebar"
+      :knowledge-available="knowledgeHost?.available"
+      @toggleKnowledge="toggleKnowledge"
       @toggleSearch="showSearch = !showSearch"
       @toggleBookmark="handleToggleBookmark"
       @update:settings-open="setSettingsOpen"
@@ -1945,6 +1955,21 @@ onUnmounted(() => {
       @editBookmark="handleSidebarEditBookmark"
       @deleteAnnotation="handleSidebarDeleteAnnotation"
       @toggleExpand="toggleExpand"
+    />
+
+    <KnowledgeReaderHost
+      ref="knowledgeHost"
+      :book-id="bookId"
+      :epub="normalizedFileFormat === 'epub'"
+      :chapters="chapters"
+      :navigation-locked="isNavigationLocked"
+      :view="foliateView"
+      :can-navigate="canRunManualNavigation"
+      :go-to="goTo"
+      :go-to-fraction="goToFraction"
+      :navigate-to-target="navigateToTarget"
+      :progress="progress"
+      @open="closeSearch"
     />
 
     <ReaderSearchPanel

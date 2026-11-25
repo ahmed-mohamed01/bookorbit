@@ -66,6 +66,7 @@ const envSchema = z.object({
   SETUP_BOOTSTRAP_TOKEN: z.string().optional(),
   DISABLE_LOCAL_AUTH: booleanEnvFlag('DISABLE_LOCAL_AUTH'),
   APP_DATA_PATH: z.string().default('/data'),
+  BOOK_KNOWLEDGE_GLINER_THREADS: z.coerce.number().int().positive().optional(),
   COVER_SLOTS_BACKFILL_MODE: z.enum(['background', 'sync', 'skip']).optional(),
   BOOK_DOCK_PATH: z
     .string()

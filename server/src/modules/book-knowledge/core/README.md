@@ -1,0 +1,27 @@
+# Deterministic book knowledge core
+
+`buildArtifact(epubPath, options)` runs parsing and NLP in one worker, with builds serialized in this process. It resolves a sibling `.js` worker in dist and otherwise a `.ts` worker with `--import tsx`. `buildArtifactInProcess` is the worker implementation. The pipeline loads optional inference from `gliner/`, and ranking reads the stored votes.
+
+Sentences have one-based global ordinals; zero means no progress. Only body sentences contribute to progress, terms and evidence. A cut-off includes a sentence only after its entire character count has been reached. Paragraphs crossing the cut-off contribute only their completed sentences. Call `fractionToOrdinal(sentences, 1)` for full mode.
+
+Use `artifactPath(appDataPath, bookId, fingerprint)` with the resolved storage config path supplied by the caller. `outputPath` enables atomic artifact persistence. Optional `cacheDirectory` stores fingerprint-keyed text and terms stages; terms cache keys include both text and terms versions. The caller may supply a known SHA-256 source fingerprint. Otherwise the worker hashes the file, including metadata. `ArtifactCache` retains at most three parsed artifacts. Artifacts should be treated as immutable.
+
+To enable local GLiNER votes, place `model.onnx` (the FP32 export), `tokenizer.json`, `tokenizer_config.json`, `gliner_config.json`, and `spm.model` in `<APP_DATA_PATH>/models/gliner_medium-v2.1/`. `BOOK_KNOWLEDGE_GLINER_THREADS` sets CPU threads per session and defaults to two. The worker runs one pass with the 12 kind labels and caches its spans in `gliner-kinds-v2.json.gz` next to the text and terms stages. The ranking vote counts spans labelled person, god, spirit, concept, magic system or force, the scope of the retired 5-label pass. A span becomes available once the reader has finished the last sentence of its inference window. Two detections across a visible term's key and aliases affect ranking. The model can be enabled for an existing artifact by requesting a rebuild.
+
+All occurrence features are per mention. Query helpers decode only the prefix up to the cut-off. Alias links become active at the identity, abbreviation, or epithet evidence that supports them at the cut-off. An epithet link stays active unless a second person-like plain-pair predecessor establishes a family name. Plural variants share a key, while each spelling remains hidden until encountered. Statistical pronoun suppression and ranking use the occurrence prefix. An index heading can make an encountered common phrase visible and boost its rank, with more weight for repeated standalone mentions. `oftenWith` uses shared body paragraphs and capped PMI over the top 150 ranked terms plus single-word names with at least five visible mentions, with up to 300 candidates in rank order.
+
+For people, `oftenWith` also ranks dialogue partners with at least two exchanges and merges both rankings using reciprocal-rank fusion. An exchange links consecutive attributed turns by different visible people in the same spine section, within three paragraphs. Shared paragraphs supply the count and first ordinal when a partner appears in both rankings. For a dialogue-only partner, these fields hold the exchange count and earliest attributed turn by that partner.
+
+Evidence preserves whole paragraphs when they fit. Oversized paragraphs are trimmed at sentence boundaries around a mention. The first paragraph and, across chapters, latest paragraph are selected before optional evidence. A single oversized sentence may exceed the approximate word budget rather than being cut mid-sentence.
+
+Stage times include imports, compression and cache reads when applicable. `stagePeakRssBytes` records process lifetime RSS high-water readings at each stage boundary, including other threads. These are cumulative, not isolated per-stage allocations.
+
+Commonness uses SCOWL 2020.12.07 English and American ASCII lowercase words at levels 10, 20, 35 and 40. The lowest level wins. The graded rarity values are 0, 0.1, 0.35 and 0.6; absent words receive 1. Notices are in `common-words.LICENSE`. Regenerate from `server/` with `node scripts/book-knowledge-common-words.cjs /path/to/scowl-2020.12.07`, then format the generated TypeScript. Noun usage and participle phrase recurrence are evaluated from prefix occurrences at query time. Forgiven phrases require three exact occurrences or an introduction already seen. Ranking uses prefix counts against the graded baseline, distinguishes explicit introductions from weaker explanatory cues, and discounts nested frequency. Possessive modifiers are excluded from candidates.
+
+Run from `server/`:
+
+```sh
+node --import tsx scripts/book-knowledge-benchmark.ts --labels /private/labels.json /private/book.epub
+```
+
+Labels have shape `{ "books": [{ "path": "/private/book.epub", "relevant": ["lumen lattice"], "mustFind": ["lumen lattice"], "cutoffs": [0.25, 0.5, 1] }] }`. Label strings are normalized by the same last-word plural rule. No labels are bundled. Without labels, precision and recall are null. Output uses numbered books and counts, without passages or term names. `BK_TOP_N`, `BK_LEAK_TERMS` and `BK_TIMEOUT_MS` configure limits. Every visible term and alias is leak-checked; relation and passage queries are exercised for the first `BK_LEAK_TERMS` ranked terms (default 100). A planted alias also checks both first visibility and delayed merging.

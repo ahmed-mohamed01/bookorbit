@@ -8,6 +8,8 @@ import { VueDraggable } from 'vue-draggable-plus'
 import { Button } from '@/components/ui/button'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import LoadErrorPanel from '@/components/LoadErrorPanel.vue'
+import BookKnowledgeAdminSettings from '@/features/book-knowledge/components/BookKnowledgeAdminSettings.vue'
+import { useReadAloudDelivery } from '@/features/delivery/composables/useReadAloudDelivery'
 import TtsAdminProviderCard from './components/TtsAdminProviderCard.vue'
 import TtsAdminProviderForm from './components/TtsAdminProviderForm.vue'
 import TtsOpenAiVoiceCuration from './TtsOpenAiVoiceCuration.vue'
@@ -16,6 +18,7 @@ import { useTtsAdminProviders, type TtsAdminProvider, type TtsAdminVoice } from 
 import type { StaticVoiceConfig, TtsDbProvider } from './api/tts.api'
 
 const { t } = useI18n()
+const { supported: knowledgeSupported } = useReadAloudDelivery('book-knowledge')
 
 const {
   loading,
@@ -251,6 +254,8 @@ async function handleRetry() {
 
       <p class="mt-3 text-xs text-muted-foreground">{{ t('settings.admin.tts.reorderHint') }}</p>
     </template>
+
+    <BookKnowledgeAdminSettings v-if="knowledgeSupported" class="mt-8" />
 
     <TtsOpenAiVoiceCuration
       v-if="curatingProvider"

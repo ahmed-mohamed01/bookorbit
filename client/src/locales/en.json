@@ -1693,7 +1693,8 @@
           "connection-test": "Provider tests",
           "try-it": "Try it",
           "vision-scan": "Photo scans",
-          "reading-help": "Reading help"
+          "reading-help": "Reading help",
+          "book-knowledge": "Book Knowledge"
         },
         "status": {
           "label": "AI status",
@@ -1908,6 +1909,10 @@
             "reading-help": {
               "privacyBody": "Passages from before each reader's place, and the words they ask about, are sent to the provider you chose. Whole books, readers' accounts, reading positions and notes are not.",
               "privacyConfirmed": "Sending passages confirmed by {name}, {time}"
+            },
+            "book-knowledge": {
+              "privacyBody": "Selected sentences that mention the people, places and terms of each book built, and readers' questions, are sent to the provider you chose. Whole books, readers' accounts, reading positions and notes are not.",
+              "privacyConfirmed": "Sending sentences confirmed by {name}, {time}"
             }
           },
           "turnOn": "Turn on",
@@ -1971,12 +1976,14 @@
           "shortNames": {
             "story-guides": "Story guides",
             "vision-scan": "Photo scans",
-            "reading-help": "Reading help"
+            "reading-help": "Reading help",
+            "book-knowledge": "Book Knowledge"
           },
           "sends": {
             "story-guides": "sends whole book text",
             "vision-scan": "sends photos",
-            "reading-help": "sends passages"
+            "reading-help": "sends passages",
+            "book-knowledge": "sends selected sentences"
           },
           "stateOn": "On",
           "stateOff": "Off",
@@ -21109,7 +21116,8 @@
       "features": {
         "story-guides": "Story guides",
         "vision-scan": "Vision scan",
-        "reading-help": "Reading help"
+        "reading-help": "Reading help",
+        "book-knowledge": "Book Knowledge"
       },
       "slots": {
         "fast": "Fast",
@@ -21204,5 +21212,55 @@
         "email": "Email"
       }
     }
+  },
+  "bookKnowledge": {
+    "return": "Back to where you were",
+    "continue": "Continue from here",
+    "section": "Section {number}",
+    "empty_person": "No people identified in the passages read so far.",
+    "empty_place": "No places identified in the passages read so far.",
+    "title": "Book Knowledge",
+    "search": "Search terms",
+    "types": "Term types",
+    "person": "People",
+    "place": "Places",
+    "concept": "Concepts",
+    "loading": "Loading...",
+    "busy": "The model is busy. Try again shortly.",
+    "budget": "This month's AI budget is used up. Term lists, counts and passages still work.",
+    "readerCap": "You have reached your Book Knowledge limit for this month. Term lists, counts and passages still work.",
+    "request": "Could not load Book Knowledge. Try again.",
+    "retry": "Retry",
+    "failed": "Indexing failed. Retry to build the index.",
+    "notIndexed": "This book has not been indexed yet.",
+    "build": "Build index",
+    "indexing": "Indexing book...",
+    "noProgress": "No reading progress yet. Read some of the book or choose Show whole book.",
+    "mentions": "{count, plural, one {# mention} other {# mentions}}",
+    "empty": "No terms found at this reading position.",
+    "more": "Load more ({total} total)",
+    "ask": "Ask about this book",
+    "notInBook": "No supporting answer was found in the available passages.",
+    "back": "Back to terms",
+    "insufficient": "There is not enough evidence for a reliable card. Check the passages.",
+    "unverified": "The meaning quote could not be verified. Check the passages.",
+    "chart": "Mentions by chapter",
+    "chapter": "Chapter {number}",
+    "here": "You are here",
+    "cutoff": "You are here: passage sentence {number}. The exact chapter is unavailable.",
+    "oftenWith": "Often with",
+    "noModel": "No model is configured. Term lists, counts and passages still work.",
+    "adminHint": "Turn on Book Knowledge in the AI settings and choose a model for its fast slot.",
+    "disabled": "Book Knowledge is turned off, so books are not indexed.",
+    "disabledHint": "Turn on the Enabled switch in the Book Knowledge section of the Text-to-Speech settings.",
+    "wholeBook": "Show whole book",
+    "spoilers": "Showing the whole book may reveal spoilers. This choice lasts only for this reader session.",
+    "note": "Written by a model, can be wrong. Check the passages.",
+    "passage": "Passage {number}",
+    "jump": "Jump to passage",
+    "enabled": "Enabled",
+    "modelHint": "Model calls use the server AI settings: the Book Knowledge feature and its fast and careful slots.",
+    "save": "Save",
+    "saved": "Settings saved."
   }
 }

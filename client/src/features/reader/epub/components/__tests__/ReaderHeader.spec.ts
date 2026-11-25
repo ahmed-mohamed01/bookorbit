@@ -52,6 +52,15 @@ function mountHeader(props: Record<string, unknown> = {}) {
 }
 
 describe('ReaderHeader', () => {
+  it('gates Book Knowledge and emits its header action', async () => {
+    const wrapper = mountHeader()
+    expect(wrapper.find('button[aria-label="Book Knowledge"]').exists()).toBe(false)
+    await wrapper.setProps({ knowledgeAvailable: true })
+    await wrapper.get('button[aria-label="Book Knowledge"]').trigger('click')
+    expect(wrapper.emitted('toggleKnowledge')).toEqual([[]])
+    wrapper.unmount()
+  })
+
   it('emits main toolbar actions', async () => {
     const wrapper = mountHeader()
 

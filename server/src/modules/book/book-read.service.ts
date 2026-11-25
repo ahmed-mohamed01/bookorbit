@@ -10,6 +10,10 @@ import { BookRepository } from './book.repository';
 export class BookReadService {
   constructor(private readonly bookRepo: BookRepository) {}
 
+  knowledgeEpubFiles(bookId: number) {
+    return this.bookRepo.findKnowledgeEpub(bookId);
+  }
+
   findLibraryIdByBookId(bookId: number) {
     return this.bookRepo.findLibraryIdByBookId(bookId);
   }

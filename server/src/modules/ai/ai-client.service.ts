@@ -393,6 +393,7 @@ export class AiClient {
         maxOutputTokens: run.maxOutputTokens,
         effort: choice.effort ?? request.effort,
         effortChosen: choice.effort !== undefined,
+        temperature: request.temperature,
         omit: this.omitFor(run),
       },
     );

@@ -1,5 +1,5 @@
 import type { Component } from 'vue'
-import { MessagesSquare, Network, ScanLine } from '@lucide/vue'
+import { BookOpenText, MessagesSquare, Network, ScanLine } from '@lucide/vue'
 import type { AiFeatureId, AiSlot } from '@bookorbit/types'
 
 /**
@@ -60,6 +60,7 @@ export const FEATURE_ICONS: Record<AiFeatureId, Component> = {
   'story-guides': Network,
   'vision-scan': ScanLine,
   'reading-help': MessagesSquare,
+  'book-knowledge': BookOpenText,
 }
 
 /** Status dot colours, matching the status text beside them. */

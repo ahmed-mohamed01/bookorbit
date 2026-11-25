@@ -76,6 +76,7 @@ function snapshot(
       },
       'vision-scan': defaultFeatureSettings('vision-scan'),
       'reading-help': defaultFeatureSettings('reading-help'),
+      'book-knowledge': defaultFeatureSettings('book-knowledge'),
     },
     budget: { monthlyBudget: overrides.budget ?? null, buildsPerMonth: overrides.builds ?? null },
     privacy: {},

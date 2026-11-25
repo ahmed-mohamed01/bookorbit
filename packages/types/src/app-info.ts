@@ -8,6 +8,8 @@ import type { VisionScanAppInfo } from "./vision-scan";
  * a released client reads this list, so a value is never renamed or removed.
  */
 export const SERVER_FEATURES = [
+  // Fork feature: spoiler-safe EPUB terms, evidence cards and questions.
+  "book-knowledge",
   "annotation-stars",
   "annotation-color-names",
   "annotation-trash",

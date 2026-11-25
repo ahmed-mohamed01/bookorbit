@@ -115,6 +115,7 @@ import { SearchModule } from './modules/search/search.module';
 import { WatchDownloadModule } from './modules/watch-download/watch-download.module';
 import { AppAttestModule } from './modules/app-attest/app-attest.module';
 import { ReadAloudModule } from './modules/read-aloud/read-aloud.module';
+import { BookKnowledgeModule } from './modules/book-knowledge/book-knowledge.module';
 import { EditionSyncModule } from './modules/edition-sync/edition-sync.module';
 import { AudioConvertModule } from './modules/audio-convert/audio-convert.module';
 import { ForkJobReorderModule } from './modules/fork-job-reorder/fork-job-reorder.module';
@@ -254,6 +255,7 @@ import { BulkRunsModule } from './modules/bulk-runs/bulk-runs.module';
     AppAttestModule,
     ReadAloudModule,
     EditionSyncModule,
+    BookKnowledgeModule,
     AudioConvertModule,
     ForkJobReorderModule,
     CoverThumbnailsModule,

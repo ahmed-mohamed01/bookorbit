@@ -7,6 +7,8 @@ import { AudioConvertBookConsolidationParticipant } from '../audio-convert/audio
 import { AudioConvertModule } from '../audio-convert/audio-convert.module';
 import { AudiobookshelfBookConsolidationParticipant } from '../audiobookshelf/audiobookshelf-book-consolidation.participant';
 import { AudiobookshelfModule } from '../audiobookshelf/audiobookshelf.module';
+import { BookKnowledgeBookConsolidationParticipant } from '../book-knowledge/book-knowledge-book-consolidation.participant';
+import { BookKnowledgeModule } from '../book-knowledge/book-knowledge.module';
 import { reviveCoverSlots } from '../book-merge/book-merge.executor';
 import { EditionSyncBookConsolidationParticipant } from '../edition-sync/edition-sync-book-consolidation.participant';
 import { EditionSyncModule } from '../edition-sync/edition-sync.module';
@@ -18,7 +20,7 @@ import { WebSerialsBookConsolidationParticipant } from '../web-serials/web-seria
 import { WebSerialsModule } from '../web-serials/web-serials.module';
 import { BookConsolidationModule } from './book-consolidation.module';
 
-type ForkMergeRule = 'repoint' | 'repoint-kept-wins' | 'repoint-pair' | 'repoint-kept-wins-stale' | 'follows-cover-slot';
+type ForkMergeRule = 'drop-derived' | 'repoint' | 'repoint-kept-wins' | 'repoint-pair' | 'repoint-kept-wins-stale' | 'follows-cover-slot';
 
 /**
  * Fork tables sit outside the db/schema barrel, so upstream's registry test never sees them. A new
@@ -36,6 +38,9 @@ const FORK_BOOK_MERGE_RULES: Record<string, ForkMergeRule> = {
   'author_catalog_works.matched_ebook_book_id': 'repoint',
   'author_catalog_works.possible_audio_book_id': 'repoint',
   'author_catalog_works.possible_ebook_book_id': 'repoint',
+  'book_knowledge_cards.book_id': 'drop-derived',
+  'book_knowledge_index.book_id': 'drop-derived',
+  'book_knowledge_kind_reviews.book_id': 'drop-derived',
   'book_cover_placeholders.book_id': 'follows-cover-slot',
   'edition_sync_book_index.book_id': 'repoint-kept-wins-stale',
   'edition_sync_book_overrides.book_id': 'repoint-kept-wins',
@@ -94,6 +99,7 @@ describe('fork book merge rules', () => {
     ['monitored', MonitoredModule, MonitoredBookConsolidationParticipant],
     ['audiobookshelf', AudiobookshelfModule, AudiobookshelfBookConsolidationParticipant],
     ['reading alignment', ReadingAlignmentModule, ReadingAlignmentBookConsolidationParticipant],
+    ['book knowledge', BookKnowledgeModule, BookKnowledgeBookConsolidationParticipant],
     ['edition sync', EditionSyncModule, EditionSyncBookConsolidationParticipant],
     ['web serials', WebSerialsModule, WebSerialsBookConsolidationParticipant],
     ['audio convert', AudioConvertModule, AudioConvertBookConsolidationParticipant],

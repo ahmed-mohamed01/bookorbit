@@ -89,6 +89,7 @@ function setup(
       'story-guides': { ...defaultFeatureSettings('story-guides'), enabled: options.enabled ?? true },
       'vision-scan': { ...defaultFeatureSettings('vision-scan'), enabled: options.enabled ?? true },
       'reading-help': { ...defaultFeatureSettings('reading-help'), enabled: options.enabled ?? true },
+      'book-knowledge': defaultFeatureSettings('book-knowledge'),
     },
     budget: { monthlyBudget: null, buildsPerMonth: null },
     privacy: {},

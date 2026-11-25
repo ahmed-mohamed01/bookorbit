@@ -938,6 +938,7 @@ are excluded.
 | `achievement-events.service.ts` / `koreader.service.ts`                                                  | 6 / 3             | ABS+alignment | `occurredAt` widening - **propose upstream**                                                            |
 | `metadata-fetch.module.ts` / `providers/goodreads/goodreads.provider.ts`                                 | 2 / 2             | monitored     | `GoodreadsProvider` exported, `fetchHtml` made public (was a copy)                                      |
 | `scanner/lib/classify.ts`                                                                                | 1                 | ABS           | `metadata.json` sidecar recognition (was 6)                                                             |
+| Book Knowledge: 17 files, `ReaderView.vue` 27 the largest (2026-11-24, uncommitted)                      | 91 total          | knowledge     | see the per-file table in its overlay section                                                           |
 | everything else                                                                                          | <= 6 each         | mixed         | enum members, `Record<Union>` exhaustiveness, trivial registrations                                     |
 | `client/src/locales/*.json`                                                                              | ~60 each          | all           | i18n keys, trivial conflicts                                                                            |
 
@@ -1536,6 +1537,114 @@ pass-through to `resolveSlotArtifact`), `metadata/lib/cover.ts` (`THUMBNAIL_JPEG
 `app.module.ts` (module registration), `packages/types/src/index.ts` (one export). Fork-owned files
 touched: `ForkSettings.vue` (the section), `fork-settings-nav.ts` (search keywords), `en.json`
 (`coverThumbnails.*`). The first two hooks are generic and good candidates to propose upstream.
+
+## Book Knowledge overlay (in progress, branch `claude/book-knowledge-v2`)
+
+Spoiler-safe term lists, evidence passages, cards and questions for EPUBs, cut at the reader's
+position, plus an admin-run X-Ray build. Ported on 2026-11-20 from the `claude/concept-index`
+worktree onto `monitored` after the v3.9.0 merge. The index builds without the GLiNER model (plain
+mode); GLiNER is planned to move to its own worker container, so the in-server ONNX code is
+temporary. The main image stays on Alpine.
+
+**Index lifecycle.** One index row per book in `book_knowledge_index`; the artifact (gzip JSON)
+lives under `APP_DATA_PATH/book-knowledge/<bookId>/<fingerprint>/`. The fingerprint is
+sha256(`fileHash:size`) of the primary EPUB, or sha256(`nohash:size:mtimeMs`) when the file has no
+hash, so the file is never read to fingerprint it. A changed fingerprint makes the row stale and
+queues a rebuild; there is no `book_files` delete trigger (bootstrap SQL drops the old one), and
+`cleanup()` removes directories whose fingerprint is no longer current (all of them once the row is
+gone), one book at a time. A
+`ready` row whose artifact cannot be read, or whose `formatVersion` is not `ARTIFACT_VERSION`, is
+logged (`[book_knowledge.artifact_read] [fail]`), queued and reported as `queued`. Artifacts are
+capped at 512 MiB on read and write; a larger one fails the build with "Book is too long for Book
+Knowledge" and Build does not requeue it. The in-memory artifact cache holds 300 MB. The GLiNER
+stage gives up after 20 minutes, checked between windows, and stores empty model votes so the
+book is not retried forever. The settings row keeps only `enabled`: when off, Build returns 503,
+nothing is auto-queued, the drain leaves queued rows alone, and status carries `enabled: false`.
+Percentage-only positions are cut by spine item bytes (`artifact.spineBytes`, what Foliate's
+`SectionProgress` weighs), never inside an item past the reader. On a book merge the participant
+deletes the source book's index, cards and kind reviews only; the kept book keeps its rows.
+
+**Reader model calls.** All calls go through upstream's AI layer as the AI feature
+`book-knowledge` (fast slot, `perReader: true`), so they land in `ai_usage` and obey upstream's
+budget, limiter and switch. `BookKnowledgeModelService` wraps `AiClient`; card and ask check the
+per-reader monthly cap first (`checkReaderCap`, the ledger's `readerSpend`, copied from
+reading-help), pass `userId`, and abort on a 60 second timeout or when the reader hangs up. Both
+routes carry `@Throttle` like reading-help. Errors: 429 with `errorCode` `budget` or `reader-cap`
+(the shape upstream's `GlobalExceptionFilter` keeps), 503 when the model is off, rate limited,
+down or timed out, 502 otherwise. Ask retrieval is words only (BM25 plus named-term passages).
+
+**X-Ray build** (`book-knowledge-xray.service.ts`, `xray/`). Turns the index into upstream's
+`StoryGuidePayloadV1` plus fork-only `links` and `chronicle`, every item anchored at the sentence it
+cites. Started through the admin route `book-knowledge/xray/runs` (`ManageAppSettings`, used by
+the bench): POST starts, GET polls, `DELETE :id` cancels (status `failed`, error `cancelled`),
+`GET :id/payload` reads. One build at a time; runs live in memory (last four). Steps: the LLM kind
+review, entities without a model, then the dense pass (`xray/dense/`): pattern and identity merges,
+an alias ask, then each unit (a chapter or part of one) cut into chunks of 100 numbered sentences,
+each chunk getting three low-effort asks at once: notes and summary, facts (abilities, merges,
+`is` phrases), and a scene ask (point of view, same-as pairs, up to 12 relations). There is no
+separate pair or tie-type step. A unit launches once the unit `DENSE_UNIT_WINDOW` (2) places before
+it is processed, with at most 8 hosted calls in flight. Each entry's description follows its tier
+(main, supporting, minor) with one hard cap of 100 words (`xray/xray-tiers.ts`); descriptions and
+`now` lines that name someone their evidence never names are dropped. A run has a mode, fiction or
+nonfiction, from `dc:subject` unless the run's `mode` overrides it. `dryRun: true` only plans and
+estimates. Finished answers are kept in `xray-units.jsonl.gz` beside the artifact, keyed by
+fingerprint, prompt version, model and request hash, and replayed by later runs; a cut or corrupt
+file is marked damaged and rewritten on the first save. Each run has one `AbortController`: on
+failure or cancel every launched call is aborted, the store is closed so no late answer lands, and
+the guard is released only after all calls settle. A whole-book, non-dry run also writes
+`xray-payload.json.gz` beside the artifact; the reader route `GET books/:bookId/knowledge/xray`
+(`@ResolvesMergedBook`, book access only, like upstream's story guide) returns it, 404 when absent.
+The payload is position-stamped; the viewer cuts it client-side. It reuses upstream's
+`NAMES_SYSTEM`, `LINES_SYSTEM`, `TIES_SYSTEM`, `SUMMARIES_SYSTEM`, line checks, name-word lists,
+`storyGuideTieType`, `flattenWithOffsets` and `readBookText` by import, without editing them. The
+shared run type still has `tieVote` and `passRepeats` for the external viewer; nothing sets them.
+
+**Client.** `features/book-knowledge/` owns the panel and `KnowledgeReaderHost.vue`, which holds
+the panel state, the visit bar and the navigation handlers; `ReaderView.vue` only renders it and
+pauses tracking during a visit.
+
+**Single instance.** The index build queue (`drain`) and the X-Ray guard are in-process. Two server
+instances on one database would build the same queued book twice. BookOrbit runs as one container,
+so this is accepted; revisit if it ever scales out.
+
+**Owned (fork-only) files:** `server/src/modules/book-knowledge/` (bootstrap SQL schema, no Drizzle
+migration; its own `book-knowledge.config.ts` for `BOOK_KNOWLEDGE_GLINER_THREADS`),
+`server/scripts/book-knowledge-*`, `server/scripts/gliner-parity.*`,
+`client/src/features/book-knowledge/`, `packages/types/src/book-knowledge.ts`.
+
+Measured 2026-11-24 with `git diff -w HEAD --stat` on the uncommitted branch (added + removed):
+17 upstream source files, 91 lines.
+
+| Upstream file                                                                                                                    | Hook                                                                                                                               | Footprint |
+| -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `client/.../reader/ReaderView.vue`                                                                                               | import, template ref, `trackingEnabled` line, `closeAnyPanel` branch, toggle, render host                                          | 27 lines  |
+| `client/.../epub/components/ReaderHeader.vue`                                                                                    | `knowledgeAvailable` prop, `toggleKnowledge` emit and button                                                                       | 14 lines  |
+| `client/src/features/tts/TtsAdminSettings.vue`                                                                                   | admin settings section behind the `book-knowledge` feature flag                                                                    | 5 lines   |
+| `server/src/modules/book/book.repository.ts`                                                                                     | `findKnowledgeEpub` (primary content EPUB for a book)                                                                              | 10 lines  |
+| `server/src/modules/book/book-read.service.ts`                                                                                   | `knowledgeEpubFiles` pass-through                                                                                                  | 4 lines   |
+| `server/src/app.module.ts`                                                                                                       | module registration                                                                                                                | 2 lines   |
+| `server/src/config/env.validation.ts`, `server/.env.example`                                                                     | `BOOK_KNOWLEDGE_GLINER_THREADS` (read by the module's own config, not `config.ts`)                                                 | 3 lines   |
+| `server/package.json` (+ lockfile)                                                                                               | `onnxruntime-node`, `tokenizers`, `wink-nlp`, `wink-eng-lite-web-model`                                                            | 4 lines   |
+| `packages/types/src/app-info.ts`, `index.ts`                                                                                     | `book-knowledge` server feature, one export                                                                                        | 3 lines   |
+| `packages/types/src/ai.ts`                                                                                                       | `book-knowledge` in `AI_FEATURES` and `AI_FEATURE_DEFINITIONS` (`perReader: true`)                                                 | 10 lines  |
+| `client/src/features/ai/lib/ai-settings-ui.ts`                                                                                   | `book-knowledge` icon in `FEATURE_ICONS` (and its import)                                                                          | 3 lines   |
+| `server/src/modules/ai/ai-client.types.ts`, `ai-adapter.interface.ts`, `ai-client.service.ts`, `adapters/openai-chat.adapter.ts` | optional `temperature` on the request, passed to the chat adapter; unset still sends 0, Book Knowledge sends 1 (0 for kind review) | 6 lines   |
+
+Also touched: `openai-chat.adapter.test.ts` (one test for the temperature hook), `ReaderHeader.spec.ts`
+(one test), `en.json` (`bookKnowledge.*`, and the `book-knowledge` AI feature's names, privacy text
+and usage label next to upstream's features), `ai.setup-flow.test.ts` (the AI card's row count, 4 to
+5, because the new feature adds a slot row), five upstream tests (`ai-budget.service.test.ts`,
+`ai-client.service.test.ts`, `ai-client.stream.test.ts`, `ai-connection-test.service.test.ts`,
+`reading-help.service.test.ts`: one line each, the `'book-knowledge': defaultFeatureSettings('book-knowledge')`
+entry in their `AiFeatureSettingsMap` literal) and the fork-owned `book-merge-fork-rules.test.ts`
+(`drop-derived` rules and participant).
+
+Why the five test lines and not a type-level fix: making the key optional in
+`AiFeatureSettingsMap` (`ai-settings.service.ts`) would type every `features[id]` read as possibly
+undefined and need guards at four non-test upstream sites (`ai-budget.service.ts` twice,
+`ai-admin.service.ts` twice), a larger and riskier footprint than five test-literal lines. On a merge
+that touches those literals, keep the entry; if a test literal is rewritten to spread over
+`AI_FEATURES`, drop it.
 
 ## Remote read-aloud worker: local work folders
 

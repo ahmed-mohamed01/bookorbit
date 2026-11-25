@@ -93,6 +93,7 @@ function setup(apiType: AiApiType = 'openai-chat', connectionOverrides: Partial<
       'story-guides': defaultFeatureSettings('story-guides'),
       'vision-scan': defaultFeatureSettings('vision-scan'),
       'reading-help': defaultFeatureSettings('reading-help'),
+      'book-knowledge': defaultFeatureSettings('book-knowledge'),
     },
     budget: { monthlyBudget: null, buildsPerMonth: null },
     privacy: {},
