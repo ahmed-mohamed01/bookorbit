@@ -845,6 +845,12 @@ Measured with `git diff -w upstream/main --numstat`. Totals include the existing
 | `client/src/features/book-requests/composables/useRequestQueue.ts` |     1 |       1 | Lets the shared stepper accept Jobs rows adapted to request IDs                                                 |
 | `client/src/locales/en.json`                                       |  2753 |     143 | Grip labels, movement results and per-type Move to top copy, alongside existing fork copy                       |
 
+### Release picker file panel width
+
+| Upstream file                                                                 | Added | Removed | Hook                                                                                                                                                         |
+| ----------------------------------------------------------------------------- | ----: | ------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `client/src/features/book-requests/components/ReleaseFileInspectionPanel.vue` |   141 |      47 | Includes `min-w-0` on the root box so the fork's one-line file names in `ReleaseFileTree.vue` scroll in place instead of widening the release card on phones |
+
 ### 2026-11-14 surface shrink after the v3.8.0 merge
 
 Measured on the v3.8.0 merge tree (`70c6a7cb0`, upstream `c77966cc5`) with

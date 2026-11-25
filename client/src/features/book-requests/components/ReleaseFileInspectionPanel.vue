@@ -178,7 +178,7 @@ function unitDetail(unit: ReleaseUnitSummary): string {
 </script>
 
 <template>
-  <div class="mt-3 rounded-lg border border-border bg-background/60 p-3">
+  <div class="mt-3 min-w-0 rounded-lg border border-border bg-background/60 p-3">
     <p v-if="loading" role="status" class="flex items-center gap-2 text-xs text-muted-foreground">
       <Loader2 class="size-3.5 animate-spin" aria-hidden="true" />
       {{ t(props.delivery === 'usenet' ? 'bookRequests.releases.inspectingNzb' : 'bookRequests.releases.inspectingFiles') }}
