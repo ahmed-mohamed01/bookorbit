@@ -67,6 +67,12 @@ nslookup annas-archive.gl <your router's IP>
 
 If the answer is `0.0.0.0` but a public resolver returns a real address, set Shelfmark's **Settings > Network > DNS Provider** to a public one and turn on **Use DNS over HTTPS**. Shelfmark can also route all of its traffic through WireGuard (`USING_WIREGUARD=true` plus the capabilities in Shelfmark's `compose/docker-compose.wireguard.yml`).
 
+### Search speed
+
+- Set the indexer's **Base URL** to Shelfmark's internal address, such as `http://shelfmark:8084` on a shared Docker network. A public reverse proxy can cut off a slow search at its own timeout.
+- Set Shelfmark's **Settings > Cloudflare Bypass > Bypasser Idle Timeout** (`BYPASS_BROWSER_IDLE_TIMEOUT`) to `1800` so its headless browser stays warm between searches.
+- Pin Anna's Archive's primary mirror on Shelfmark's **Mirrors** page. The `auto` setting can lose time trying dead mirrors.
+
 ## 2. Mount the download folder into BookOrbit
 
 Mount the same host folder into BookOrbit's container, read access is enough:
@@ -131,8 +137,8 @@ BookOrbit only asks a source for the media it carries, so an audiobook request n
 ### Searching
 
 - Shelfmark searches each chosen source separately. A source that fails or times out costs only its own releases.
-- Each search gets up to 20 seconds. A source that hung or failed after 8 seconds or more gets a 4 second budget for the next 10 minutes, so one blocked site does not hold every search to its timeout. It gets a full-length try again once that time is up.
-- Shelfmark does not wait for one of the three search slots that protect tracker accounts, and up to two searches of one Shelfmark indexer run at once, enough for a request and its other-format companion.
+- The indexer's **Search time limit** sets how long a search can run. It defaults to 20 seconds and accepts 5 to 180 whole seconds. If a source times out or takes at least 8 seconds to fail during an automatic search, it gets a 4 second budget in automatic searches for the next 10 minutes unless it returns releases sooner. A search you start from the Requests or Watchlist release picker gives every source its full budget, with 1.5 seconds of the configured limit reserved for merging results.
+- Shelfmark does not wait for one of the three search slots that protect tracker accounts. Since only two searches per Shelfmark indexer can run at once, keep the limit as low as Shelfmark allows (start at 60 seconds for Anna's Archive) so a third search, such as a background search, is less likely to time out while waiting.
 - An empty answer from Shelfmark is final. BookOrbit does not retry without the author, because Shelfmark's search already fans out across slow sites and a second pass mostly times out.
 
 ### Downloading

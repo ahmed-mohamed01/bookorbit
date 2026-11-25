@@ -721,6 +721,73 @@ describe('IndexerSearchService', () => {
     expect(torznab.search).toHaveBeenCalledOnce();
   });
 
+  it('passes the interactive flag to adapters when set and keeps interactive and automatic results separate', async () => {
+    const automatic = release({ guid: 'automatic' });
+    const interactive = release({ guid: 'interactive' });
+    const torznab = { search: vi.fn().mockResolvedValueOnce([automatic]).mockResolvedValueOnce([interactive]).mockResolvedValue([automatic]) };
+    const { service } = makeService([indexer()], { torznab });
+
+    await service.search(request());
+    const picked = await service.search(request(), { interactive: true });
+    const automaticAgain = await service.search(request(), { interactive: false });
+
+    expect(torznab.search).toHaveBeenCalledTimes(2);
+    expect(torznab.search.mock.calls[0][0]).not.toHaveProperty('interactive');
+    expect(torznab.search.mock.calls[1][0]).toHaveProperty('interactive', true);
+    expect(picked).toMatchObject({ cached: false, releases: [{ guid: 'interactive' }] });
+    expect(automaticAgain).toMatchObject({ cached: true, releases: [{ guid: 'automatic' }] });
+
+    await service.search(request(), { refresh: true, interactive: false });
+    expect(torznab.search.mock.calls[2][0]).toHaveProperty('interactive', false);
+    torznab.search.mockResolvedValue([interactive]);
+    await expect(service.refreshCandidate(7, 1, interactive)).resolves.toEqual(interactive);
+    expect(torznab.search.mock.calls[3][0]).toHaveProperty('interactive', true);
+  });
+
+  it('reuses matching interactive results with current colors for an automatic search', async () => {
+    const config = indexer({ color: 'blue' });
+    const torznab = { search: vi.fn().mockResolvedValue([release()]), supportsIsbnSearch: true };
+    const { service } = makeService([config], { torznab });
+    const book = request({ isbn13: '9780441172719' });
+    const options = { overrides: { title: book.title }, indexerMode: 'isbn-capable' as const };
+
+    const picked = await service.search(book, { ...options, sourceIds: [1, 2], interactive: true });
+    config.color = 'orange';
+    const cached = await service.search(book, { ...options, sourceIds: [2, 1] });
+
+    expect(cached).toMatchObject({ cached: true, releases: picked.releases, indexers: [{ color: 'orange' }] });
+    expect(picked.indexers[0]?.color).toBe('blue');
+    expect(torznab.search).toHaveBeenCalledOnce();
+  });
+
+  it('searches again when an automatic refresh follows an interactive search', async () => {
+    const torznab = { search: vi.fn().mockResolvedValue([release()]) };
+    const { service } = makeService([indexer()], { torznab });
+
+    await service.search(request(), { interactive: true });
+    const refreshed = await service.search(request(), { refresh: true });
+
+    expect(refreshed.cached).toBe(false);
+    expect(torznab.search).toHaveBeenCalledTimes(2);
+  });
+
+  it('searches again when the interactive result has expired', async () => {
+    const torznab = { search: vi.fn().mockResolvedValue([release()]) };
+    const { service } = makeService([indexer()], { torznab });
+    const started = Date.now();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(started);
+    try {
+      await service.search(request(), { interactive: true });
+      now.mockReturnValue(started + 3 * 60 * 1000);
+      const automatic = await service.search(request());
+
+      expect(automatic.cached).toBe(false);
+      expect(torznab.search).toHaveBeenCalledTimes(2);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it('keeps manual and default search caches separate while retaining both pickable result sets', async () => {
     const torznab = {
       search: vi.fn((query: { title: string }) =>

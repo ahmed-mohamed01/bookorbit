@@ -73,6 +73,8 @@ export interface ReleaseQuery {
   /** Language the request asked for, as a hard filter when the release states one. */
   language: string | null;
   limit: number;
+  /** A person is waiting on this search, so an adapter's own short-budget shortcuts do not apply. */
+  interactive?: boolean;
 }
 
 /**

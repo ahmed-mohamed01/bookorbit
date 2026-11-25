@@ -86,6 +86,12 @@ describe('ShelfmarkIndexerAdapter', () => {
     forgetDispatchers();
   });
 
+  it('declares a numeric search time limit with a 20 second default', () => {
+    expect(new ShelfmarkIndexerAdapter().settingsFields).toContainEqual(
+      expect.objectContaining({ key: 'searchTimeoutSeconds', type: 'number', default: 20 }),
+    );
+  });
+
   it('searches the configured source by title and author, keeping the whole release for the grab', async () => {
     const calls = mockShelfmark(() => ({ body: { releases: [RELEASE] } }));
 
@@ -237,6 +243,43 @@ describe('ShelfmarkIndexerAdapter', () => {
     expect(await budgets()).toEqual([4_000, 18_500]);
     expect(await budgets()).toEqual([18_500, 18_500]);
     timeout.mockRestore();
+  });
+
+  it('uses the full budget for interactive searches and marks sources slow only for automatic timeouts', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new DOMException('timed out', 'TimeoutError'))),
+    );
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    const adapter = new ShelfmarkIndexerAdapter();
+    const sources = config({ perIndexerTimeoutSeconds: 20 });
+    const budget = async (interactive: boolean) => {
+      timeout.mockClear();
+      await expect(adapter.search(query({ interactive }), sources, new AbortController().signal)).rejects.toMatchObject({ failure: 'timeout' });
+      return timeout.mock.calls.map(([ms]) => ms);
+    };
+
+    try {
+      expect(await budget(true)).toEqual([18_500]);
+      expect(await budget(false)).toEqual([18_500]);
+      expect(await budget(false)).toEqual([4_000]);
+      expect(await budget(true)).toEqual([18_500]);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
+  it('gives each source 58.5 seconds in an interactive search with a 60 second limit', async () => {
+    mockShelfmark(() => ({ body: { releases: [] } }));
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    const sources = config({ perIndexerTimeoutSeconds: 60, settings: { shelfmarkSources: 'direct_download,libgen' } });
+
+    try {
+      await new ShelfmarkIndexerAdapter().search(query({ interactive: true }), sources, new AbortController().signal);
+      expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([58_500, 58_500]);
+    } finally {
+      timeout.mockRestore();
+    }
   });
 
   it('keeps the donator key out of a source error Shelfmark passes on', async () => {

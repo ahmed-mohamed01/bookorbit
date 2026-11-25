@@ -903,7 +903,7 @@ export class MonitoredService {
       const synthetic = this.buildSearchRequest(entry.monitor, entry.work, format);
       return async (onProgress?: (progress: ReleaseSearchProgress) => void) => {
         try {
-          const result = await this.indexerSearch.search(synthetic, { refresh: true, ...(onProgress ? { onProgress } : {}) });
+          const result = await this.indexerSearch.search(synthetic, { refresh: true, interactive: true, ...(onProgress ? { onProgress } : {}) });
           // Nothing ever reads this entry back: this search always refreshes, and a grab resolves its
           // release under the real request id. Dropping it stops a browse of a monitored author from
           // parking a result set per work in the shared release store for the length of its TTL.
@@ -974,7 +974,7 @@ export class MonitoredService {
   ): Promise<{ searched: boolean; found: boolean }> {
     const stored = () => this.indexerSearch.find(requestId, payload.indexerId, payload.releaseGuid) != null;
     if (stored()) return { searched: false, found: true };
-    await this.indexerSearch.search(request, { refresh: true, overrides: this.buildSearchOverrides(entry.monitor, entry.work) });
+    await this.indexerSearch.search(request, { refresh: true, interactive: true, overrides: this.buildSearchOverrides(entry.monitor, entry.work) });
     return { searched: true, found: stored() };
   }
 

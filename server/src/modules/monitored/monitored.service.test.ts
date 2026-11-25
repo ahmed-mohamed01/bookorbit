@@ -1831,6 +1831,7 @@ describe('MonitoredService release picker', () => {
     expect(calls).toEqual(['assertCanFulfil', 'assertCanFulfil', 'find:42', 'search', 'find:42', 'grab']);
     expect(search).toHaveBeenCalledWith(request, {
       refresh: true,
+      interactive: true,
       overrides: { title: 'Test Work', authors: ['Test Author'], isbn: null, language: null, preferredFormats: [] },
     });
     expect(grab).toHaveBeenCalledWith(42, { indexerId: 3, releaseGuid: 'guid-1' }, viewer);
@@ -1881,12 +1882,16 @@ describe('MonitoredService release picker', () => {
     };
     const instance = service(store, {}, { indexerSearch: { search, forget } });
 
-    await instance.searchWorkReleases(viewer, 'work-a', 'ebook');
+    const onProgress = vi.fn();
+    const stream = await instance.prepareWorkReleaseSearch(viewer, 'work-a', 'ebook');
+    await stream(onProgress);
     await instance.searchWorkReleases(viewer, 'work-a', 'ebook');
     await instance.searchWorkReleases(viewer, 'work-a', 'audiobook');
     await instance.searchWorkReleases(viewer, 'work-b', 'ebook');
 
     const ids = search.mock.calls.map((call) => (call[0] as { id: number }).id);
+    expect(search).toHaveBeenNthCalledWith(1, expect.anything(), { refresh: true, interactive: true, onProgress });
+    expect(search).toHaveBeenNthCalledWith(2, expect.anything(), { refresh: true, interactive: true });
     // Negative keeps it clear of every real request id, so a browse can never read or evict one.
     expect(ids.every((id) => id < 0)).toBe(true);
     expect(ids[0]).toBe(ids[1]);

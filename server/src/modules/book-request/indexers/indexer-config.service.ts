@@ -22,6 +22,7 @@ import type { ResolvedIndexerConfig, ResolvedIndexerSeedPolicy } from './indexer
 import { IndexerRegistry } from './indexer-registry';
 import { IndexerRepository } from './indexer.repository';
 import { IndexerManagerRepository } from './indexer-manager.repository';
+import { readIndexerSearchTimeoutSeconds, searchTimeoutSettingError } from './indexer-search-timeout';
 import type { CreateIndexerDto, UpdateIndexerDto } from './dto/indexer.dto';
 
 const MAX_INDEXER_SETTING_STRING_LENGTH = 2_048;
@@ -292,7 +293,7 @@ export class IndexerConfigService {
       isbnSearchDisabled: row.isbnSearchDisabled,
       settings: row.settings ?? null,
       networkProfile: manager?.networkProfile ?? row.networkProfile ?? null,
-      perIndexerTimeoutSeconds: manager?.perIndexerTimeoutSeconds ?? 20,
+      perIndexerTimeoutSeconds: manager?.perIndexerTimeoutSeconds ?? readIndexerSearchTimeoutSeconds(row.adapterType, row.settings) ?? 20,
       overallSearchBudgetSeconds: manager?.overallSearchBudgetSeconds ?? null,
       autoExpandCategories: manager?.autoExpandCategories ?? false,
     };
@@ -311,6 +312,8 @@ export class IndexerConfigService {
    */
   private cleanSettings(adapterType: string, settings: Record<string, unknown> | undefined): IndexerSettings | null {
     if (!settings) return null;
+    const timeoutError = searchTimeoutSettingError(adapterType, settings);
+    if (timeoutError !== null) throw indexerError('INDEXER_SETTINGS_INVALID', timeoutError);
     const declared = this.registry.require(adapterType).settingsFields ?? [];
     const kept: Record<string, unknown> = {};
 

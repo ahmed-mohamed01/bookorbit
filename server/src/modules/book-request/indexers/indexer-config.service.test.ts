@@ -109,12 +109,79 @@ function makeService(
 const createDto = { name: 'jackett', adapterType: 'torznab' as const, baseUrl: 'http://203.0.113.10:9117' };
 
 describe('IndexerConfigService', () => {
+  it.each([
+    { settings: { searchTimeoutSeconds: 60 }, expected: 60 },
+    { settings: null, expected: 20 },
+  ])('resolves a standalone Shelfmark search limit of $expected seconds', async ({ settings, expected }) => {
+    const row = indexerRow({ adapterType: 'shelfmark', settings });
+    const { service } = makeService({ repo: { findAllEnabled: vi.fn().mockResolvedValue([row]) } });
+
+    await expect(service.resolveEnabledConfigs()).resolves.toEqual([expect.objectContaining({ perIndexerTimeoutSeconds: expected })]);
+  });
+
+  it.each([9999, 4, 2.5, '60'])('rejects a Shelfmark search time limit of %j on create and update', async (searchTimeoutSeconds) => {
+    const adapterType = 'shelfmark';
+    const { service, repo } = makeService({ repo: { findById: vi.fn().mockResolvedValue(indexerRow({ adapterType })) } });
+    const settings = { searchTimeoutSeconds };
+    const error = {
+      constructor: BadRequestException,
+      response: { errorCode: 'INDEXER_SETTINGS_INVALID', message: 'Search time limit must be 5 to 180 whole seconds' },
+    };
+
+    await expect(service.create({ ...createDto, adapterType, settings })).rejects.toMatchObject(error);
+    await expect(service.update(9, { settings })).rejects.toMatchObject(error);
+    expect(repo.create).not.toHaveBeenCalled();
+    expect(repo.update).not.toHaveBeenCalled();
+  });
+
+  it('saves a 60 second Shelfmark search time limit on create and update', async () => {
+    const adapterType = 'shelfmark';
+    const { service, repo } = makeService({
+      repo: { findById: vi.fn().mockResolvedValue(indexerRow({ adapterType })) },
+      adapter: { settingsFields: [{ key: 'searchTimeoutSeconds', type: 'number' }] },
+    });
+    const settings = { searchTimeoutSeconds: 60 };
+
+    await service.create({ ...createDto, adapterType, settings });
+    await service.update(9, { settings });
+
+    expect(repo.create).toHaveBeenCalledWith(expect.objectContaining({ settings }));
+    expect(repo.update).toHaveBeenCalledWith(9, expect.objectContaining({ settings }));
+  });
+
+  it.each([null, undefined])('drops a Shelfmark search time limit of %j on create and update', async (searchTimeoutSeconds) => {
+    const adapterType = 'shelfmark';
+    const { service, repo } = makeService({
+      repo: { findById: vi.fn().mockResolvedValue(indexerRow({ adapterType })) },
+      adapter: { settingsFields: [{ key: 'searchTimeoutSeconds', type: 'number' }] },
+    });
+    const settings = { searchTimeoutSeconds };
+
+    await service.create({ ...createDto, adapterType, settings });
+    await service.update(9, { settings });
+
+    expect(repo.create).toHaveBeenCalledWith(expect.objectContaining({ settings: null }));
+    expect(repo.update).toHaveBeenCalledWith(9, expect.objectContaining({ settings: null }));
+  });
+
+  it('drops an undeclared search time limit for a non-Shelfmark adapter on create and update', async () => {
+    const { service, repo } = makeService();
+    const settings = { searchTimeoutSeconds: 9999 };
+
+    await service.create({ ...createDto, settings });
+    await service.update(9, { settings });
+
+    expect(repo.create).toHaveBeenCalledWith(expect.objectContaining({ settings: null }));
+    expect(repo.update).toHaveBeenCalledWith(9, expect.objectContaining({ settings: null }));
+  });
+
   it('resolves a managed child with its manager credential and policy', async () => {
     const managed = indexerRow({
       managerId: 3,
       managerExternalId: '7',
       managerMetadata: { displayName: 'Managed books', implementation: 'Cardigann', protocol: 'torrent', priority: 5 },
       credentialsEnc: null,
+      settings: { searchTimeoutSeconds: 60 },
     });
     const manager = {
       id: 3,

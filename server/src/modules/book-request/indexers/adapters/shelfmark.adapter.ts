@@ -26,6 +26,7 @@ import {
   type ReleaseQuery,
   type ResolvedIndexerConfig,
 } from '../indexer-adapter';
+import { MAX_INDEXER_SEARCH_TIMEOUT_SECONDS, MIN_INDEXER_SEARCH_TIMEOUT_SECONDS } from '../indexer-search-timeout';
 
 /** A search answers with every release a source found, and each carries a little metadata. */
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -57,6 +58,13 @@ const SETTINGS_FIELDS: readonly IndexerSettingsField[] = [
     format: 'list',
     options: SHELFMARK_SOURCES,
     minItems: 1,
+  },
+  {
+    key: 'searchTimeoutSeconds',
+    type: 'number',
+    label: 'Search time limit (seconds)',
+    hint: `How long BookOrbit waits for this Shelfmark indexer (${MIN_INDEXER_SEARCH_TIMEOUT_SECONDS} to ${MAX_INDEXER_SEARCH_TIMEOUT_SECONDS} seconds). With two searches per indexer, a long limit can make a third search time out in the queue, so use the lowest limit Shelfmark allows, starting at 60 seconds for Anna's Archive.`,
+    default: 20,
   },
 ];
 
@@ -153,7 +161,7 @@ export class ShelfmarkIndexerAdapter implements IndexerAdapter {
     signal: AbortSignal,
   ): Promise<ReleaseCandidate[]> {
     const slowKey = `${config.id}:${source}`;
-    const knownSlow = (this.slowUntil.get(slowKey) ?? 0) > Date.now();
+    const knownSlow = !query.interactive && (this.slowUntil.get(slowKey) ?? 0) > Date.now();
     const budgetMs = knownSlow ? Math.min(SLOW_SOURCE_BUDGET_MS, sourceBudgetMs(config)) : sourceBudgetMs(config);
     const startedAt = Date.now();
     try {
@@ -166,7 +174,7 @@ export class ShelfmarkIndexerAdapter implements IndexerAdapter {
       // already on the short budget is not penalised again, or one that simply needs longer than it
       // would never get the full-budget try that lets it recover.
       const hung = durationMs >= SLOW_FAILURE_MS || (error instanceof IndexerSearchException && error.failure === 'timeout');
-      if (!signal.aborted && !knownSlow && hung) {
+      if (!signal.aborted && !query.interactive && !knownSlow && hung) {
         this.slowUntil.set(slowKey, Date.now() + SLOW_SOURCE_COOLDOWN_MS);
       }
       // A source already on its short budget fails the same way on every search until it recovers.

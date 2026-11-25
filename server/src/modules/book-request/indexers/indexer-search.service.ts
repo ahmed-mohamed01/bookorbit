@@ -27,6 +27,7 @@ import { IndexerSearchException, type ReleaseCandidate, type ReleaseQuery, type 
 import { IndexerConfigService } from './indexer-config.service';
 import { IndexerOperationLock, SlotWaitAbortedError } from './indexer-operation-lock';
 import { IndexerRegistry } from './indexer-registry';
+import { findFreshInteractiveResult } from './indexer-search-cache';
 import { releaseInfoHash } from './release-inspection-facts';
 import { ReleaseInspectionFactsRepository } from './release-inspection-facts.repository';
 import { indexerSecrets, withSafeInfoUrl } from './release-info-url';
@@ -79,6 +80,8 @@ export interface IndexerSearchOptions {
   indexerMode?: IndexerSearchMode;
   /** Internal automation source selection. Manual searches leave this omitted. */
   sourceIds?: number[] | null;
+  /** Set by searches a person is waiting on; automation leaves it omitted. */
+  interactive?: boolean;
 }
 
 export type IndexerSearchRequest = Pick<
@@ -114,12 +117,15 @@ export class IndexerSearchService {
       overrides: options.overrides ?? null,
       indexerMode: options.indexerMode ?? 'all',
       sourceIds: options.sourceIds ? [...options.sourceIds].sort((left, right) => left - right) : null,
+      interactive: options.interactive === true,
     });
     const cacheKey = `${request.id}:${searchKey}`;
     const cached = this.cache.get(cacheKey);
     if (!options.refresh && cached?.result && cached.resultExpiresAt > Date.now()) {
       return { ...(await this.withCurrentColors(cached.result)), cached: true };
     }
+    const reused = !options.refresh && options.interactive !== true ? findFreshInteractiveResult(this.cache, cacheKey) : null;
+    if (reused) return { ...(await this.withCurrentColors(reused)), cached: true };
 
     // Counted alongside the resolve rather than derived from it: an empty result has to be able to
     // say whether anything was ever going to be searched, and "no source configured" and "every
@@ -127,7 +133,7 @@ export class IndexerSearchService {
     const [configs, sources] = await Promise.all([this.indexers.resolveEnabledConfigs(), this.indexers.countSources()]);
     const { scoringRequest, availableIsbns } = await this.prepareScoringRequest(request, options.overrides);
     const tiers = scoringRequest.tiers;
-    const query = toQuery(scoringRequest);
+    const query = { ...toQuery(scoringRequest), ...(options.interactive === undefined ? {} : { interactive: options.interactive }) };
 
     // A source that does not carry the requested medium is left out of the search rather than
     // searched and reported: nothing went wrong, no request was ever going to be made, and a

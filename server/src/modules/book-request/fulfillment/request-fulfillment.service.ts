@@ -206,6 +206,7 @@ export class RequestFulfillmentService {
         onProgress,
         refresh: options.refresh,
         overrides,
+        interactive: true,
       });
   }
 

@@ -1585,7 +1585,7 @@ describe('RequestFulfillmentService.listReleases', () => {
     expect(releases.search).not.toHaveBeenCalled();
     const onProgress = vi.fn();
     await search(onProgress);
-    expect(releases.search).toHaveBeenCalledWith(expect.anything(), { refresh: undefined, overrides: undefined, onProgress });
+    expect(releases.search).toHaveBeenCalledWith(expect.anything(), { refresh: undefined, overrides: undefined, onProgress, interactive: true });
   });
 
   it('rejects retired media before starting the search', async () => {
