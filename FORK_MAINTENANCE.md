@@ -1652,7 +1652,7 @@ Measured 2026-11-24 with `git diff -w HEAD --stat` on the uncommitted branch (ad
 | `server/src/modules/book/book-read.service.ts`                                                                                   | `knowledgeEpubFiles` pass-through                                                                                                  | 4 lines   |
 | `server/src/app.module.ts`                                                                                                       | module registration                                                                                                                | 2 lines   |
 | `server/src/config/env.validation.ts`, `server/.env.example`                                                                     | `BOOK_KNOWLEDGE_GLINER_THREADS` (read by the module's own config, not `config.ts`)                                                 | 3 lines   |
-| `server/package.json` (+ lockfile)                                                                                               | `onnxruntime-node`, `tokenizers`, `wink-nlp`, `wink-eng-lite-web-model`                                                            | 4 lines   |
+| `server/package.json` (+ lockfile)                                                                                               | `onnxruntime-node` (1.31.1, see below), `tokenizers`, `wink-nlp`, `wink-eng-lite-web-model`                                        | 4 lines   |
 | `packages/types/src/app-info.ts`, `index.ts`                                                                                     | `book-knowledge` server feature, one export                                                                                        | 3 lines   |
 | `packages/types/src/ai.ts`                                                                                                       | `book-knowledge` in `AI_FEATURES` and `AI_FEATURE_DEFINITIONS` (`perReader: true`)                                                 | 10 lines  |
 | `client/src/features/ai/lib/ai-settings-ui.ts`                                                                                   | `book-knowledge` icon in `FEATURE_ICONS` (and its import)                                                                          | 3 lines   |
@@ -1666,6 +1666,9 @@ and usage label next to upstream's features), `ai.setup-flow.test.ts` (the AI ca
 `reading-help.service.test.ts`: one line each, the `'book-knowledge': defaultFeatureSettings('book-knowledge')`
 entry in their `AiFeatureSettingsMap` literal) and the fork-owned `book-merge-fork-rules.test.ts`
 (`drop-derived` rules and participant).
+
+`onnxruntime-node` stays on the read-aloud worker's version (1.31.1, 2026-11-25). Version 1.24.3
+pulled in `adm-zip` 0.5.18, which fails the image Trivy gate; bump the two together.
 
 Why the five test lines and not a type-level fix: making the key optional in
 `AiFeatureSettingsMap` (`ai-settings.service.ts`) would type every `features[id]` read as possibly
