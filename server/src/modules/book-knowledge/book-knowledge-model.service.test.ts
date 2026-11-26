@@ -14,7 +14,7 @@ import { BookKnowledgeController } from './book-knowledge.controller';
 import type { BookKnowledgeRepository } from './book-knowledge.repository';
 import type { BookKnowledgeService } from './book-knowledge.service';
 import type { BookKnowledgeTermsService } from './book-knowledge-terms.service';
-import { BOOK_KNOWLEDGE_AI_FEATURE, BookKnowledgeModelService } from './book-knowledge-model.service';
+import { BOOK_KNOWLEDGE_AI_FEATURE, bookKnowledgeTuning, BookKnowledgeModelService } from './book-knowledge-model.service';
 import type { BookKnowledgeSettingsService } from './book-knowledge-settings.service';
 import type { Artifact } from './core/model';
 import { ARTIFACT_VERSION, TERMS_VERSION, TEXT_VERSION } from './core/versions';
@@ -236,5 +236,20 @@ describe.each(['card', 'ask'] as const)('Book Knowledge %s route', (route) => {
     raw.emit('close');
     await result;
     expect(raw.listenerCount('close')).toBe(0);
+  });
+});
+
+describe('bookKnowledgeTuning', () => {
+  it('defaults to temperature 1 and keeps the requested effort', () => {
+    expect(bookKnowledgeTuning('gpt-oss-120b', { effort: 'low' })).toEqual({ temperature: 1, effort: 'low' });
+    expect(bookKnowledgeTuning('gpt-oss-120b', {})).toEqual({ temperature: 1 });
+  });
+
+  it('forwards a requested temperature of 0', () => {
+    expect(bookKnowledgeTuning('gpt-oss-120b', { temperature: 0 }).temperature).toBe(0);
+  });
+
+  it('turns reasoning off for a hybrid thinking model', () => {
+    expect(bookKnowledgeTuning('Qwen/Qwen3-235B', { effort: 'low' })).toEqual({ temperature: 1, effort: 'none' });
   });
 });

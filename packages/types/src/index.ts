@@ -126,6 +126,7 @@ export * from "./fork-job-reorder";
 export * from "./bulk-runs";
 export * from "./story-guide-ties";
 export * from "./story-guide-payload";
+export * from "./fork-story-recap";
 export * from "./story-guide";
 export * from "./story-guide-fixes";
 export * from "./setup-overview";

@@ -14,6 +14,7 @@ import { StoryGuideFixesRepository } from './fixes/story-guide-fixes.repository'
 import { StoryGuideFixesService } from './fixes/story-guide-fixes.service';
 import { createStoryGuidePipeline } from './pipeline/create-pipeline';
 import { STORY_GUIDE_PIPELINE } from './pipeline/story-guide-pipeline';
+import { BkPipelineModule, bkStoryGuidePipelineProviders } from '../fork-story-guide/bk-pipeline/bk-story-guide-pipeline.module';
 import { StoryGuideContentController } from './story-guide-content.controller';
 import { StoryGuideEstimator } from './story-guide-estimator.service';
 import { StoryGuideFeature } from './story-guide.feature';
@@ -31,7 +32,7 @@ import { STORY_TEXT_KEY_MOVES, type StoryTextKeyMoves } from './story-text.types
  * once, since story guides are its only feature.
  */
 @Module({
-  imports: [AiModule, AppAttestModule, BookModule, AiJobsModule.register({ imports: [AiModule], ports: AI_JOBS_PORTS_PROVIDER })],
+  imports: [AiModule, AppAttestModule, BookModule, BkPipelineModule, AiJobsModule.register({ imports: [AiModule], ports: AI_JOBS_PORTS_PROVIDER })],
   controllers: [StoryGuidesController, StoryGuidesAdminController, StoryGuideContentController, StoryGuideFixesController],
   providers: [
     AiJobsConnection,
@@ -45,6 +46,7 @@ import { STORY_TEXT_KEY_MOVES, type StoryTextKeyMoves } from './story-text.types
     StoryGuidesService,
     StoryGuidesGateway,
     { provide: STORY_GUIDE_PIPELINE, useFactory: (texts: StoryTextService) => createStoryGuidePipeline(texts), inject: [StoryTextService] },
+    ...bkStoryGuidePipelineProviders,
     {
       provide: STORY_TEXT_KEY_MOVES,
       useFactory: (jobs: AiJobsService, fixes: StoryGuideFixesRepository): StoryTextKeyMoves => ({

@@ -59,6 +59,8 @@ export interface AiStepContext<Subject extends AiSubject = AiSubject> extends Ai
   model: string | null;
   /** A request on the step's slot for this job. A refused or filtered reply leaves the unit out. */
   complete(request: AiStepRequest): Promise<AiResult>;
+  /** Fork hook: what a long unit is doing, written as the job's progress until the unit ends. */
+  progress?(phase: string, done: number, total: number): Promise<void>;
 }
 
 export interface AiAssembleContext<Subject extends AiSubject = AiSubject> extends AiRunContext<Subject> {
@@ -128,6 +130,8 @@ export interface AiFeature<Subject extends AiSubject = AiSubject, Artifact = unk
   check(subject: Subject): Promise<AiRefusal | null>;
   estimate(subject: Subject, reuse: AiEstimateReuse): Promise<AiJobEstimate>;
   assemble(ctx: AiAssembleContext<Subject>): Promise<Artifact>;
+  /** Fork hook: the coverage the artifact itself reports; the engine stores the lower of this and its own. */
+  coverageOf?(artifact: Artifact): number;
   /** Down to an older format, or null when it no longer can. */
   render(artifact: Artifact, format: number): Artifact | null;
   /** Whether the user can still reach what the reference names. */

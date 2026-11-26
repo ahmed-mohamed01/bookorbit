@@ -826,6 +826,30 @@ book-move and scanner paths the slot and flag cascade together.
 
 ## Current conflict surface (semantic, `-w`)
 
+### Book Knowledge as the story guide
+
+Measured with `git diff -w --numstat upstream/main` on 2026-11-26 (36 added, 3 removed, 26 of the added in one test).
+
+| Upstream file                                              | Added | Removed | Hook                                                                                                                                                                        |
+| ---------------------------------------------------------- | ----: | ------: | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `server/src/modules/story-guides/story-guides.module.ts`   |     3 |       1 | Import the fork module and providers, add `BkPipelineModule` to `imports`, and list `...bkStoryGuidePipelineProviders` after upstream's own `STORY_GUIDE_PIPELINE` provider |
+| `server/src/modules/story-guides/story-guides.service.ts`  |     1 |       1 | `statusFor` passes `own.enabled && (await this.feature.buildable?.()) !== false` to `buildReason`, so Build is not offered while Book Knowledge is off                      |
+| `server/src/modules/ai-jobs/ai-feature.ts`                 |     4 |       0 | Optional `progress(phase, done, total)` on `AiStepContext`; optional `coverageOf(artifact)` on `AiFeature`                                                                  |
+| `server/src/modules/ai-jobs/ai-job-runner.service.ts`      |     2 |       1 | `runUnit`'s context passes `progress` to the lease-guarded `AiJobRepository.setProgress`; `assemble` stores `Math.min(coverage, run.feature.coverageOf?.(artifact) ?? 1)`   |
+| `server/src/modules/ai-jobs/ai-job-runner.service.test.ts` |    26 |       0 | A unit's own progress lands between the step's start and its final count; the stored coverage is the lower of the engine's and `coverageOf`'s                               |
+
+The Book Knowledge file-selection hooks in `book.repository.ts` and `book-read.service.ts` are gone: the query is
+`BookKnowledgeRepository.knowledgeFileCandidates`.
+
+### Web Story Guide tab
+
+Measured with `git diff -w --numstat upstream/main` on 2026-11-25. The feature column
+isolates this tab's changes from earlier fork changes in the same files.
+
+| Upstream file                                                   | Feature added / removed | Total added / removed | Hook                                                                  |
+| --------------------------------------------------------------- | ----------------------: | --------------------: | --------------------------------------------------------------------- |
+| `packages/types/src/index.ts`                                   |                   1 / 0 |                13 / 0 | Re-export the fork recap contract                                     |
+
 ### Jobs queue action and request drawer hooks
 
 Measured with `git diff -w upstream/main --numstat`. Totals include the existing fork changes in each file.
@@ -844,6 +868,31 @@ Measured with `git diff -w upstream/main --numstat`. Totals include the existing
 | `client/src/components/AppLayout.vue`                              |     3 |       0 | Keeps the app view keyed to Jobs Activity while the request drawer is open                                      |
 | `client/src/features/book-requests/composables/useRequestQueue.ts` |     1 |       1 | Lets the shared stepper accept Jobs rows adapted to request IDs                                                 |
 | `client/src/locales/en.json`                                       |  2753 |     143 | Grip labels, movement results and per-type Move to top copy, alongside existing fork copy                       |
+
+### Release picker: file panel width and Shelfmark search budget
+
+| Upstream file                                                                     | Added | Removed | Hook                                                                                                                                                         |
+| --------------------------------------------------------------------------------- | ----: | ------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `client/src/features/book-requests/components/ReleaseFileInspectionPanel.vue`     |   141 |      47 | Includes `min-w-0` on the root box so the fork's one-line file names in `ReleaseFileTree.vue` scroll in place instead of widening the release card on phones |
+| `server/src/modules/book-request/indexers/indexer-adapter.ts`                     |    26 |       0 | Optional `ReleaseQuery.interactive`, set when a person is waiting on the search                                                                              |
+| `server/src/modules/book-request/indexers/indexer-config.service.ts`              |     4 |       1 | Reads the fork's standalone timeout and uses the standard indexer settings error for invalid values on save                                                  |
+| `server/src/modules/book-request/indexers/indexer-config.service.test.ts`         |    67 |       0 | Covers timeout resolution, manager precedence, unset values and the save error code on create and update                                                     |
+| `server/src/modules/book-request/indexers/indexer-search.service.ts`              |   217 |      45 | Adds the interactive flag to the existing cache key and adapter query, with a helper for the automatic cache fallback                                        |
+| `server/src/modules/book-request/indexers/indexer-search.service.test.ts`         |   415 |       9 | Covers flag propagation, one-way cache reuse, refresh, expiry and the query used for candidate refresh                                                       |
+| `server/src/modules/book-request/fulfillment/request-fulfillment.service.ts`      |   394 |      48 | `prepareReleaseSearch` marks its search interactive; automation calls `search` directly and leaves it unset                                                  |
+| `server/src/modules/book-request/fulfillment/request-fulfillment.service.test.ts` |   482 |      21 | Checks the release picker passes the interactive flag                                                                                                        |
+
+The fork owns `indexer-search-cache.ts`, `indexer-search-timeout.ts` and their tests
+under `server/src/modules/book-request/indexers/`.
+
+The fork's `shelfmark.adapter.ts` marks slow sources during automatic searches and cuts their
+automatic search budget to 4 seconds. The Requests and Watchlist release pickers and Watchlist
+grab warm-up use the full per-source budget, and their failures leave the slow mark alone.
+Standalone Shelfmark indexers accept 5 to 180 whole seconds on save and default to 20 seconds.
+Picker searches read only their own cache entries. An automatic search without a refresh can
+reuse a fresh picker result for the same request, overrides, indexer mode and source IDs when
+its own result is missing or expired. The fallback derives the picker key from the existing
+cache key by changing its final `interactive` field. This avoids sending another search to private trackers.
 
 ### 2026-11-14 surface shrink after the v3.8.0 merge
 
@@ -928,7 +977,8 @@ are excluded.
 | client `useLibraryCreator.ts`                                                                            | 12                | ABS           | UI registration                                                                                         |
 | `book/book.service.ts` / `book.controller.ts`                                                            | 10 / 8            | ABS           | progress emit for file progress; `BULK_COVER_REFRESHER` seam (was 19)                                   |
 | `authors/authors.module.ts` / `author-enrichment-executor.service.ts`                                    | 9 / 8             | monitored     | export + `allowOrphan` flag                                                                             |
-| `app.module.ts`                                                                                          | 8                 | all           | module registration                                                                                     |
+| `app.module.ts`                                                                                          | 20                | all           | fork module registrations, including `ForkStoryGuideModule` (2 lines)                                   |
+| `position-converter/position-converter.module.ts`                                                        | 1 (1+/1-)         | story guides  | exports `EpubDomService` for the recap route                                                            |
 | `notification/notification.service.ts`                                                                   | 34                | web serials   | `groupKey` passthrough and `upsertByGroupKey` (rewrite a group's newest row in place)                   |
 | `notification/notification.repository.ts`                                                                | 20                | web serials   | `updateLatestByGroupKey`, type taken from `excluded` on the group upsert                                |
 | client `notifications/components/NotificationItem.vue`                                                   | 139               | monitored     | release-available icon and the request action on Watchlist release notifications                        |
@@ -1063,7 +1113,7 @@ SQL, and read or written only through the module-local `pgTable` in
 
 | Shared file                                             | Hook                                                                                                                                                                                                    | Conflict cost                                                                                                                                                                                                   |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `app.module.ts`                                         | register `ReadingAlignmentModule` (the fork registers `AudiobookshelfModule`, `MonitoredModule`, `ReadingAlignmentModule` and `WebSerialsModule`, 8 lines in all)                                       | 2 lines, trivial                                                                                                                                                                                                |
+| `app.module.ts`                                         | register `ReadingAlignmentModule` (20 lines across all fork registrations, including `ForkStoryGuideModule`)                                                                                            | 2 lines, trivial                                                                                                                                                                                                |
 | `reader/epub/epub.service.ts`                           | `extractSpineText()` added (spine text for matching/backfill); Range/ETag/HEAD streaming of EPUB media through `EpubMediaStreamService` (`epub-media-stream.service.ts`, `epub-zip-range.ts`)           | real; generic methods - keep them generic                                                                                                                                                                       |
 | `config/config.ts`                                      | `whisperPath`/`whisperModel`/`ffmpegPath`/`readingAlignment*` on `appConfig`                                                                                                                            | additive                                                                                                                                                                                                        |
 | `achievement-events.service.ts` + `koreader.service.ts` | `occurredAt` (effective activity time) on the progress event                                                                                                                                            | **generic, shared with ABS**, additive/removable - propose upstream                                                                                                                                             |
@@ -1192,6 +1242,9 @@ as expected UI-registration coupling.
   between lease and dispatch leaves `notifiedAt` set and the notification is never retried.
   A stale-lease reaper would close it.
 
+**Release picker.** The Watchlist search routes and the grab route's warm-up mark their indexer
+searches interactive so that Shelfmark uses the full per-source budget.
+
 **Background eligibility.** Every background path that can submit a request on an owner's behalf
 (the fetch job, fetch-event items, follow-ups, the release watcher and its recheck before fan-out,
 and `fanOut` itself) checks `isEligibleMonitoredUser` (`monitored/monitored-user.utils.ts`): the owner
@@ -1217,6 +1270,75 @@ enum members (see the conflict table).
   `canMoveToTop` from the same scope, so the client never offers a move that would change nothing.
 
 **Plugin removal:** unregister `WebSerialsModule` in `app.module.ts`; its tables stay in place, unused.
+
+## Story guide content route for Absorb
+
+`GET /api/v1/story-guide-content/files/:fileId` serves story guide content to Absorb with a login
+token. Absorb cannot attest, so this route skips App Attest and still refuses API keys. It calls
+`StoryGuidesService.content` for book access checks, format selection and reader fixes.
+
+The route sends the body and ETag returned by `StoryGuidesService.content` as is, including any
+chronicle stored in the guide. It passes `If-None-Match` through and sends a bodyless 304 when the
+service reports a match.
+
+`GET /api/v1/story-guide-content/files/:fileId/recap?stop=0|1` uses the current user's saved EPUB
+progress to return visible summaries and, by default, a reading-help recap. It reads chapter text
+through the exported `EpubDomService` and sends one passage ending at the saved position to
+`ReadingHelpService.answer`. Reading-help availability and provider failures are reported in
+`stop` so the visible summaries can still be served. Absorb sends `stop=0` to skip the answer
+when it already has one for the saved position. The recap route is throttled to 60 requests a
+minute, like upstream's mobile reading-help route. A current-chapter summary is shown only when every
+copy of its quote lies before the saved position, and the position's chapter title is the nearest
+titled section at or before it.
+
+**Owned (fork-only) files:** `server/src/modules/fork-story-guide/`.
+
+**Plugin removal:** unregister `ForkStoryGuideModule` in `app.module.ts` (one import and one entry).
+
+## Web Story Guide tab overlay
+
+The book detail page offers Story Guide after Chapters whenever the server offers story guides
+(`story-guides` supported and served or building), whatever the book's files; with the feature off the
+tab stays hidden and a `?tab=story-guide` link falls back to Details. A book without an EPUB, KEPUB,
+MOBI, AZW3 or AZW content file gets `StoryGuideTabUnavailable.vue` instead of the guide: the not-built
+panel's look without buttons, and no status, guide or recap request. `storyGuideUnavailable` picks the
+first reason that applies: audio only, any comic archive, other formats (named in the text), or no
+content files. `StoryGuideTab.vue` chooses between that panel and `StoryGuideTabContent.vue`. Reading a guide needs no permission; building, Update and the
+actions menu stay behind `library_generate_story_guide`. The tab uses the card's status API for
+source-file selection, build status and Update (people without the build permission get a single
+status read instead of the card's polling). The tab no longer renders upstream's `StoryGuideCard`:
+`StoryGuideTabState.vue` draws not built, building, queued, paused and failed jobs itself (a centered
+panel without a guide, a slim bar above it with one) from the same `useStoryGuideStatus` presentation,
+`perform` and `StoryGuideConfirmDialog` confirmations, and the tab's menu keeps the guide's own
+actions while job controls sit on the bar. The Timeline merges chronicle notes that repeat one
+event per entity (same quote anchor, or the same text after whitespace collapse, within a chapter)
+into one item carrying every entity's chip. It loads format 1 from the existing
+fork content route and asks the recap route for a quote cut with `stop=0` before requesting a
+Reading help recap with `stop=1`. Revalidation on book progress events keeps the rendered cut
+until the new one arrives, including when a re-read moves the position backward; a backward move
+drops the recap's stop label, and an older recap says where it was written. The stop text is kept only
+on a strictly later percentage or the same CFI at the same percentage. An event that arrives while the
+cut or a recap loads is held and applied once they settle, and a newer event aborts an older read. While a job runs the tab
+lists five steps (Reading the book, Finding names, Checking who's who, Writing descriptions, Finishing up)
+from the job's phase, with minutes left once Writing descriptions can estimate it. Previously shows the last four
+chapters with an "All chapters" button, and the Timeline the latest ten chapters with "Show earlier
+chapters", so a long series stays bounded. Ties show the chronicle's pair note for the two names,
+else the quote, both inside the cut. The constellation draws at most 120 links, strongest first.
+
+The recap uses the current user's EPUB CFI on the guide's own source file (progress on another file of
+the book does not move the cut) and returns the spine index and original quotes whose
+last whitespace-collapsed match ends before or at the saved offset. The tab applies this to
+names, profiles, joins, summaries, chronicle notes, ties and co-mentions. Chapter titles remain
+visible at every position. Spine sections are grouped into chapters: a titled section starts a
+chapter, untitled sections join the one before, and untitled sections before the first title form
+an "Opening" group. Every label uses the chapter title, never a spine number; recap `previously`
+rows carry their spine index `s` so the tab can group them. Upstream format 1 guides work with
+their available fields.
+
+**Owned (fork-only) files:** `client/src/features/story-guide-tab/` and
+`packages/types/src/fork-story-recap.ts`. The cut extends the existing
+`server/src/modules/fork-story-guide/` recap route. The hooks above register the web surface.
+Disabling the page's availability provider falls back to Details, preserving the original card.
 
 ## Storyteller read-along overlay (removed 2026-10-28, upstream v3.6.0 merge)
 
@@ -1546,16 +1668,17 @@ touched: `ForkSettings.vue` (the section), `fork-settings-nav.ts` (search keywor
 
 ## Book Knowledge overlay (in progress, branch `claude/book-knowledge-v2`)
 
-Spoiler-safe term lists, evidence passages, cards and questions for EPUBs, cut at the reader's
-position, plus an admin-run X-Ray build. Ported on 2026-11-20 from the `claude/concept-index`
+Spoiler-safe term lists, evidence passages, cards and questions, cut at the reader's position,
+plus an admin-run X-Ray build. Ported on 2026-11-20 from the `claude/concept-index`
 worktree onto `monitored` after the v3.9.0 merge. The index builds without the GLiNER model (plain
 mode); GLiNER is planned to move to its own worker container, so the in-server ONNX code is
 temporary. The main image stays on Alpine.
 
 **Index lifecycle.** One index row per book in `book_knowledge_index`; the artifact (gzip JSON)
-lives under `APP_DATA_PATH/book-knowledge/<bookId>/<fingerprint>/`. The fingerprint is
-sha256(`fileHash:size`) of the primary EPUB, or sha256(`nohash:size:mtimeMs`) when the file has no
-hash, so the file is never read to fingerprint it. A changed fingerprint makes the row stale and
+lives under `APP_DATA_PATH/book-knowledge/<bookId>/<fingerprint>/`. Book Knowledge uses upstream's
+`storyGuideFiles` ranking to choose the same file as the Story guide card. The fingerprint is
+sha256(`fileHash:size`) of that file, or sha256(`nohash:size:mtimeMs`) when it has no hash, so the
+file is never read to fingerprint it. A changed fingerprint makes the row stale and
 queues a rebuild; there is no `book_files` delete trigger (bootstrap SQL drops the old one), and
 `cleanup()` removes directories whose fingerprint is no longer current (all of them once the row is
 gone), one book at a time. A
@@ -1592,14 +1715,16 @@ separate pair or tie-type step. A unit launches once the unit `DENSE_UNIT_WINDOW
 it is processed, with at most 8 hosted calls in flight. Each entry's description follows its tier
 (main, supporting, minor) with one hard cap of 100 words (`xray/xray-tiers.ts`); descriptions and
 `now` lines that name someone their evidence never names are dropped. A run has a mode, fiction or
-nonfiction, from `dc:subject` unless the run's `mode` overrides it. `dryRun: true` only plans and
-estimates. Finished answers are kept in `xray-units.jsonl.gz` beside the artifact, keyed by
-fingerprint, prompt version, model and request hash, and replayed by later runs; a cut or corrupt
-file is marked damaged and rewritten on the first save. Each run has one `AbortController`: on
+nonfiction, from EPUB subjects or Kindle catalog genres unless the run's `mode` overrides it.
+`dryRun: true` only plans and estimates. Finished answers are kept in `xray-units.jsonl.gz` beside
+the artifact, keyed by fingerprint, prompt version, model and request hash, and replayed by later
+runs. A cut or corrupt file is marked damaged and rewritten on the first save. Each run has one
+`AbortController`: on
 failure or cancel every launched call is aborted, the store is closed so no late answer lands, and
-the guard is released only after all calls settle. A whole-book, non-dry run also writes
-`xray-payload.json.gz` beside the artifact; the reader route `GET books/:bookId/knowledge/xray`
-(`@ResolvesMergedBook`, book access only, like upstream's story guide) returns it, 404 when absent.
+the guard is released only after all calls settle. Bench payloads live in memory with their runs.
+The reader route `GET books/:bookId/knowledge/xray` (`@ResolvesMergedBook`) serves the format 1
+story-guide row for the selected Book Knowledge file using upstream's book access checks.
+It returns 404 unless the selected file has a stored guide with a `links` array.
 The payload is position-stamped; the viewer cuts it client-side. It reuses upstream's
 `NAMES_SYSTEM`, `LINES_SYSTEM`, `TIES_SYSTEM`, `SUMMARIES_SYSTEM`, line checks, name-word lists,
 `storyGuideTieType`, `flattenWithOffsets` and `readBookText` by import, without editing them. The
@@ -1624,19 +1749,20 @@ migration; its own `book-knowledge.config.ts` for `BOOK_KNOWLEDGE_GLINER_THREADS
 `server/scripts/book-knowledge-*`, `server/scripts/gliner-parity.*`,
 `client/src/features/book-knowledge/`, `packages/types/src/book-knowledge.ts`.
 
-Measured 2026-11-24 with `git diff -w HEAD --stat` on the uncommitted branch (added + removed):
-17 upstream source files, 91 lines.
+Initial overlay measured 2026-11-24 with `git diff -w HEAD --stat` on the uncommitted branch
+(17 upstream source files, 91 lines added + removed). On 2026-11-25 the two file-selection hooks in
+`book.repository.ts` and `book-read.service.ts` moved into `BookKnowledgeRepository.knowledgeFileCandidates`,
+following upstream's `StoryGuidesRepository`, which also reads book tables from its own repository. Both upstream
+files are back to upstream for Book Knowledge; `book-read.service.ts` keeps 5 added lines for the separate edition sync hook.
 
 | Upstream file                                                                                                                    | Hook                                                                                                                               | Footprint |
 | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------- |
 | `client/.../reader/ReaderView.vue`                                                                                               | import, template ref, `trackingEnabled` line, `closeAnyPanel` branch, toggle, render host                                          | 27 lines  |
 | `client/.../epub/components/ReaderHeader.vue`                                                                                    | `knowledgeAvailable` prop, `toggleKnowledge` emit and button                                                                       | 14 lines  |
 | `client/src/features/tts/TtsAdminSettings.vue`                                                                                   | admin settings section behind the `book-knowledge` feature flag                                                                    | 5 lines   |
-| `server/src/modules/book/book.repository.ts`                                                                                     | `findKnowledgeEpub` (primary content EPUB for a book)                                                                              | 10 lines  |
-| `server/src/modules/book/book-read.service.ts`                                                                                   | `knowledgeEpubFiles` pass-through                                                                                                  | 4 lines   |
 | `server/src/app.module.ts`                                                                                                       | module registration                                                                                                                | 2 lines   |
 | `server/src/config/env.validation.ts`, `server/.env.example`                                                                     | `BOOK_KNOWLEDGE_GLINER_THREADS` (read by the module's own config, not `config.ts`)                                                 | 3 lines   |
-| `server/package.json` (+ lockfile)                                                                                               | `onnxruntime-node`, `tokenizers`, `wink-nlp`, `wink-eng-lite-web-model`                                                            | 4 lines   |
+| `server/package.json` (+ lockfile)                                                                                               | `onnxruntime-node` (1.31.1, see below), `tokenizers`, `wink-nlp`, `wink-eng-lite-web-model`                                        | 4 lines   |
 | `packages/types/src/app-info.ts`, `index.ts`                                                                                     | `book-knowledge` server feature, one export                                                                                        | 3 lines   |
 | `packages/types/src/ai.ts`                                                                                                       | `book-knowledge` in `AI_FEATURES` and `AI_FEATURE_DEFINITIONS` (`perReader: true`)                                                 | 10 lines  |
 | `client/src/features/ai/lib/ai-settings-ui.ts`                                                                                   | `book-knowledge` icon in `FEATURE_ICONS` (and its import)                                                                          | 3 lines   |
@@ -1651,12 +1777,138 @@ and usage label next to upstream's features), `ai.setup-flow.test.ts` (the AI ca
 entry in their `AiFeatureSettingsMap` literal) and the fork-owned `book-merge-fork-rules.test.ts`
 (`drop-derived` rules and participant).
 
+`onnxruntime-node` stays on the read-aloud worker's version (1.31.1, 2026-11-25). Version 1.24.3
+pulled in `adm-zip` 0.5.18, which fails the image Trivy gate; bump the two together.
+
 Why the five test lines and not a type-level fix: making the key optional in
 `AiFeatureSettingsMap` (`ai-settings.service.ts`) would type every `features[id]` read as possibly
 undefined and need guards at four non-test upstream sites (`ai-budget.service.ts` twice,
 `ai-admin.service.ts` twice), a larger and riskier footprint than five test-literal lines. On a merge
 that touches those literals, keep the entry; if a test literal is rewritten to spread over
 `AI_FEATURES`, drop it.
+
+## Book Knowledge as the story guide
+
+Build and Update on the Story guide card run Book Knowledge (BK) through upstream's AI job engine.
+The pipeline has one `bk` step on the `fast` slot and one unit per book. The runner waits for the
+BK index and a shared build slot, honours job cancellation and reuses the BK unit cache within one
+job generation: the runner passes `String(ctx.job.generation)` as `buildForStoryGuide`'s `replayScope`,
+which joins every stored answer's request hash, so Continue, Retry and Update replay while Rebuild asks
+the model again (old-generation answers stay in the unit file; the bench passes no scope). Build
+calls go through `ctx.complete`, so the job's recorded model, cost tracking and story-guide budget
+apply. The admin bench runs independently of the job engine and shares the build code.
+
+**Switches.** `BkStoryGuideFeature` extends upstream's `StoryGuideFeature` and is provided under its token
+after upstream's provider (the later provider wins, as for the estimator). Its `check` refuses with `off`
+while BK's own switch or its AI feature row is off, and with `unreadable` for a file BK does not build
+from; otherwise it calls upstream's `check`. The engine therefore never creates or retries such a job.
+The runner keeps its own checks for jobs queued before a switch changed. A pause with `off` was rejected:
+`AiJobPauses.blocker` only reads the story-guide switch, so the minute sweep would resume and re-pause the
+job forever. For the status, the subclass implements `buildable()`, declared as an optional member of
+`StoryGuideFeature` by module augmentation in `bk-story-guide-feature.ts`; upstream's `statusFor` reads it
+in one line, so Build is not offered (reason `off`) while BK is off. The card and the tab then show
+upstream's "story guides are turned off" copy, since the status cannot tell the two switches apart.
+
+**Build progress.** `AiStepContext` carries an optional `progress(phase, done, total)` that `runUnit` passes
+to the lease-guarded `AiJobRepository.setProgress` (a write after pause, cancel or takeover is a no-op).
+BK's `buildForStoryGuide` takes an optional `onProgress(stage, done, total)`: `kinds` per review batch,
+`alias` before the dense pass, `dense` from `runDense`'s `onUnit` (0 of n, then after each unit), and
+`finish`. `BkStoryGuideProgress` maps these onto upstream's phase names (`text` and `names` from the index
+wait, `review`, `lines`, `assemble`), writes a phase change at once, the same phase at most once a second
+and the last unit always, and skips a write equal to the last one (the index poll repeats itself). The newest
+dropped value lands when the second is up, on an unref'd timer, and `settled()` flushes it before the build
+returns, so no timer outlives the build. Writes are chained in order and a failed write is swallowed. Upstream's card, the Jobs
+page and the tab read the same phases. Minutes left is timed in memory by the running build from its last
+four description chunks, shown only in `lines` after three chunks; another server answering the poll
+shows none. Only the one-unit `bk` step may call `progress`: a step with parallel units would fight the
+engine's own counter. The two BK hooks (`onUnit` in `xray/dense/dense-run.ts`, `onProgress` in
+`book-knowledge-xray.service.ts`) belong to the Book Knowledge session's files; keep them on rebase.
+
+**Coverage.** The engine sees one unit, so its 0.9 floor never fires; BK measures its own.
+`buildForStoryGuide` lowers the payload's `coverage` to the lowest share of units that returned a valid
+answer over `BK_COVERAGE_STEPS` (kinds, notes, facts, describe, ties; an empty alias, now or about result is
+normal), counting only steps with at least `BK_COVERAGE_MIN_UNITS` (10) units, both exported from
+`book-knowledge-xray.service.ts`. A refused or filtered unit is skipped after one try and counts against
+it. The runner fails the job as `low-coverage` below `AI_JOBS_MIN_COVERAGE`, so the stored guide is kept.
+Assembly uses the lower of the engine's and BK's coverage, falls back to engine coverage for missing or
+non-finite cached BK coverage, and clamps the payload coverage to [0, 1]. The engine writes
+`ai_artifacts.coverage`, which the status, the card's "whole book" label, the admin list and the
+`completed` activity read, so `AiFeature` has an optional `coverageOf(artifact)` hook: the runner stores
+`Math.min(coverage, run.feature.coverageOf?.(artifact) ?? 1)`, and `BkStoryGuideFeature.coverageOf` returns the
+payload's finite `coverage` clamped to [0, 1], or 1 when it is missing or non-finite. The hook can only
+lower the engine's value and is inert for a feature without it. A build's `[book_knowledge.xray]` log
+reports a pause or the job's abort as `[end] outcome=paused|cancelled`, not `[fail]`.
+
+**Source and estimates.** BK indexes the file upstream's card picks and rejects jobs for another
+file of the same book. `buildForStoryGuide` takes the job's `fileId` and fails as `unreadable` when the
+file it resolves after the index wait and build slot is another one, so a guide never lands under the
+wrong text key. The job path reads `context` with `required = false`, so a switch to a file without a ready
+index still reports `unreadable`. If the source lookup throws a `BadRequestException`, the job reports
+`unreadable` with the exception's message. The same file without an artifact fails as `error`. Bench builds
+and plans propagate source errors and require a ready index. EPUB and KEPUB retain the existing extractor.
+MOBI, AZW3 and AZW use upstream's `readBookText` with BK sentence splitting. Estimates use a dry-run plan when the index is
+ready. Planning reads the index without queueing it or taking the build slot. A failed plan (no BK
+model, say) is kept for `BK_PLAN_FAILURE_TTL_MS` and answered as already failed, so status polls neither
+retry it nor log it again. When planning is unavailable, `BkStoryGuideEstimator` prices upstream's estimate across the `fast`-slot entries of
+`STORY_GUIDE_STEP_COSTS` (BK runs on Fast only, so an unpriced Careful slot cannot null the quote) at `BK_ESTIMATE_FALLBACK_FACTOR` (1, measured on one live build; figures beside the constant) and
+preserves unknown values. Upstream's `StoryGuideFeature.estimate` reaches it through the swapped
+`StoryGuideEstimator` token, so the pipeline carries no estimate hook. The `bk` step fingerprint
+leaves out `BK_PAYLOAD_VERSION`: a payload bump only re-assembles from the cached `bk` result.
+
+**Storage and serving.** The engine stores the format 1 result in the usual story-guide
+`ai_artifacts` row under upstream's `textKey`. Assembly projects chronicle `about` entries into
+`profiles` for entities and joins, retains BK extras such as `chronicle` and `links`, and sets
+`chronicle.basis` to `builtAt`. The mobile, Absorb and BK reader routes read the same row. Older
+upstream guides remain readable by mobile and Absorb until rebuilt. The BK pipeline name marks
+those guides as eligible for Update. At serve time `rewriteBkExtras` runs after upstream applies
+reader fixes. It updates `about` from the fixed profiles and reconciles chronicle keys, pairs and
+links. Fixes keyed to old upstream entities may become orphans after a BK rebuild. The rewrite runs in
+the three fork readers (Absorb content route, recap, BK reader) through `bkGuideContent`, after
+`StoryGuidesService.content` returns, so upstream's service is untouched. The ETag comes from the stored
+hash and the fixes revision, so rewriting the body keeps conditional requests right. Upstream's own mobile
+route serves the fixed guide without the extras rewrite; it does not read the extras.
+
+**Versions.** `BK_PROMPT_VERSION` joins the six BK versions it depends on, each padded to two digits, so
+any bump changes it and two changes never cancel out. A part of 100 or more throws at load. Indexes for
+MOBI, AZW3 and AZW mark as `body` only the sentences inside upstream's `storySections` (the rest is
+`front` before the first story section, `other` after); ordinals and spine bytes still cover every linear
+section. `TEXT_VERSION` was not bumped: Kindle indexes did not exist before this branch, and a bump would
+mark every EPUB index stale. Delete Kindle index rows built before this change by hand.
+
+**Index wait.** A job waits up to `BK_INDEX_TIMEOUT_MS` (45 minutes) for the BK index while holding one
+of the engine's build slots. Behind a long BK index queue that slot is idle; a queue-position check is a
+later change.
+
+**Plugin removal:** in `story-guides.module.ts`, drop the fork import, `BkPipelineModule` from `imports` and
+`...bkStoryGuidePipelineProviders`; revert the `buildable` line in `story-guides.service.ts` and the
+`progress` and `coverageOf` hooks in `ai-feature.ts` and `ai-job-runner.service.ts` (optional, harmless if kept); then
+unregister `ForkStoryGuideModule`. This is an accepted exception to rule 7: upstream's story guides
+module imports fork code directly, as the spec approved, so unregistering the fork module alone leaves
+the BK pipeline live.
+
+**Owned (fork-only) files:** `server/src/modules/fork-story-guide/bk-pipeline/` owns the pipeline,
+runner, estimator, assembly and extras rewrite. `server/src/modules/book-knowledge/` owns the index,
+source selection and shared X-Ray build. `server/src/modules/fork-story-guide/bk-xray-reader.controller.ts`
+serves the BK panel and, like the fork content route, is `@InteractiveOnly()`. The upstream hooks are listed in the current conflict surface above.
+
+**After an upstream merge:**
+
+1. Check `storyGuidePipelineName` and its arguments. The BK step and assembly versions must feed
+   the same name used for the stored pipeline and the card's Update check.
+2. Check `STORY_GUIDE_STEP_COSTS` and the `StoryGuideEstimator` constructor, `estimate` and
+   `minutesLeft` signatures. The fallback uses the upstream costed steps on the `fast` slot. Keep
+   `...bkStoryGuidePipelineProviders` after upstream's `StoryGuideEstimator` in the module's
+   `providers` array so `BkStoryGuideEstimator` wins that token. The guard in
+   `bk-story-guide-pipeline.module.test.ts` pins this ordering and wiring.
+3. Check `StoryGuidesService.content` and `fixes.apply` signatures. Keep the extras rewrite after
+   reader fixes (`bkGuideContent`), and verify the three fork readers still use the service's access
+   checks and return its body. Recheck ETag and conditional responses on the Absorb route.
+4. Check `StoryGuideFeature`'s constructor and `check`: `bkStoryGuidePipelineProviders` builds the
+   subclass with the same arguments, and `statusFor` still passes `buildable` into `buildReason`.
+5. Confirm `AiStepContext` and `runUnit`'s context literal still carry `progress`, that `assemble` still
+   stores the lower of its coverage and `coverageOf`, and that
+   `storyGuidePhase` still maps `text`, `names`, `review`, `lines` and `assemble`. If upstream adds its
+   own in-unit progress, delete ours and adapt `BkStoryGuideProgress`.
 
 ## Remote read-aloud worker: local work folders
 

@@ -1871,16 +1871,6 @@ export class BookRepository {
     await this.db.update(books).set({ primaryFileId, updatedAt: new Date() }).where(eq(books.id, bookId));
   }
 
-  findKnowledgeEpub(bookId: number) {
-    return this.db
-      .select({ id: bookFiles.id, absolutePath: bookFiles.absolutePath, fileHash: bookFiles.fileHash })
-      .from(bookFiles)
-      .innerJoin(books, eq(books.id, bookFiles.bookId))
-      .where(and(eq(bookFiles.bookId, bookId), eq(bookFiles.role, 'content'), sql`lower(${bookFiles.format}) = 'epub'`))
-      .orderBy(sql`CASE WHEN ${bookFiles.id} = ${books.primaryFileId} THEN 0 ELSE 1 END`, asc(bookFiles.sortOrder), asc(bookFiles.id))
-      .limit(1);
-  }
-
   async findFilesForBook(bookId: number) {
     return this.db
       .select({

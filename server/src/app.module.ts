@@ -106,6 +106,7 @@ import { BookMoveModule } from './modules/book-move/book-move.module';
 import { MonitoredModule } from './modules/monitored/monitored.module';
 import { ReadingAlignmentModule } from './modules/reading-alignment/reading-alignment.module';
 import { WebSerialsModule } from './modules/web-serials/web-serials.module';
+import { ForkStoryGuideModule } from './modules/fork-story-guide/fork-story-guide.module';
 import { AudiobookModule } from './modules/audiobook/audiobook.module';
 import { ChapterEditorModule } from './modules/chapter-editor/chapter-editor.module';
 import { ChapterHealthModule } from './modules/chapter-health/chapter-health.module';
@@ -252,6 +253,7 @@ import { BulkRunsModule } from './modules/bulk-runs/bulk-runs.module';
     MonitoredModule,
     ReadingAlignmentModule,
     WebSerialsModule,
+    ForkStoryGuideModule,
     AppAttestModule,
     ReadAloudModule,
     EditionSyncModule,

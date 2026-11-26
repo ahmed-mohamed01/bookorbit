@@ -1,23 +1,22 @@
-import {
-  BadRequestException,
-  ConflictException,
-  Injectable,
-  InternalServerErrorException,
-  Logger,
-  NotFoundException,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { dirname, join } from 'node:path';
-import { type BookKnowledgeXrayMode, type BookKnowledgeXrayPayload, type BookKnowledgeXrayRun, type StoryGuideSectionInfo } from '@bookorbit/types';
+import {
+  type BookKnowledgeXrayEstimate,
+  type BookKnowledgeXrayMode,
+  type BookKnowledgeXrayPayload,
+  type BookKnowledgeXrayRun,
+  type BookKnowledgeXrayStep,
+  type BookKnowledgeXrayStepId,
+  type StoryGuideSectionInfo,
+} from '@bookorbit/types';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import type { RequestUser } from '../../common/types/request-user';
-import { AiError, type AiEffort, type AiResult, type AiSlotChoice } from '../ai/ai-client.types';
+import { AiError, isAiError, type AiEffort, type AiResult, type AiSlotChoice as AiModelChoice } from '../ai/ai-client.types';
+import { AiJobFailure, AiJobPause } from '../ai-jobs/ai-feature';
 import { BookReadService } from '../book/book-read.service';
 import { readBookText } from '../story-guides/text/book-text-reader';
 import { BookKnowledgeModelService, CLASSIFY_TEMPERATURE } from './book-knowledge-model.service';
 import { BookKnowledgeService } from './book-knowledge.service';
-import { readGzipJson, writeGzipJsonAtomic } from './core/artifact';
 import { fractionToOrdinal } from './core/cutoff';
 import { readEpubMetadata } from './core/epub-metadata';
 import {
@@ -47,13 +46,13 @@ import { linkCheckpoints } from './xray/xray-links';
 import { modeFromSubjects } from './xray/xray-mode';
 import { xrayPayload } from './xray/xray-payload';
 import { estimate } from './xray/xray-plan';
-import { capped, inOrder, limiter, XrayPrivacy, XrayRunCalls, XrayStepRun } from './xray/xray-runner';
+import { capped, inOrder, limiter, retryable, XrayPrivacy, XrayRunCalls, XrayStepRun } from './xray/xray-runner';
 import { replayable, XrayUnitStore } from './xray/xray-unit-store';
+import { XraySlot } from './xray/xray-slot';
 
 const KEPT_RUNS = 4;
 const RUN_PREFIX = 'bk-xray-';
 const XRAY_EFFORT: AiEffort = 'low';
-const PAYLOAD_FILE = 'xray-payload.json.gz';
 const CANCELLED = 'cancelled';
 
 interface StoredRun {
@@ -68,15 +67,35 @@ interface BuildInput {
   run: BookKnowledgeXrayRun;
   artifact: Artifact;
   fingerprint: string;
-  epubPath: string;
-  fast: AiSlotChoice;
+  bookPath: string;
+  fast: AiModelChoice;
+  complete: XrayCompleter;
   dryRun: boolean;
   /** Ignore the stored answers of earlier builds, so a bench run measures every call. */
   fresh: boolean;
+  /** Part of every stored answer's key, so a new scope (a rebuilt job's generation) asks the model again. */
+  replayScope?: string;
+  onProgress?: XrayBuildProgress;
 }
 
+export type XrayBuildStage = 'kinds' | 'alias' | 'dense' | 'finish';
+/** What a build is doing; synchronous and must not throw. */
+export type XrayBuildProgress = (stage: XrayBuildStage, done: number, total: number) => void;
+
+/** With no signal on this request, in-flight job calls settle after a pause and their answers are dropped. */
+export type XrayCompleter = (request: {
+  use: AiModelChoice;
+  system: string;
+  user: string;
+  maxOutputTokens: number;
+  effort?: AiEffort;
+  temperature?: number;
+}) => Promise<AiResult>;
+
+type XrayRunOptions = { through?: number; dryRun?: boolean; mode?: BookKnowledgeXrayMode; fresh?: boolean };
+
 type AskWith = (
-  use: AiSlotChoice,
+  use: AiModelChoice,
   system: string,
   user: string,
   maxOutputTokens: number,
@@ -87,6 +106,21 @@ type AskWith = (
 /** Hosted calls in flight at once in a dense run. */
 const DENSE_CONCURRENCY = 8;
 
+/** The steps whose skipped units lower a story guide build's coverage; an empty alias, now or about result is normal. */
+export const BK_COVERAGE_STEPS: readonly BookKnowledgeXrayStepId[] = ['kinds', 'notes', 'facts', 'describe', 'ties'];
+/** A step with fewer units is left out of coverage: one refused batch of a handful would fail an otherwise sound build. */
+export const BK_COVERAGE_MIN_UNITS = 10;
+
+/** The lowest share of units that returned a valid answer over the counted steps; 1 when none is counted. */
+export function storyGuideCoverage(steps: readonly BookKnowledgeXrayStep[]): number {
+  let coverage = 1;
+  for (const step of steps) {
+    if (!BK_COVERAGE_STEPS.includes(step.step) || step.units < BK_COVERAGE_MIN_UNITS) continue;
+    coverage = Math.min(coverage, (step.units - step.skipped) / step.units);
+  }
+  return coverage;
+}
+
 /**
  * The X-Ray build: Book Knowledge's entities without a model, then the dense pass in chunks through upstream's
  * AI client on the fast slot. One build at a time; runs are kept in memory for the admin and bench routes.
@@ -95,7 +129,7 @@ const DENSE_CONCURRENCY = 8;
 export class BookKnowledgeXrayService {
   private readonly logger = new Logger(BookKnowledgeXrayService.name);
   private readonly runs = new Map<string, StoredRun>();
-  private active: string | null = null;
+  private readonly slot = new XraySlot();
 
   constructor(
     private readonly knowledge: BookKnowledgeService,
@@ -103,43 +137,135 @@ export class BookKnowledgeXrayService {
     private readonly model: BookKnowledgeModelService,
   ) {}
 
-  async start(
-    bookId: number,
-    user: RequestUser,
-    options: { through?: number; dryRun?: boolean; mode?: BookKnowledgeXrayMode; fresh?: boolean } = {},
-  ): Promise<BookKnowledgeXrayRun> {
-    if (this.active) throw new ConflictException('An X-Ray build is already running');
-    const runId = `${RUN_PREFIX}${randomUUID()}`;
-    // Taken before the first await, so a second start in the same moment cannot pass the check too.
-    this.active = runId;
-    let stored: StoredRun;
-    let input: BuildInput;
+  async start(bookId: number, user: RequestUser, options: XrayRunOptions = {}): Promise<BookKnowledgeXrayRun> {
+    if (this.slot.busy()) throw new ConflictException('An X-Ray build is already running');
+    const release = await this.slot.acquire();
     try {
-      ({ stored, input } = await this.prepare(runId, bookId, user, options));
+      const jobId = randomUUID();
+      const abort = new AbortController();
+      const fast = await this.model.choice('fast');
+      if (!fast) throw new ServiceUnavailableException('Book Knowledge model is not configured');
+      const { stored, input } = await this.prepare(bookId, user, {
+        ...options,
+        runId: `${RUN_PREFIX}${jobId}`,
+        abort,
+        fast,
+        // The usage ledger joins AI jobs on a UUID, so it gets the ID without the bench prefix.
+        complete: (request) => this.model.complete({ ...request, jobId, signal: abort.signal }),
+      });
+      this.keep(stored);
+      void this.build(input)
+        .catch(() => undefined)
+        .finally(release);
+      return stored.run;
     } catch (error) {
-      this.active = null;
+      release();
       throw error;
     }
-    this.keep(stored);
-    void this.build(input).finally(() => {
-      if (this.active === runId) this.active = null;
+  }
+
+  async planEstimate(bookId: number, user: RequestUser): Promise<BookKnowledgeXrayEstimate> {
+    const fast = await this.model.choice('fast');
+    if (!fast) throw new ServiceUnavailableException('Book Knowledge model is not configured');
+    const { input } = await this.prepare(bookId, user, {
+      runId: `${RUN_PREFIX}${randomUUID()}`,
+      abort: new AbortController(),
+      fast,
+      complete: () => Promise.reject(new AiJobFailure('error', 'A dry run makes no model calls')),
+      dryRun: true,
     });
-    return stored.run;
+    await this.build(input);
+    if (!input.run.estimate) throw new AiJobFailure('error', 'X-Ray plan returned no estimate');
+    return input.run.estimate;
+  }
+
+  /** The payload's coverage is the lower of the book share read and the counted steps' answered share. */
+  async buildForStoryGuide({
+    bookId,
+    fileId,
+    user,
+    complete,
+    signal,
+    use,
+    replayScope,
+    onProgress,
+  }: {
+    bookId: number;
+    /** The file the job was started for; a build that would read another one fails as unreadable. */
+    fileId: number;
+    user: RequestUser;
+    complete: XrayCompleter;
+    signal: AbortSignal;
+    use: AiModelChoice;
+    replayScope?: string;
+    onProgress?: XrayBuildProgress;
+  }): Promise<BookKnowledgeXrayPayload> {
+    const release = await this.slot.acquire(signal);
+    const abort = new AbortController();
+    let run: BookKnowledgeXrayRun | undefined;
+    const cancel = () => {
+      // The engine aborts a paused, cancelled or lost job alike; none of them is a failed build.
+      if (run?.status === 'running') run.error = CANCELLED;
+      abort.abort(signal.reason);
+    };
+    signal.addEventListener('abort', cancel, { once: true });
+    try {
+      signal.throwIfAborted();
+      const { input } = await this.prepare(bookId, user, {
+        runId: `${RUN_PREFIX}${randomUUID()}`,
+        abort,
+        fast: use,
+        // The job engine replaces use with its recorded model, so the cap rides on request.maxOutputTokens.
+        complete,
+        fileId,
+        replayScope,
+        onProgress,
+      });
+      run = input.run;
+      const payload = await this.build(input);
+      abort.signal.throwIfAborted();
+      if (!payload) throw new AiJobFailure('error', 'X-Ray build returned no payload');
+      return { ...payload, coverage: Math.min(payload.coverage, storyGuideCoverage(input.run.steps)) };
+    } catch (error) {
+      const failure: unknown = abort.signal.aborted ? abort.signal.reason : error;
+      if (
+        (signal.aborted && Object.is(failure, signal.reason)) ||
+        failure instanceof AiJobPause ||
+        failure instanceof AiJobFailure ||
+        (failure instanceof Error && failure.name === 'AbortError') ||
+        isAiError(failure)
+      ) {
+        throw failure;
+      }
+      const message = failure instanceof Error ? failure.message.replace(/\s+/g, ' ').trim().slice(0, 200) : '';
+      throw new AiJobFailure('error', message || 'X-Ray build failed');
+    } finally {
+      signal.removeEventListener('abort', cancel);
+      release();
+    }
   }
 
   private async prepare(
-    runId: string,
     bookId: number,
     user: RequestUser,
-    options: { through?: number; dryRun?: boolean; mode?: BookKnowledgeXrayMode; fresh?: boolean },
+    options: XrayRunOptions &
+      Pick<BuildInput, 'fast' | 'complete' | 'onProgress' | 'replayScope'> & { runId: string; abort: AbortController; fileId?: number },
   ): Promise<{ stored: StoredRun; input: BuildInput }> {
-    const { through, dryRun = false } = options;
-    const fast = await this.model.choice('fast');
-    if (!fast) throw new ServiceUnavailableException('Book Knowledge model is not configured');
-    const { artifact, fingerprint } = await this.knowledge.context(bookId, user, 'full');
-    const [file] = await this.read.knowledgeEpubFiles(bookId);
-    if (!file) throw new BadRequestException('Book Knowledge requires an EPUB');
-    const subjects = (await readEpubMetadata(file.absolutePath).catch(() => undefined))?.subjects ?? [];
+    const { runId, abort, fast, complete, through, dryRun = false } = options;
+    // A job reads the file without a ready index too, so a switch to an unindexed file reports the switch.
+    const { artifact, fingerprint, file } = await this.knowledge.context(bookId, user, 'full', options.fileId === undefined).catch((error) => {
+      if (options.fileId !== undefined && error instanceof BadRequestException) throw new AiJobFailure('unreadable', error.message);
+      throw error;
+    });
+    abort.signal.throwIfAborted();
+    if (options.fileId !== undefined && file.id !== options.fileId) {
+      throw new AiJobFailure('unreadable', "The book's main ebook file changed after this build was started");
+    }
+    if (!artifact) throw new ConflictException('Book Knowledge is not ready');
+    const subjects =
+      file.format === 'epub' || file.format === 'kepub'
+        ? (await readEpubMetadata(file.absolutePath).catch(() => undefined))?.subjects
+        : (await this.read.findById(bookId))?.genreRows.map(({ name }) => name);
     const full = fractionToOrdinal(artifact.sentences, 1);
     const run: BookKnowledgeXrayRun = {
       runId,
@@ -154,12 +280,28 @@ export class BookKnowledgeXrayService {
       counts: null,
       dryRun,
       estimate: null,
-      mode: options.mode ?? modeFromSubjects(subjects),
+      mode: options.mode ?? modeFromSubjects(subjects ?? []),
       tieVote: null,
       passRepeats: null,
     };
-    const stored: StoredRun = { run, payload: null, abort: new AbortController() };
-    return { stored, input: { stored, run, artifact, fingerprint, epubPath: file.absolutePath, fast, dryRun, fresh: options.fresh ?? false } };
+    abort.signal.throwIfAborted();
+    const stored: StoredRun = { run, payload: null, abort };
+    return {
+      stored,
+      input: {
+        stored,
+        run,
+        artifact,
+        fingerprint,
+        bookPath: file.absolutePath,
+        fast,
+        complete,
+        dryRun,
+        fresh: options.fresh ?? false,
+        replayScope: options.replayScope,
+        onProgress: options.onProgress,
+      },
+    };
   }
 
   /** Stops a running build: its model calls are aborted and nothing more is stored. A finished run is returned as it is. */
@@ -169,29 +311,9 @@ export class BookKnowledgeXrayService {
     if (stored.run.status !== 'running') return stored.run;
     stored.run.status = 'failed';
     stored.run.error = CANCELLED;
-    stored.abort.abort();
+    stored.abort.abort(new AiError('cancelled', CANCELLED));
     this.logger.log(`[book_knowledge.xray_cancel] [end] runId=${runId} bookId=${stored.run.bookId} - X-Ray build cancelled`);
     return stored.run;
-  }
-
-  /** The last whole-book X-Ray stored for the book's current text; 404 when none was built. */
-  async storedPayload(bookId: number, user: RequestUser): Promise<BookKnowledgeXrayPayload> {
-    const { fingerprint } = await this.knowledge.context(bookId, user, 'full', false);
-    const path = this.payloadPath(bookId, fingerprint);
-    const started = Date.now();
-    try {
-      return await readGzipJson<BookKnowledgeXrayPayload>(path);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new NotFoundException('No X-Ray is stored for this book');
-      this.logger.error(
-        `[book_knowledge.xray_payload_read] [fail] bookId=${bookId} durationMs=${Date.now() - started} errorClass=${error instanceof Error ? error.name : 'UnknownError'} error="${sanitizeLogValue(error instanceof Error ? error.message : String(error))}" - stored X-Ray unreadable`,
-      );
-      throw new InternalServerErrorException('The stored X-Ray could not be read');
-    }
-  }
-
-  private payloadPath(bookId: number, fingerprint: string): string {
-    return join(dirname(this.knowledge.xrayUnitsPath(bookId, fingerprint)), PAYLOAD_FILE);
   }
 
   get(runId: string): BookKnowledgeXrayRun {
@@ -211,7 +333,7 @@ export class BookKnowledgeXrayService {
     while (this.runs.size > KEPT_RUNS) this.runs.delete(this.runs.keys().next().value!);
   }
 
-  private async build(input: BuildInput): Promise<void> {
+  private async build(input: BuildInput): Promise<BookKnowledgeXrayPayload | null> {
     const { run, stored } = input;
     const ids = `runId=${run.runId} bookId=${run.bookId}`;
     const started = Date.now();
@@ -220,30 +342,41 @@ export class BookKnowledgeXrayService {
     );
     const calls = new XrayRunCalls(stored.abort);
     const opened: { store: XrayUnitStore | null } = { store: null };
+    const closeStore = () => opened.store?.close();
+    calls.signal.addEventListener('abort', closeStore, { once: true });
     try {
+      calls.signal.throwIfAborted();
       const payload = await this.steps(input, ids, calls, opened);
-      if (stored.abort.signal.aborted) throw new AiError('cancelled', CANCELLED);
+      calls.signal.throwIfAborted();
       stored.payload = payload;
-      if (payload && run.through >= fractionToOrdinal(input.artifact.sentences, 1)) await this.persist(run, input.fingerprint, payload, ids);
       run.status = 'done';
       run.finishedAt = new Date().toISOString();
       this.logger.log(
         `[book_knowledge.xray] [end] ${ids} durationMs=${Date.now() - started} entities=${payload?.entities.length ?? 0} ties=${payload?.ties.length ?? 0} links=${payload?.links.length ?? 0} summaries=${payload?.summaries?.length ?? 0} sentCharacters=${run.privacy.sentCharacters} bookCharacters=${run.privacy.bookCharacters} estimatedMinutes=${run.estimate?.minutes ?? 0} - X-Ray build completed`,
       );
+      return payload;
     } catch (error) {
       const cancelled = run.error === CANCELLED;
-      // The asks already launched stop, and none of their answers lands in the store a later run reads.
-      stored.abort.abort();
-      opened.store?.close();
+      stored.abort.abort(error === undefined ? new Error('X-Ray build failed') : error);
+      const failure: unknown = calls.signal.reason;
+      closeStore();
       await calls.settled();
       await opened.store?.flush();
       run.status = 'failed';
-      run.error = cancelled ? CANCELLED : error instanceof Error ? error.message : 'X-Ray build failed';
+      run.error = cancelled ? CANCELLED : failure instanceof Error ? failure.message : 'X-Ray build failed';
       run.finishedAt = new Date().toISOString();
       for (const step of run.steps) step.end ??= run.finishedAt;
-      this.logger.error(
-        `[book_knowledge.xray] [fail] ${ids} durationMs=${Date.now() - started} errorClass=${error instanceof Error ? error.name : 'UnknownError'} error="${sanitizeLogValue(run.error)}" - X-Ray build failed`,
-      );
+      const stopped = failure instanceof AiJobPause ? 'paused' : cancelled ? CANCELLED : null;
+      if (stopped) {
+        this.logger.log(`[book_knowledge.xray] [end] ${ids} durationMs=${Date.now() - started} outcome=${stopped} - X-Ray build stopped`);
+      } else {
+        this.logger.error(
+          `[book_knowledge.xray] [fail] ${ids} durationMs=${Date.now() - started} errorClass=${failure instanceof Error ? failure.name : 'UnknownError'} error="${sanitizeLogValue(run.error.slice(0, 200))}" - X-Ray build failed`,
+        );
+      }
+      throw failure;
+    } finally {
+      calls.signal.removeEventListener('abort', closeStore);
     }
   }
 
@@ -253,16 +386,18 @@ export class BookKnowledgeXrayService {
     calls: XrayRunCalls,
     opened: { store: XrayUnitStore | null },
   ): Promise<BookKnowledgeXrayPayload | null> {
-    const { run, artifact, fingerprint, epubPath, fast, dryRun } = input;
+    const { run, artifact, fingerprint, bookPath, fast, complete, dryRun, onProgress } = input;
     const through = run.through;
     const sentences = artifact.sentences;
-    const text = await readBookText(epubPath);
+    const text = await readBookText(bookPath);
+    calls.signal.throwIfAborted();
     const anchors = new XrayAnchors(
       sentences.filter((sentence) => sentence.ordinal <= through),
       text.sections,
     );
     const store = dryRun ? null : await this.unitStore(input, ids);
     opened.store = store;
+    calls.signal.throwIfAborted();
     const privacy = new XrayPrivacy(sentences);
     const syncPrivacy = () => {
       run.privacy.sentCharacters = privacy.sentCharacters;
@@ -282,8 +417,6 @@ export class BookKnowledgeXrayService {
         `[book_knowledge.xray_step] [end] ${ids} step=${record.step} durationMs=${Date.parse(record.end!) - Date.parse(record.start)} units=${record.units} calls=${record.calls} invalid=${record.invalid} skipped=${record.skipped} replayed=${record.counts?.replayed ?? 0} sentences=${record.privacy.sentences} characters=${record.privacy.characters} - step completed`,
       );
     };
-    // Upstream's usage page looks ledger job ids up in the uuid column of ai_jobs, so the ledger gets the bare uuid.
-    const jobId = run.runId.slice(RUN_PREFIX.length);
     const gate = limiter(DENSE_CONCURRENCY);
     const ask: AskWith = (use, system, user, maxOutputTokens, effort = XRAY_EFFORT, temperature) => {
       const request = { system, user, maxOutputTokens, effort, ...(temperature === undefined ? {} : { temperature }) };
@@ -291,20 +424,30 @@ export class BookKnowledgeXrayService {
       return replayable(
         () =>
           calls.track(
-            gate(() =>
-              signal.aborted ? Promise.reject(new AiError('cancelled', CANCELLED)) : this.model.complete({ ...request, use, jobId, signal }),
-            ),
+            gate(async () => {
+              signal.throwIfAborted();
+              try {
+                const result = await complete({ ...request, use });
+                signal.throwIfAborted();
+                return result;
+              } catch (error) {
+                // Stop queued asks before the limiter hands this call's place to the next one.
+                if (!retryable(error)) input.stored.abort.abort(error === undefined ? new Error('X-Ray build failed') : error);
+                throw error;
+              }
+            }),
           ),
         {
           ...request,
           model: use.model,
+          ...(input.replayScope === undefined ? {} : { replayScope: input.replayScope }),
         },
       );
     };
 
     const mode = run.mode ?? 'fiction';
-    const reviews = planKindReview(artifact, reviewCheckpoint(sentences, through), mode);
-    const answers = dryRun ? new Map<string, KindAnswer>() : await this.reviewKinds(reviews, step('kinds'), fast, ask, finish);
+    const reviews = planKindReview(artifact, reviewCheckpoint(sentences, through), mode, true);
+    const answers = dryRun ? new Map<string, KindAnswer>() : await this.reviewKinds(reviews, step('kinds'), fast, ask, finish, onProgress);
 
     const dropped = { generic: 0, fragment: 0 };
     const entities = xrayEntities(artifact, through, answers, mode, undefined, dropped);
@@ -350,6 +493,7 @@ export class BookKnowledgeXrayService {
       );
       return request.capped ? capped(send) : send;
     };
+    onProgress?.('alias', 0, 0);
     const result = await runDense({
       entities,
       sentences,
@@ -359,7 +503,10 @@ export class BookKnowledgeXrayService {
       writesAbout: (slot: PassSlot) => slot.member === null && slot.head.importance <= 2,
       ask: dense,
       askAbout: dense,
+      readDescription: async () => (await this.read.findById(run.bookId))?.book.book_metadata?.description ?? null,
+      onUnit: onProgress && ((done, total) => onProgress('dense', done, total)),
     });
+    onProgress?.('finish', 0, 0);
     for (const current of Object.values(steps)) finish(current);
     const links = windowLinks(result.cast, units, [...result.linkPairs, ...headingPairs(result.cast, sentences, units, mode)]);
     await store?.flush();
@@ -435,19 +582,6 @@ export class BookKnowledgeXrayService {
     return payload;
   }
 
-  /** A whole-book payload beside the book's artifact, so it outlives the run and goes when the book's text changes. */
-  private async persist(run: BookKnowledgeXrayRun, fingerprint: string, payload: BookKnowledgeXrayPayload, ids: string): Promise<void> {
-    const started = Date.now();
-    try {
-      await writeGzipJsonAtomic(this.payloadPath(run.bookId, fingerprint), payload);
-      this.logger.log(`[book_knowledge.xray_payload] [end] ${ids} durationMs=${Date.now() - started} - X-Ray payload stored`);
-    } catch (error) {
-      this.logger.error(
-        `[book_knowledge.xray_payload] [fail] ${ids} durationMs=${Date.now() - started} errorClass=${error instanceof Error ? error.name : 'UnknownError'} error="${sanitizeLogValue(error instanceof Error ? error.message : String(error))}" - X-Ray payload not stored`,
-      );
-    }
-  }
-
   /** The book's stored answers for this model and prompt version; a fresh build starts the file over. */
   private async unitStore(input: BuildInput, ids: string): Promise<XrayUnitStore> {
     const started = Date.now();
@@ -469,13 +603,16 @@ export class BookKnowledgeXrayService {
   private async reviewKinds(
     batches: readonly KindReviewBatch[],
     current: XrayStepRun,
-    use: AiSlotChoice,
+    use: AiModelChoice,
     ask: AskWith,
     finish: (current: XrayStepRun) => void,
+    onProgress?: XrayBuildProgress,
   ): Promise<Map<string, KindAnswer>> {
     const answers = new Map<string, KindAnswer>();
-    const found = await inOrder([...batches.entries()], DENSE_CONCURRENCY, ([index, batch]) =>
-      current.unit({
+    let done = 0;
+    onProgress?.('kinds', 0, batches.length);
+    const found = await inOrder([...batches.entries()], DENSE_CONCURRENCY, async ([index, batch]) => {
+      const answer = await current.unit({
         id: `k${index + 1}`,
         ordinals: batch.ordinals,
         send: ask(use, KIND_REVIEW_SYSTEM, batch.user, KIND_REVIEW_MAX_TOKENS, XRAY_EFFORT, CLASSIFY_TEMPERATURE),
@@ -483,8 +620,10 @@ export class BookKnowledgeXrayService {
           const parsed = parseReviewAnswers(JSON.stringify(value), batch.keys);
           return parsed?.size ? { items: parsed, rejected: {} } : null;
         },
-      }),
-    );
+      });
+      onProgress?.('kinds', ++done, batches.length);
+      return answer;
+    });
     for (const batch of found) for (const [key, answer] of batch ?? []) answers.set(key, answer);
     finish(current);
     return answers;

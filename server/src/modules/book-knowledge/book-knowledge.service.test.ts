@@ -1,4 +1,4 @@
-import { ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -65,8 +65,25 @@ describe('Book Knowledge access and cut-offs', () => {
   let questions: BookKnowledgeAskService;
   const user = { id: 7 } as RequestUser;
   const books = { verifyBookAccess: vi.fn() };
-  const read = { knowledgeEpubFiles: vi.fn(), findProgressByBook: vi.fn() };
+  const read = { findProgressByBook: vi.fn() };
+  const candidate = (
+    absolutePath: string,
+    overrides: { id?: number; format?: string; fileHash?: string | null; primaryFileId?: number | null } = {},
+  ) => ({
+    id: 9,
+    bookId: 3,
+    format: 'epub',
+    role: 'content',
+    sizeBytes: EPUB_BYTES.length,
+    mediaOverlayAvailable: false,
+    formatPriority: ['epub', 'mobi'],
+    primaryFileId: 9,
+    absolutePath,
+    fileHash: 'stored-file-hash',
+    ...overrides,
+  });
   const repo = {
+    knowledgeFileCandidates: vi.fn(),
     state: vi.fn(),
     resume: vi.fn(),
     next: vi.fn(),
@@ -98,7 +115,7 @@ describe('Book Knowledge access and cut-offs', () => {
     await writeArtifact(artifactPath(directory, 3, fingerprint), fixture());
     await writeFile(join(directory, 'book.epub'), EPUB_BYTES);
     books.verifyBookAccess.mockResolvedValue(undefined);
-    read.knowledgeEpubFiles.mockResolvedValue([{ id: 9, absolutePath: join(directory, 'book.epub'), fileHash: 'stored-file-hash' }]);
+    repo.knowledgeFileCandidates.mockResolvedValue([candidate(join(directory, 'book.epub'))]);
     read.findProgressByBook.mockImplementation((userId: number) => Promise.resolve([{ fileId: 9, percentage: userId === 7 ? 50 : 0 }]));
     repo.state.mockResolvedValue({
       bookId: 3,
@@ -153,7 +170,7 @@ describe('Book Knowledge access and cut-offs', () => {
     ]) {
       await expect(operation()).rejects.toMatchObject({ status });
     }
-    expect(read.knowledgeEpubFiles).not.toHaveBeenCalled();
+    expect(repo.knowledgeFileCandidates).not.toHaveBeenCalled();
     expect(model.generate).not.toHaveBeenCalled();
   });
   it('coalesces cold loads and clears rejected pending loads', async () => {
@@ -288,7 +305,48 @@ describe('Book Knowledge access and cut-offs', () => {
     expect((await knowledge.status(3, user)).status).toBe('queued');
     expect(repo.queue).toHaveBeenCalledWith(3, fingerprint, TEXT_VERSION, TERMS_VERSION);
   });
+  describe('peek', () => {
+    it('returns the ready current artifact and queues nothing', async () => {
+      const peeked = await knowledge.peek(3);
+      expect(peeked?.fingerprint).toBe(fingerprint);
+      expect(peeked?.artifact).toBeDefined();
+      expect(repo.queue).not.toHaveBeenCalled();
+    });
+    it('returns null for a stale row without queueing it', async () => {
+      repo.state.mockResolvedValue({ fingerprint, textVersion: TEXT_VERSION - 1, termsVersion: TERMS_VERSION, status: 'ready', progress: 100 });
+      expect(await knowledge.peek(3)).toBeNull();
+      expect(repo.queue).not.toHaveBeenCalled();
+    });
+    it('returns null when there is no row', async () => {
+      repo.state.mockResolvedValue(undefined);
+      expect(await knowledge.peek(3)).toBeNull();
+      expect(repo.queue).not.toHaveBeenCalled();
+    });
+  });
   describe('source fingerprint', () => {
+    const withFiles = (primaryFileId: number | null, ...formats: string[]) => {
+      const fileRows = formats.map((format, index) => candidate(join(directory, 'book.epub'), { id: 5 + index, format, primaryFileId }));
+      repo.knowledgeFileCandidates.mockResolvedValue(fileRows);
+    };
+
+    it("source picks the file upstream's Build picks", async () => {
+      withFiles(6, 'epub', 'mobi');
+      expect((await knowledge['source'](3)).file.id).toBe(6);
+      await expect(knowledge.sourceFileId(3)).resolves.toBe(6);
+    });
+
+    it('uses the repository order when source files tie', async () => {
+      withFiles(null, 'epub', 'epub');
+
+      await expect(knowledge.sourceFileId(3)).resolves.toBe(5);
+    });
+
+    it('source refuses a book with no story guide format', async () => {
+      withFiles(null, 'pdf');
+      await expect(knowledge['source'](3)).rejects.toBeInstanceOf(BadRequestException);
+      await expect(knowledge.sourceFileId(3)).resolves.toBeNull();
+    });
+
     it('changes with the file size even when the stored hash does not', async () => {
       const before = (await knowledge.context(3, user, 'position', false)).fingerprint;
       expect(before).toBe(fingerprint);
@@ -301,7 +359,7 @@ describe('Book Knowledge access and cut-offs', () => {
       // A directory stats like a file but cannot be streamed, so success proves no read stream was opened.
       const folder = join(directory, 'unreadable.epub');
       await mkdir(folder);
-      read.knowledgeEpubFiles.mockResolvedValue([{ id: 9, absolutePath: folder, fileHash: null }]);
+      repo.knowledgeFileCandidates.mockResolvedValue([candidate(folder, { fileHash: null })]);
       const result = await knowledge.context(3, user, 'position', false);
       expect(result.fingerprint).toMatch(/^[a-f0-9]{64}$/);
       expect(result.fingerprint).not.toBe(fingerprint);

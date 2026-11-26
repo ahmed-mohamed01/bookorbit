@@ -19,6 +19,7 @@ import { bookKnowledgeConfig } from './book-knowledge.config';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { BookService } from '../book/book.service';
 import { BookReadService } from '../book/book-read.service';
+import { storyGuideFiles } from '../story-guides/story-guides.service';
 import { BookKnowledgeRepository } from './book-knowledge.repository';
 import { BookKnowledgeModelService } from './book-knowledge-model.service';
 import { BookKnowledgeSettingsService } from './book-knowledge-settings.service';
@@ -63,16 +64,29 @@ export class BookKnowledgeService implements OnApplicationBootstrap, OnModuleDes
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
   }
+  private async knowledgeFile(bookId: number) {
+    const files = await this.repo.knowledgeFileCandidates(bookId);
+    const { formatPriority, primaryFileId } = files[0] ?? {};
+    const selected = storyGuideFiles(files, formatPriority ?? null, primaryFileId ?? null)[0];
+    const file = files.find(({ id }) => id === selected?.id);
+    if (!file?.format) return null;
+    return { id: file.id, format: file.format.toLowerCase(), absolutePath: file.absolutePath, fileHash: file.fileHash };
+  }
   private async source(bookId: number) {
-    const files = await this.read.knowledgeEpubFiles(bookId);
-    const file = files[0];
-    if (!file) throw new BadRequestException('Book Knowledge requires an EPUB');
+    const file = await this.knowledgeFile(bookId);
+    if (!file) throw new BadRequestException('Book Knowledge requires an EPUB, KEPUB, MOBI, AZW3 or AZW file');
     const info = await stat(file.absolutePath).catch(() => {
-      throw new BadRequestException('Book Knowledge cannot read the EPUB');
+      throw new BadRequestException('Book Knowledge cannot read the source file');
     });
-    // The size catches a rewritten file whose stored hash went stale; never stream a whole EPUB per request.
+    // The size catches a rewritten file whose stored hash went stale; never stream the source per request.
     const identity = file.fileHash ? `${file.fileHash}:${info.size}` : `nohash:${info.size}:${info.mtimeMs}`;
     return { file, fingerprint: createHash('sha256').update(identity).digest('hex') };
+  }
+  enabled(): Promise<boolean> {
+    return this.settings.enabled();
+  }
+  async sourceFileId(bookId: number): Promise<number | null> {
+    return (await this.knowledgeFile(bookId))?.id ?? null;
   }
   private path(bookId: number, fingerprint: string) {
     return artifactPath(this.storage.appDataPath, bookId, fingerprint);
@@ -83,6 +97,21 @@ export class BookKnowledgeService implements OnApplicationBootstrap, OnModuleDes
   }
   private glinerOptions() {
     return { directory: join(this.storage.appDataPath, 'models', 'gliner_medium-v2.1'), threads: this.config.glinerThreads };
+  }
+  /** The ready, current artifact and its fingerprint, or null. Never queues a build, and checks no access: callers have. */
+  async peek(bookId: number): Promise<{ artifact: Artifact; fingerprint: string } | null> {
+    const source = await this.source(bookId).catch(() => null);
+    const row = source ? await this.repo.state(bookId) : null;
+    if (
+      !source ||
+      row?.status !== 'ready' ||
+      row.fingerprint !== source.fingerprint ||
+      row.textVersion !== TEXT_VERSION ||
+      row.termsVersion !== TERMS_VERSION
+    )
+      return null;
+    const artifact = await this.load(bookId, this.path(bookId, source.fingerprint));
+    return artifact ? { artifact, fingerprint: source.fingerprint } : null;
   }
   async context(bookId: number, user: RequestUser, scope: BookKnowledgeScope = 'position', required = true) {
     await this.books.verifyBookAccess(bookId, user);
@@ -112,7 +141,7 @@ export class BookKnowledgeService implements OnApplicationBootstrap, OnModuleDes
       cutoffOrdinal: scope === 'full' && artifact ? fractionToOrdinal(artifact.sentences, 1) : cutoff,
       noProgress: scope === 'position' && !!artifact && cutoff === 0,
     };
-    return { artifact: artifact!, info, row, stale, queued, enabled, fingerprint };
+    return { artifact: artifact!, info, row, stale, queued, enabled, fingerprint, file };
   }
   /** A ready row whose artifact cannot be read, or is from an older format, counts as stale so it is rebuilt. */
   private async load(bookId: number, path: string): Promise<Artifact | undefined> {
@@ -203,6 +232,7 @@ export class BookKnowledgeService implements OnApplicationBootstrap, OnModuleDes
           const source = await this.source(row.bookId);
           const path = this.path(row.bookId, source.fingerprint);
           const result = await buildArtifact(source.file.absolutePath, {
+            format: source.file.format,
             fingerprint: source.fingerprint,
             outputPath: path,
             cacheDirectory: join(this.storage.appDataPath, 'book-knowledge', String(row.bookId), 'stages'),

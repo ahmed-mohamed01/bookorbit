@@ -54,6 +54,32 @@ describe('AiJobRunner', () => {
     expect(h.jobState.progress).toContainEqual({ phase: 'names', done: 3, total: 3 });
   });
 
+  it("passes a unit's own progress through until the step finishes", async () => {
+    const h = createRunnerHarness();
+    const summary = h.feature.steps.find((step) => step.id === 'summary')!;
+    const run = summary.run.bind(summary);
+    summary.run = async (ctx, unit) => {
+      await ctx.progress?.('lines', 3, 9);
+      return run(ctx, unit);
+    };
+    await h.run(h.job(3));
+    const reported = h.jobState.progress.findIndex((entry) => entry.phase === 'lines');
+    expect(h.jobState.progress[reported]).toEqual({ phase: 'lines', done: 3, total: 9 });
+    expect(h.jobState.progress.slice(reported + 1)).toContainEqual({ phase: 'summary', done: 1, total: 1 });
+    expect(h.jobState.progress.at(-1)).toEqual({ phase: 'summary', done: 1, total: 1 });
+  });
+
+  it.each([
+    ['a lower feature coverage', 0.92, 0.92],
+    ['a feature coverage above the engine', 2, 1],
+    ['no feature coverage', undefined, 1],
+  ])('stores the lower of the engine coverage and %s', async (_label, reported, stored) => {
+    const h = createRunnerHarness();
+    if (reported !== undefined) h.feature.coverageOf = () => reported;
+    const outcome = await h.run(h.job(3));
+    expect(outcome).toMatchObject({ kind: 'completed', artifact: { coverage: stored } });
+  });
+
   it('reuses every cached unit on a second run of the same job', async () => {
     const h = createRunnerHarness();
     const row = h.job(4);

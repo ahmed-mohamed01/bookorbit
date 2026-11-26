@@ -218,6 +218,7 @@ export class AiJobRunner {
       step: step.id,
       model,
       complete: (request) => this.request(run, step, request, usage),
+      progress: (phase, done, total) => this.jobs.setProgress(run.row.id, run.owner, { phase, done, total }),
     };
     let value: CachedUnit;
     try {
@@ -297,7 +298,7 @@ export class AiJobRunner {
       payload,
       sha256: createHash('sha256').update(json).digest('hex'),
       size: payload.length,
-      coverage,
+      coverage: Math.min(coverage, run.feature.coverageOf?.(artifact) ?? 1),
       models: run.models,
       costMicros: run.costMicros,
     };

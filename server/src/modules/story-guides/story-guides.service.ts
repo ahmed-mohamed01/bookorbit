@@ -289,7 +289,7 @@ export class StoryGuidesService {
     const job = jobStatus?.job ? await this.jobInfo(jobStatus.job, jobStatus.ahead, canManage, seesCost(user), { text, artifact, models }) : null;
 
     const maxWords = own.limits.maxWords ?? DEFINITION.limits.maxWords.default;
-    const reason = this.buildReason(usable, own.enabled, text, maxWords);
+    const reason = this.buildReason(usable, own.enabled && (await this.feature.buildable?.()) !== false, text, maxWords);
     const build: StoryGuideBuild = !canManage
       ? { allowed: false }
       : reason

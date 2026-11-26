@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq, inArray, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
@@ -9,6 +9,28 @@ export class BookKnowledgeRepository {
   constructor(@Inject(DB) private readonly db: NodePgDatabase<typeof schema>) {}
   async bootstrap(statements: string[]) {
     for (const statement of statements) await this.db.execute(sql.raw(statement));
+  }
+  /** A book's files with the inputs upstream's story guide ranking reads, so BK picks the file the card picks. */
+  knowledgeFileCandidates(bookId: number) {
+    const { bookFiles, books, libraries } = schema;
+    return this.db
+      .select({
+        id: bookFiles.id,
+        bookId: bookFiles.bookId,
+        format: bookFiles.format,
+        role: bookFiles.role,
+        absolutePath: bookFiles.absolutePath,
+        fileHash: bookFiles.fileHash,
+        sizeBytes: bookFiles.sizeBytes,
+        mediaOverlayAvailable: bookFiles.mediaOverlayAvailable,
+        primaryFileId: books.primaryFileId,
+        formatPriority: libraries.formatPriority,
+      })
+      .from(bookFiles)
+      .innerJoin(books, eq(books.id, bookFiles.bookId))
+      .innerJoin(libraries, eq(libraries.id, books.libraryId))
+      .where(eq(bookFiles.bookId, bookId))
+      .orderBy(asc(bookFiles.sortOrder), asc(bookFiles.id));
   }
   async state(bookId: number) {
     return (await this.db.select().from(knowledgeIndex).where(eq(knowledgeIndex.bookId, bookId)))[0];

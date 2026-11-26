@@ -11,6 +11,7 @@ import type { Artifact, TextStage, Term, AliasLink } from './model';
 import type { GlinerBuildOptions } from '../gliner/stage';
 
 export interface BuildOptions {
+  format?: string;
   fingerprint?: string;
   outputPath?: string;
   timeoutMs?: number;
@@ -29,7 +30,7 @@ export interface BuildResult {
   jsonBytes: number;
 }
 
-export async function buildArtifactInProcess(epubPath: string, options: BuildOptions = {}): Promise<BuildResult> {
+export async function buildArtifactInProcess(bookPath: string, options: BuildOptions = {}): Promise<BuildResult> {
   const stageMs = { fingerprint: 0, text: 0, gliner: 0, terms: 0, kinds: 0, artifact: 0 };
   const stagePeakRssBytes = { fingerprint: 0, text: 0, gliner: 0, terms: 0, kinds: 0, artifact: 0 };
   const reused = { text: false, gliner: false, terms: false };
@@ -39,7 +40,7 @@ export async function buildArtifactInProcess(epubPath: string, options: BuildOpt
   if (fingerprint && !/^[a-f0-9]{64}$/.test(fingerprint)) throw new Error('Invalid source fingerprint');
   if (!fingerprint) {
     const hash = createHash('sha256');
-    for await (const chunk of createReadStream(epubPath)) hash.update(chunk);
+    for await (const chunk of createReadStream(bookPath)) hash.update(chunk);
     fingerprint = hash.digest('hex');
   }
   stageMs.fingerprint = performance.now() - start;
@@ -60,8 +61,9 @@ export async function buildArtifactInProcess(epubPath: string, options: BuildOpt
     return value;
   }
   start = performance.now();
-  const { extractEpubText } = await import('./epub-text.js');
-  const text = await cached<TextStage>(`text-v${TEXT_VERSION}.json.gz`, () => extractEpubText(epubPath), 'text');
+  const { extractBookText } = await import('./book-text-stage.js');
+  const format = options.format ?? 'epub';
+  const text = await cached<TextStage>(`text-v${TEXT_VERSION}.json.gz`, () => extractBookText(bookPath, format), 'text');
   stageMs.text = performance.now() - start;
   stagePeakRssBytes.text = rss();
   let modelVotes: Artifact['modelVotes'];
@@ -92,8 +94,10 @@ export async function buildArtifactInProcess(epubPath: string, options: BuildOpt
   start = performance.now();
   const { annotateKindCues } = await import('./kind-cues.js');
   annotateKindCues(text.sentences, terms, kindSpans);
-  const { readEpubMetadata } = await import('./epub-metadata.js');
-  const metadata = await readEpubMetadata(epubPath).catch(() => undefined);
+  const metadata =
+    format === 'epub' || format === 'kepub'
+      ? await (await import('./epub-metadata.js')).readEpubMetadata(bookPath).catch(() => undefined)
+      : undefined;
   stageMs.kinds = performance.now() - start;
   stagePeakRssBytes.kinds = rss();
   const artifact: Artifact = {
@@ -125,10 +129,13 @@ export function resolveTermWorkerPath(): string {
   const tsPath = join(__dirname, 'term-extractor.worker.ts');
   return existsSync(tsPath) ? tsPath : jsPath;
 }
-function runBuildWorker(epubPath: string, options: BuildOptions): Promise<BuildResult> {
+function runBuildWorker(bookPath: string, options: BuildOptions): Promise<BuildResult> {
   return new Promise((resolve, reject) => {
     const path = resolveTermWorkerPath();
-    const worker = new Worker(path, { workerData: { epubPath, options }, execArgv: path.endsWith('.ts') ? ['--import', 'tsx'] : undefined });
+    const worker = new Worker(path, {
+      workerData: { epubPath: bookPath, options },
+      execArgv: path.endsWith('.ts') ? ['--import', 'tsx'] : undefined,
+    });
     let settled = false;
     const finish = (error?: Error, result?: BuildResult): void => {
       if (settled) return;
@@ -158,12 +165,12 @@ function runBuildWorker(epubPath: string, options: BuildOptions): Promise<BuildR
 }
 
 let buildQueue: Promise<unknown> = Promise.resolve();
-export function buildArtifact(epubPath: string, options: BuildOptions = {}): Promise<BuildResult> {
+export function buildArtifact(bookPath: string, options: BuildOptions = {}): Promise<BuildResult> {
   const next = buildQueue.then(async () => {
-    if (!options.gliner) return runBuildWorker(epubPath, options);
+    if (!options.gliner) return runBuildWorker(bookPath, options);
     const { resolveGlinerModelPath } = await import('../gliner/stage.js');
     const modelPath = await resolveGlinerModelPath(options.gliner, options.bookId);
-    return runBuildWorker(epubPath, { ...options, gliner: modelPath ? { ...options.gliner, modelPath } : undefined });
+    return runBuildWorker(bookPath, { ...options, gliner: modelPath ? { ...options.gliner, modelPath } : undefined });
   });
   buildQueue = next.catch(() => undefined);
   return next;

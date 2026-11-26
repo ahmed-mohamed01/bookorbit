@@ -75,6 +75,8 @@ export interface DenseRunInput {
   about: XrayStepRun;
   /** Who gets a model-written `about`: the main cast; the rest get theirs from their facts by code. */
   writesAbout: (slot: PassSlot) => boolean;
+  /** Called once the units are about to be read, then after each unit is processed. */
+  onUnit?: (done: number, total: number) => void;
 }
 
 export interface DenseRunResult extends PassRunResult {
@@ -458,6 +460,7 @@ export async function runDense(input: DenseRunInput): Promise<DenseRunResult> {
   };
   for (let index = 0; index < DENSE_UNIT_WINDOW; index++) start(index);
 
+  input.onUnit?.(0, units.length);
   for (const index of units.keys()) {
     const { unit, slots: initialSlots, chunks: waiting, joined } = launched[index];
     const byId = new Map(initialSlots.map((slot) => [slot.id, slot]));
@@ -528,6 +531,7 @@ export async function runDense(input: DenseRunInput): Promise<DenseRunResult> {
       .filter((slot) => input.writesAbout(slot));
     await Promise.all([describeGaps(unit, slots, names, minorIntros), changed.length ? writeNow(changed, unit, state, names, input) : null]);
     start(index + DENSE_UNIT_WINDOW);
+    input.onUnit?.(index + 1, units.length);
   }
   // An entry that never got an `is` phrase or a gloss falls back to its first unit's facts, stamped at that unit so it spoils nothing.
   for (const [id, slot] of state.slots) {
