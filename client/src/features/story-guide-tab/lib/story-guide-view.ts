@@ -406,7 +406,7 @@ export function buildStoryGuideView(guide: ForkStoryGuidePayload, cut: ForkStory
       if (!tied.has(other)) often.add(other)
       if (often.size === 6) break
     }
-    return { groups, often, recent: (notesByKey.get(key) ?? []).slice(-4).reverse() }
+    return { groups, often, notes: notesByKey.get(key) ?? [] }
   }
 
   function chapterOf(s: number) {
@@ -424,15 +424,7 @@ export function buildStoryGuideView(guide: ForkStoryGuidePayload, cut: ForkStory
   return { chapters, chapterBySpine, currentChapter, chapterOf, chapterTitle, timeline, entities, groups, byKey, ties, links, details }
 }
 
-/** Chapters shown under Previously: the rest is one click away on Chapters. */
-export const PREVIOUSLY_CHAPTERS = 4
-
-export function previouslyByChapter(
-  previously: ForkStoryRecap['previously'],
-  view: StoryGuideView,
-  openingTitle: string,
-  limit = PREVIOUSLY_CHAPTERS,
-) {
+export function previouslyByChapter(previously: ForkStoryRecap['previously'], view: StoryGuideView, openingTitle: string) {
   const groups = new Map<number, { s: number; title: string; start?: number; summaries: string[] }>()
   for (const item of previously) {
     const chapter = view.chapterOf(item.s)
@@ -441,13 +433,7 @@ export function previouslyByChapter(
     if (group) group.summaries.push(item.text)
     else groups.set(key, { s: key, title: chapter?.title ?? (item.title?.trim() || openingTitle), start: chapter?.start, summaries: [item.text] })
   }
-  return [...groups.values()].sort((a, b) => b.s - a.s).slice(0, limit)
+  return [...groups.values()].sort((a, b) => a.s - b.s)
 }
-
-/**
- * Timeline chapters mounted at first: a late cut on a long book holds thousands of notes. Ten chapters of
- * BK notes (5 to 25 each) stay a few hundred list items, and each "Show earlier chapters" adds ten more.
- */
-export const TIMELINE_CHAPTERS = 10
 
 export type StoryGuideView = ReturnType<typeof buildStoryGuideView>

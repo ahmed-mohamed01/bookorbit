@@ -852,7 +852,7 @@ isolates this tab's changes from earlier fork changes in the same files.
 | `client/src/features/book/components/detail/BookDetailTabs.vue` |                   5 / 1 |                 5 / 1 | Read the optional availability flag and insert the tab after Chapters |
 | `client/src/views/BookDetailView.vue`                           |                   7 / 1 |                21 / 7 | Provide availability, lazy-load the tab and fall back to Details      |
 | `packages/types/src/index.ts`                                   |                   1 / 0 |                13 / 0 | Re-export the fork recap contract                                     |
-| `client/src/locales/en.json`                                    |                 129 / 0 |             2859 / 59 | Tab, window title, section and unavailable-state copy                 |
+| `client/src/locales/en.json`                                    |                 153 / 0 |             2880 / 56 | Tab, window title, section and unavailable-state copy                 |
 
 The cut-based ranking lives entirely in the tab overlay and adds no upstream hooks.
 
@@ -1326,9 +1326,10 @@ drops the recap's stop label, and an older recap says where it was written. The 
 on a strictly later percentage or the same CFI at the same percentage. An event that arrives while the
 cut or a recap loads is held and applied once they settle, and a newer event aborts an older read. While a job runs the tab
 lists five steps (Reading the book, Finding names, Checking who's who, Writing descriptions, Finishing up)
-from the job's phase, with minutes left once Writing descriptions can estimate it. Previously shows the last four
-chapters with an "All chapters" button, and the Timeline the latest ten chapters with "Show earlier
-chapters", so a long series stays bounded. Ties show the chronicle's pair note for the two names,
+from the job's phase, with minutes left once Writing descriptions can estimate it. Previously (with an "All
+chapters" button) and the Timeline page their chapters 10, 20 or 50 at a time, newest or oldest
+first. Each list remembers its own order and page size per browser, newest first by default, so a
+long series stays bounded. The pager names the first and last chapter on the page. Ties show the chronicle's pair note for the two names,
 else the quote, both inside the cut. The constellation draws at most 120 links, strongest first.
 
 Characters, places and terms use the visible chronicle to rank at the reader's cut. Two or more
@@ -1341,6 +1342,12 @@ A character's sheet says "Last seen in Chapter N" in place of Now once the reade
 chapters past the character's latest visible chronicle row, own or merged join, matching Absorb. The
 reader's chapter comes from the chronicle unit holding the cut, else the section title at the cut; with
 no chapter number on either side the sheet keeps Now.
+An entry's sheet leads with a card ("Who they are" for characters and groups, "What it is" for the
+rest) holding the newest visible description, with the earlier ones folded under it in reading order.
+"In the story" follows as a node timeline of the entry's chronicle notes from the opening to the
+reader's chapter: the latest three show, each "Show earlier events" adds at most twenty more, and a
+search over notes and chapter titles and an order flip cover every note. Rows are built in reading
+order for both orders, so keyboard and screen-reader order match the screen.
 
 The recap uses the current user's EPUB CFI on the guide's own source file (progress on another file of
 the book does not move the cut) and returns the spine index and original quotes whose

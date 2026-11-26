@@ -9910,7 +9910,20 @@
         "previously": "Previously",
         "allChapters": "All chapters",
         "stopBehind": "Written at {percent}. Refresh for where you are now.",
-        "earlierChapters": "{count, plural, one {Show one earlier chapter} other {Show earlier chapters (#)}}",
+        "chapterOrder": {
+          "label": "Order",
+          "newest": "Newest first",
+          "oldest": "Oldest first"
+        },
+        "chapterPageSize": {
+          "label": "Chapters per page",
+          "option": "{count} chapters"
+        },
+        "chapterPages": "Chapter pages",
+        "chapterRange": "{first} to {last}",
+        "pageOf": "Page {page} of {pages}",
+        "previousPage": "Previous",
+        "nextPage": "Next",
         "provenance": "Written by Reading help from the pages you have read. Nothing past your position is sent.",
         "stopState": {
           "unplaced": "Your exact reading position could not be placed.",
@@ -9920,7 +9933,7 @@
           "cap": "You’ve reached your Reading help limit.",
           "failed": "Reading help could not write a recap. You can try again."
         },
-        "timelineAside": "Events up to {percent}, oldest first",
+        "timelineAside": "Events up to {percent}",
         "whereLeft": "Where you left off, {chapter}",
         "youAreHere": "You are here, {percent}",
         "timelineAhead": "{count, plural, =0 {The rest of {chapter} opens as you read.} one {The rest of {chapter} and one more chapter open as you read.} other {The rest of {chapter} and # more chapters open as you read.}}",
@@ -9957,9 +9970,20 @@
         "noNames": "No names match.",
         "showMore": "Show more",
         "who": "Who they are",
-        "now": "Now",
         "lastSeen": "Last seen in {chapter}",
-        "recent": "Recently",
+        "whatItIs": "What it is",
+        "asOf": "As of {chapter}",
+        "earlierDescriptions": "{count, plural, one {One earlier description} other {# earlier descriptions}}",
+        "inTheStory": "In the story",
+        "searchStory": "Search the story",
+        "showOldestFirst": "Show oldest first",
+        "showNewestFirst": "Show newest first",
+        "showEarlierNotes": "{count, plural, one {Show one earlier event} other {Show # earlier events}}",
+        "showFewer": "Show fewer",
+        "noNoteMatch": "Nothing matches.",
+        "youAreIn": "You are here, {chapter}",
+        "youAreHereShort": "You are here",
+        "onlyChaptersHere": "Only chapters where something happens here are listed.",
         "ties": "Ties",
         "tieGroups": {
           "family": "Family",

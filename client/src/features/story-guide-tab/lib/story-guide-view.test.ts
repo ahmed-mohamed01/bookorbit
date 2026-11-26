@@ -2,7 +2,7 @@ import type { StoryGuideChronicle } from '@bookorbit/types'
 import { describe, expect, it } from 'vitest'
 import { buildConstellation } from './constellation'
 import { end, fixtureCut, guideFixture, quote, rankFixture, timelineRow } from './story-guide.test-fixture'
-import { anchorVisibility, buildStoryGuideView, PREVIOUSLY_CHAPTERS, previouslyByChapter } from './story-guide-view'
+import { anchorVisibility, buildStoryGuideView, previouslyByChapter } from './story-guide-view'
 
 describe('story guide cut', () => {
   it('accepts earlier anchors and only server-placed quotes in the current section', () => {
@@ -36,7 +36,7 @@ describe('story guide cut', () => {
     expect(view.details('ana').groups.map(({ group }) => group)).toEqual(['friends-and-enemies', 'work-and-study'])
     expect([...view.details('ana').often].map(({ key }) => key)).toEqual(['gate'])
     expect(view.timeline.map(({ text }) => text)).toEqual(['Ana arrived.', 'The gate opens for Ben.'])
-    expect(view.details('ana').recent.map(({ text }) => text)).toEqual(['Ana arrived.'])
+    expect(view.details('ana').notes.map(({ text }) => text)).toEqual(['Ana arrived.'])
     expect(view.chapters).toMatchObject([
       { title: 'Arrival', summaries: ['They arrived.'], locked: false },
       { title: 'At the gate', summaries: ['The gate opened.'], current: true, hidden: 1 },
@@ -254,7 +254,7 @@ describe('story guide chapters', () => {
     expect(view.chapters.map(({ title }) => title)).toEqual(['Chapter 1: Into the Woods', 'Chapter 2: Up a Creek', 'Chapter 3: Home'])
   })
 
-  it('groups the recap by chapter, newest chapter first and reading order inside', () => {
+  it('groups the recap by chapter, in reading order', () => {
     const view = buildStoryGuideView(grouped, { s: 6, placedQuotes: [] }, 'Opening')
     const previously = previouslyByChapter(
       [
@@ -267,23 +267,14 @@ describe('story guide chapters', () => {
       'Opening',
     )
     expect(previously.map(({ title, summaries }) => [title, summaries])).toEqual([
-      ['Chapter 2: Up a Creek', ['The creek.']],
-      ['Chapter 1: Into the Woods', ['The woods begin.', 'The woods end.']],
       ['Opening', ['Front matter.']],
+      ['Chapter 1: Into the Woods', ['The woods begin.', 'The woods end.']],
+      ['Chapter 2: Up a Creek', ['The creek.']],
     ])
   })
 })
 
 describe('story guide extras', () => {
-  it('keeps the newest four chapter groups under Previously', () => {
-    const sections = Array.from({ length: 10 }, (_, s) => ({ s, title: `Part ${s + 1}`, chars: 100, h: 'h' }))
-    const view = buildStoryGuideView({ ...guideFixture, sections }, { s: 9, placedQuotes: [] }, 'Opening')
-    const previously = sections.map(({ s, title }) => ({ s, title, text: `Summary ${s}` }))
-    const groups = previouslyByChapter(previously, view, 'Opening')
-    expect(PREVIOUSLY_CHAPTERS).toBe(4)
-    expect(groups.map(({ s }) => s)).toEqual([9, 8, 7, 6])
-  })
-
   it('gives a tie the newest pair note the reader has reached, under either key order, and none before it', () => {
     const visible = buildStoryGuideView(guideFixture, fixtureCut, 'Opening')
     expect(visible.ties.find(({ key }) => key === 'meeting')?.note).toBe('Ana trusts Ben at the gate.')

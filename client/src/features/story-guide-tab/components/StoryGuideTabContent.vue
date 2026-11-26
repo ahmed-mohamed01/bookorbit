@@ -33,11 +33,15 @@ import { useStoryGuideTab, type GuideSection } from '../composables/useStoryGuid
 import { useStoryGuideTabStatus } from '../composables/useStoryGuideTabStatus'
 import { storyGuideMenuActions } from '../lib/story-guide-tab-state'
 import { entityKindColor, entityKindIcon } from '../lib/entity-kind-icon'
-import { previouslyByChapter, TIMELINE_CHAPTERS } from '../lib/story-guide-view'
+import { previouslyByChapter } from '../lib/story-guide-view'
+import { useChapterPages } from '../composables/useChapterPages'
 import StoryGuideChapters from './StoryGuideChapters.vue'
 import StoryGuideCharacters from './StoryGuideCharacters.vue'
 import StoryGuideConstellation from './StoryGuideConstellation.vue'
 import StoryGuideEntitySheet from './StoryGuideEntitySheet.vue'
+import StoryGuideHereMark from './StoryGuideHereMark.vue'
+import StoryGuidePageControls from './StoryGuidePageControls.vue'
+import StoryGuidePager from './StoryGuidePager.vue'
 import StoryGuideTabState from './StoryGuideTabState.vue'
 
 const props = defineProps<{ book: BookDetail }>()
@@ -82,10 +86,17 @@ const counts = computed(() => ({
   constellation: null,
 }))
 const notesByChapter = computed(() => view.value?.chapters.filter(({ notes }) => notes.length) ?? [])
-const timelineShown = ref(TIMELINE_CHAPTERS)
-const timelineChapters = computed(() => notesByChapter.value.slice(-timelineShown.value))
-const earlierChapters = computed(() => notesByChapter.value.length - timelineChapters.value.length)
-const previously = computed(() => (view.value ? previouslyByChapter(recap.value?.previously ?? [], view.value, openingTitle.value) : []))
+const hereLabel = computed(() => t('book.detail.storyGuideTab.youAreHere', { percent: percent.value }))
+const timeline = useChapterPages(
+  'timeline',
+  () => notesByChapter.value,
+  () => props.book.id,
+)
+const previously = useChapterPages(
+  'previously',
+  () => (view.value ? previouslyByChapter(recap.value?.previously ?? [], view.value, openingTitle.value) : []),
+  () => props.book.id,
+)
 const expandedPrevious = ref(new Set<number>())
 const stopLabel = computed(() => stopAt.value?.chapterTitle ?? chapterLabel.value)
 const stopPercent = computed(() => (stopAt.value ? formatPercent(stopAt.value.percentage / 100) : percent.value))
@@ -127,10 +138,6 @@ function showAllChapters() {
 function togglePrevious(s: number) {
   if (expandedPrevious.value.has(s)) expandedPrevious.value.delete(s)
   else expandedPrevious.value.add(s)
-}
-
-function showEarlierChapters() {
-  timelineShown.value += TIMELINE_CHAPTERS
 }
 
 function requestAction(action: StoryGuideAction) {
@@ -333,17 +340,23 @@ async function chooseAction(choice: StoryGuideConfirmationChoice) {
             </p>
           </div>
           <p v-else-if="stopMessage" class="text-sm text-muted-foreground" role="status">{{ stopMessage }}</p>
-          <div v-if="previously.length">
-            <div class="mt-4 mb-2 flex items-baseline justify-between gap-2">
+          <div v-if="previously.page.total" class="space-y-2">
+            <div :ref="previously.setTop" class="mt-4 flex scroll-mt-4 flex-wrap items-center gap-x-3 gap-y-2">
               <h3 class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 {{ t('book.detail.storyGuideTab.previously') }}
               </h3>
               <button type="button" class="text-xs text-muted-foreground underline-offset-2 hover:underline" @click="showAllChapters">
                 {{ t('book.detail.storyGuideTab.allChapters') }}
               </button>
+              <StoryGuidePageControls
+                v-model:order="previously.order"
+                v-model:size="previously.size"
+                :total="previously.page.total"
+                class="ms-auto"
+              />
             </div>
             <ol class="divide-y divide-border rounded-xl border border-border bg-card" data-testid="story-guide-previously">
-              <li v-for="chapter in previously" :key="chapter.s">
+              <li v-for="chapter in previously.page.chapters" :key="chapter.s">
                 <button
                   type="button"
                   class="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-2 px-3.5 py-2.5 text-start text-sm hover:bg-muted/60 focus-visible:outline-ring"
@@ -366,13 +379,15 @@ async function chooseAction(choice: StoryGuideConfirmationChoice) {
                 </button>
               </li>
             </ol>
+            <StoryGuidePager :range="previously.page" @previous="previously.previous" @next="previously.next" />
           </div>
         </section>
 
         <section v-else-if="section === 'timeline'" class="min-w-0 space-y-3">
-          <header class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <header :ref="timeline.setTop" class="flex scroll-mt-4 flex-wrap items-baseline gap-x-3 gap-y-1">
             <h2 class="text-base font-semibold">{{ t('book.detail.storyGuideTab.sections.timeline') }}</h2>
             <span class="text-xs text-muted-foreground">{{ t('book.detail.storyGuideTab.timelineAside', { percent }) }}</span>
+            <StoryGuidePageControls v-model:order="timeline.order" v-model:size="timeline.size" :total="timeline.page.total" class="ms-auto" />
           </header>
           <div v-if="lastTwo.length" class="space-y-1.5 rounded-xl border border-border bg-card p-3.5 text-sm">
             <h3 class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -380,18 +395,14 @@ async function chooseAction(choice: StoryGuideConfirmationChoice) {
             </h3>
             <p v-for="(item, index) in lastTwo" :key="index">{{ item.text }}</p>
           </div>
-          <div class="relative grid gap-4.5 ps-5.5" data-testid="story-guide-timeline">
+          <div class="relative grid grid-cols-[minmax(0,1fr)] gap-4.5 ps-5.5" data-testid="story-guide-timeline">
             <span class="absolute inset-y-1.5 start-1.25 w-px bg-border" aria-hidden="true" />
-            <button
-              v-if="earlierChapters"
-              type="button"
-              class="justify-self-start rounded-md border border-input bg-background px-2.5 py-1 text-xs hover:bg-muted"
-              data-testid="story-guide-earlier"
-              @click="showEarlierChapters"
-            >
-              {{ t('book.detail.storyGuideTab.earlierChapters', { count: earlierChapters }) }}
-            </button>
-            <div v-for="chapter in timelineChapters" :key="chapter.s" class="relative">
+            <StoryGuideHereMark
+              v-if="timeline.page.holdsReader && timeline.order === 'newest'"
+              :label="hereLabel"
+              data-testid="story-guide-cutmark"
+            />
+            <div v-for="chapter in timeline.page.chapters" :key="chapter.s" class="relative">
               <span
                 class="absolute -start-5.25 top-1.25 size-2.25 rounded-full border-[1.5px]"
                 :class="chapter.current ? 'border-info bg-info' : 'border-muted-foreground bg-card'"
@@ -422,11 +433,13 @@ async function chooseAction(choice: StoryGuideConfirmationChoice) {
                 </li>
               </ul>
             </div>
-            <p class="relative flex items-center gap-2 text-xs font-medium text-info" data-testid="story-guide-cutmark">
-              <span class="absolute -start-5.5 size-2.75 rounded-full border-2 border-info bg-card" aria-hidden="true" />
-              {{ t('book.detail.storyGuideTab.youAreHere', { percent }) }}<span class="grow border-t border-dashed border-info/50" />
-            </p>
+            <StoryGuideHereMark
+              v-if="timeline.page.holdsReader && timeline.order === 'oldest'"
+              :label="hereLabel"
+              data-testid="story-guide-cutmark"
+            />
           </div>
+          <StoryGuidePager :range="timeline.page" @previous="timeline.previous" @next="timeline.next" />
           <p
             v-if="laterChapters || current"
             class="mt-4 flex items-center gap-2.5 rounded-xl border border-border bg-card px-3.5 py-3 text-[13px] text-muted-foreground"

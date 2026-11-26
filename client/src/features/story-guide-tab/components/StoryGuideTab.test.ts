@@ -81,6 +81,8 @@ function button(tab: VueWrapper, label: string) {
 }
 
 beforeEach(() => {
+  localStorage.clear()
+  Element.prototype.scrollIntoView = vi.fn()
   access.mayBuild = true
   status.value = built
   vi.mocked(fetchStoryGuide).mockResolvedValue(guideFixture)
@@ -119,7 +121,7 @@ describe('StoryGuideTab', () => {
     expect(tab.text()).toContain('Ana arrived.')
     expect(tab.text()).not.toContain('Future note')
     await button(tab, 'Ben').trigger('click')
-    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('Recently')
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('In the story')
     document.body.querySelector<HTMLButtonElement>('[aria-label="Close"]')?.click()
     await flushPromises()
 
@@ -152,14 +154,15 @@ describe('StoryGuideTab', () => {
     await button(tab, 'Timeline').trigger('click')
     const timeline = tab.get('[data-testid=story-guide-timeline]')
     const headings = timeline.findAll('h3')
-    expect(headings.map((entry) => entry.text())).toEqual(['Arrival 0%', expect.stringMatching(/^At the gate \d+%Reading$/)])
+    expect(headings.map((entry) => entry.text())).toEqual([expect.stringMatching(/^At the gate \d+%Reading$/), 'Arrival 0%'])
     const dots = timeline.findAll('h3').map((entry) => entry.element.previousElementSibling?.className ?? '')
-    expect(dots[0]).toContain('bg-card')
-    expect(dots[1]).toContain('bg-info')
+    expect(dots[0]).toContain('bg-info')
+    expect(dots[1]).toContain('bg-card')
     const notes = timeline.findAll('li')
-    expect(notes.map((entry) => entry.text().replace(/\s+/g, ' '))).toEqual(['Ana arrived. Ana', 'The gate opens for Ben. Ben'])
+    expect(notes.map((entry) => entry.text().replace(/\s+/g, ' '))).toEqual(['The gate opens for Ben. Ben', 'Ana arrived. Ana'])
     expect(notes.every((entry) => !entry.classes().includes('border'))).toBe(true)
-    expect(timeline.findAll('p').at(-1)?.text()).toBe('You are here, 48%')
+    expect(timeline.findAll('p').at(0)?.text()).toBe('You are here, 48%')
+    expect(tab.find('[data-testid=story-guide-pager]').exists()).toBe(false)
     expect(tab.get('[data-testid=story-guide-ahead]').text()).toBe('The rest of At the gate and one more chapter open as you read.')
     expect(tab.text()).not.toContain('Move')
   })
@@ -440,26 +443,37 @@ describe('StoryGuideTab', () => {
     expect(reload).toHaveBeenCalledOnce()
   })
 
-  it('caps Previously at the newest four chapters and links to all of them', async () => {
-    const sections = Array.from({ length: 10 }, (_, s) => ({ s, title: `Part ${s + 1}`, chars: 100, h: 'h' }))
+  it('pages Previously newest first and links to all chapters', async () => {
+    const sections = Array.from({ length: 12 }, (_, s) => ({ s, title: `Part ${s + 1}`, chars: 100, h: 'h' }))
     vi.mocked(fetchStoryGuide).mockResolvedValue({ ...guideFixture, sections })
     const previously = sections.map(({ s, title }) => ({ s, title, text: `Summary ${s}` }))
     vi.mocked(fetchStoryRecap).mockImplementation(async (_id, stop) => ({
       ...recap,
-      cut: { s: 9, placedQuotes: [] },
+      cut: { s: 11, placedQuotes: [] },
       previously,
       stop: stop ? recap.stop : { state: 'skipped' },
     }))
     const tab = await openTab()
+    const titles = () =>
+      tab
+        .get('[data-testid=story-guide-previously]')
+        .findAll('li')
+        .map((entry) => entry.find('span span').text())
+    expect(titles()).toEqual(['Part 12', 'Part 11', 'Part 10', 'Part 9', 'Part 8', 'Part 7', 'Part 6', 'Part 5', 'Part 4', 'Part 3'])
+    expect(tab.get('[data-testid=story-guide-pager]').text()).toContain('Part 12 to Part 3Page 1 of 2')
+    await tab.get('[data-testid=story-guide-pager]').findAll('button')[1]!.trigger('click')
+    expect(titles()).toEqual(['Part 2', 'Part 1'])
+    await tab.get('[data-testid=story-guide-page-order]').setValue('oldest')
+    expect(titles().slice(0, 2)).toEqual(['Part 1', 'Part 2'])
+    await tab.get('[data-testid=story-guide-page-order]').setValue('newest')
     const list = tab.get('[data-testid=story-guide-previously]')
-    expect(list.findAll('li').map((entry) => entry.find('span span').text())).toEqual(['Part 10', 'Part 9', 'Part 8', 'Part 7'])
     expect(list.get('button').attributes('aria-expanded')).toBe('false')
     expectClamped(list.get('button span.mt-1').classes(), true)
     await list.get('button').trigger('click')
     expect(list.get('button').attributes('aria-expanded')).toBe('true')
     expectClamped(list.get('button span.mt-1').classes(), false)
     await button(tab, 'All chapters').trigger('click')
-    expect(tab.text()).toContain('of 10 open')
+    expect(tab.text()).toContain('of 12 open')
     const chapter = tab.findAll('ol button[aria-expanded]').find((entry) => entry.find('span.mt-1').exists())!
     expectClamped(chapter.get('span.mt-1').classes(), true)
     await chapter.trigger('click')
@@ -537,7 +551,7 @@ describe('StoryGuideTab', () => {
     }
   })
 
-  it('shows the latest Timeline chapters first and earlier ones on request', async () => {
+  it('pages the Timeline newest first, then by the chosen order and page size', async () => {
     const sections = Array.from({ length: 25 }, (_, s) => ({ s, title: `Part ${s + 1}`, chars: 100, h: 'h' }))
     const timeline = sections.map(({ s }) => ({ note: `Note ${s}`, at: { s, o: 0, q: `q${s}` }, through: { s, end: true as const }, chapter: null }))
     vi.mocked(fetchStoryGuide).mockResolvedValue({
@@ -557,13 +571,35 @@ describe('StoryGuideTab', () => {
         .get('[data-testid=story-guide-timeline]')
         .findAll('h3')
         .map((entry) => entry.text().split(' ').slice(0, 2).join(' '))
+    const pager = () => tab.get('[data-testid=story-guide-pager]')
+    const cutAt = () =>
+      tab
+        .get('[data-testid=story-guide-timeline]')
+        .findAll('p, h3')
+        .findIndex((entry) => entry.text().startsWith('You are here'))
     expect(headings()).toHaveLength(10)
-    expect(headings()[0]).toBe('Part 16')
+    expect(headings()[0]).toBe('Part 25')
+    expect(headings().at(-1)).toBe('Part 16')
+    expect(cutAt()).toBe(0)
+    expect(pager().text()).toContain('Part 25 to Part 16Page 1 of 3')
+    expect(pager().findAll('button')[0]!.attributes('disabled')).toBeDefined()
+
+    await pager().findAll('button')[1]!.trigger('click')
+    expect(headings()[0]).toBe('Part 15')
+    expect(cutAt()).toBe(-1)
+    expect(pager().text()).toContain('Part 15 to Part 6Page 2 of 3')
+
+    await tab.get('[data-testid=story-guide-page-order]').setValue('oldest')
+    expect(headings()[0]).toBe('Part 1')
+    expect(pager().text()).toContain('Part 1 to Part 10Page 1 of 3')
+    expect(localStorage.getItem('bookorbit:story-guide-timeline-order')).toBe('oldest')
+    expect(localStorage.getItem('bookorbit:story-guide-previously-order')).toBe('newest')
+
+    await tab.get('[data-testid=story-guide-page-size]').setValue('50')
+    expect(headings()).toHaveLength(25)
     expect(headings().at(-1)).toBe('Part 25')
-    expect(tab.get('[data-testid=story-guide-earlier]').text()).toBe('Show earlier chapters (15)')
-    await tab.get('[data-testid=story-guide-earlier]').trigger('click')
-    expect(headings()).toHaveLength(20)
-    expect(headings()[0]).toBe('Part 6')
+    expect(cutAt()).toBe(25)
+    expect(tab.find('[data-testid=story-guide-pager]').exists()).toBe(false)
   })
 
   it('lists the five build steps with the current one marked', async () => {
