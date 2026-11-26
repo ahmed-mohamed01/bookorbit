@@ -25,7 +25,9 @@ import { coverStackUrl, useCoverTint } from '@/features/book/composables/useCove
 import { useDisplaySettings } from '@/composables/useDisplaySettings'
 import EntityNotFound from '@/components/EntityNotFound.vue'
 import { prefetchPdfReader } from '@/features/reader/pdf-v4/prefetch-pdf-reader'
+import { STORY_GUIDE_TAB_AVAILABLE, useStoryGuideTabAvailability } from '@/features/story-guide-tab/composables/useStoryGuideTabAvailability'
 
+const StoryGuideTab = defineAsyncComponent(() => import('@/features/story-guide-tab/components/StoryGuideTab.vue'))
 const loadReadingLogTab = () => import('@/features/book/components/detail/tabs/ReadingLogTab.vue')
 const loadHighlightsTab = () => import('@/features/book/components/detail/tabs/HighlightsTab.vue')
 const loadChaptersTab = () => import('@/features/book/components/detail/tabs/ChaptersTab.vue')
@@ -63,6 +65,8 @@ const parentLibrary = computed(() =>
   detail.value?.libraryId != null && detail.value.libraryName ? { id: detail.value.libraryId, name: detail.value.libraryName } : null,
 )
 const hasChapters = computed(() => hasChaptersTab(detail.value))
+const hasStoryGuide = useStoryGuideTabAvailability(() => (detail.value?.id === bookId.value ? detail.value : null))
+provide(STORY_GUIDE_TAB_AVAILABLE, hasStoryGuide)
 
 // A chapters link to a book without audio or read-along narration (or one whose audio was removed) lands on the details.
 watch([tab, detail], ([current, book]) => {
@@ -76,6 +80,7 @@ const pageTitle = computed(() => {
   if (tab.value === 'edit') return t('views.bookDetail.pageTitle.editMetadata', { base })
   if (tab.value === 'files') return t('views.bookDetail.pageTitle.files', { base })
   if (tab.value === 'chapters') return t('views.bookDetail.pageTitle.chapters', { base })
+  if (tab.value === 'story-guide' && hasStoryGuide.value) return t('views.bookDetail.pageTitle.storyGuide', { base })
   if (tab.value === 'reading-log') return t('views.bookDetail.pageTitle.readingLog', { base })
   if (tab.value === 'highlights') return t('views.bookDetail.pageTitle.highlights', { base })
   return t('views.bookDetail.pageTitle.book', { base })
@@ -231,7 +236,7 @@ function onChaptersChanged() {
         -->
         <KeepAlive :include="KEPT_ALIVE_TABS">
           <DetailsTab
-            v-if="tab === 'details'"
+            v-if="tab === 'details' || (tab === 'story-guide' && !hasStoryGuide)"
             :book="detail"
             @saved="onMetadataSaved"
             @moved="handleMovedToLibrary"
@@ -248,6 +253,7 @@ function onChaptersChanged() {
           />
           <FilesTab v-else-if="tab === 'files'" :book="detail" @refetch="fetch(detail.id)" />
           <ChaptersTab v-else-if="tab === 'chapters' && hasChapters" :book="detail" @changed="onChaptersChanged" />
+          <StoryGuideTab v-else-if="tab === 'story-guide' && hasStoryGuide" :key="detail.id" :book="detail" />
           <ReadingLogTab v-else-if="tab === 'reading-log'" :book="detail" @saved="onMetadataSaved" @refetch="handleBookRefetch" />
           <HighlightsTab v-else-if="tab === 'highlights'" :book="detail" />
         </KeepAlive>

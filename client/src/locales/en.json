@@ -7761,6 +7761,7 @@
         "editMetadata": "Edit Metadata",
         "files": "Files",
         "chapters": "Chapters",
+        "storyGuide": "Story Guide",
         "readingLog": "Reading Log",
         "highlights": "Highlights"
       },
@@ -9856,6 +9857,132 @@
           "unavailable": "Read-aloud unavailable",
           "running": "{stage} · {percent}"
         }
+      },
+      "storyGuideTab": {
+        "sections": {
+          "recap": "Story so far",
+          "timeline": "Timeline",
+          "chapters": "Chapters",
+          "characters": "Characters",
+          "constellation": "Constellation"
+        },
+        "sectionNav": "Story guide sections",
+        "cutLabel": "Spoiler cut",
+        "cut": "Up to {percent}, {chapter}",
+        "follows": "Follows where you are, re-reads included",
+        "noSavedPosition": "No saved reading position",
+        "noPosition": "Start reading to see the story so far.",
+        "loading": "Loading the story guide",
+        "unavailable": "The story guide could not be loaded.",
+        "unavailableState": {
+          "audio": {
+            "title": "No story guide for audiobooks",
+            "body": "Story guides are built from a book's text, so they need an ebook. Add an EPUB, KEPUB, MOBI, AZW or AZW3 file of this book to build one."
+          },
+          "comic": {
+            "title": "No story guide for comics and manga",
+            "body": "Story guides are built from a book's text. Comics and manga tell their story mostly in pictures, so a guide can't be made from them."
+          },
+          "format": {
+            "title": "No story guide for this format",
+            "body": "Story guides are built from EPUB, KEPUB, MOBI, AZW or AZW3 files. This book has {formats}, which a guide can't be built from."
+          },
+          "none": {
+            "title": "No story guide yet",
+            "body": "This book has no files a story guide can be built from."
+          }
+        },
+        "state": {
+          "emptyTitle": "No story guide yet",
+          "emptyBody": "A story guide lists the characters, places and ties in this book and summarizes each chapter, cut at where you are so nothing ahead is spoiled.",
+          "privacy": "The whole text of the book is sent to the server's AI provider. Your reading position and notes are not.",
+          "needsPermission": "Someone with permission to build story guides can build one for this book.",
+          "buildingTitle": "Building the story guide",
+          "buildingBody": "You can leave this page. The guide shows up here when it is done."
+        },
+        "loadingRecap": "Reading help is preparing your recap.",
+        "updateAvailable": "An improved story guide is available.",
+        "updateExplanation": "Updating keeps fixes people have made.",
+        "aiNote": "Characters, places and ties are found by AI and can be wrong.",
+        "recapAside": "Recap up to {percent}",
+        "refresh": "Refresh",
+        "whereStopped": "Where you stopped, {chapter}",
+        "previously": "Previously",
+        "allChapters": "All chapters",
+        "stopBehind": "Written at {percent}. Refresh for where you are now.",
+        "earlierChapters": "{count, plural, one {Show one earlier chapter} other {Show earlier chapters (#)}}",
+        "provenance": "Written by Reading help from the pages you have read. Nothing past your position is sent.",
+        "stopState": {
+          "unplaced": "Your exact reading position could not be placed.",
+          "skipped": "Refresh for a recap of where you are now.",
+          "off": "Reading help is off.",
+          "budget": "Reading help has reached its budget.",
+          "cap": "You’ve reached your Reading help limit.",
+          "failed": "Reading help could not write a recap. You can try again."
+        },
+        "timelineAside": "Events up to {percent}, oldest first",
+        "whereLeft": "Where you left off, {chapter}",
+        "youAreHere": "You are here, {percent}",
+        "timelineAhead": "{count, plural, =0 {The rest of {chapter} opens as you read.} one {The rest of {chapter} and one more chapter open as you read.} other {The rest of {chapter} and # more chapters open as you read.}}",
+        "chaptersOpen": "{open} of {total} open",
+        "opening": "Opening",
+        "partial": "You are partway through. {count, plural, one {# later part is hidden.} other {# later parts are hidden.}}",
+        "hidden": "Hidden until you reach it",
+        "reading": "Reading",
+        "characterHeading": "Characters, places and terms",
+        "characterAside": "Up to {percent}, main first",
+        "groups": {
+          "people": "People",
+          "places": "Places",
+          "terms": "Terms"
+        },
+        "kinds": {
+          "character": "Character",
+          "place": "Place",
+          "group": "Group",
+          "event": "Event",
+          "object": "Object",
+          "idea": "Idea",
+          "term": "Term"
+        },
+        "importance": {
+          "1": "Main",
+          "2": "Supporting",
+          "3": "Minor"
+        },
+        "search": "Search names",
+        "since": "Since {chapter}",
+        "alsoKnownAs": "Also known as",
+        "noProfile": "Nothing written about them yet at this point.",
+        "noNames": "No names match.",
+        "showMore": "Show more",
+        "who": "Who they are",
+        "now": "Now",
+        "recent": "Recently",
+        "ties": "Ties",
+        "tieGroups": {
+          "family": "Family",
+          "love": "Love",
+          "bonds": "Bonds",
+          "friends-and-enemies": "Friends and enemies",
+          "work-and-study": "Work and study",
+          "belongs-to": "Belongs to",
+          "owns": "Owns",
+          "lives-at": "Lives at",
+          "other": "Other"
+        },
+        "often": "Often with",
+        "close": "Close",
+        "graphAside": "{stars} stars, {ties} ties, up to {percent}",
+        "connections": "{ties, plural, one {# tie} other {# ties}}, {links} co-mentions",
+        "tie": "Tie",
+        "together": "Often together",
+        "graphHelpTitle": "How to read it",
+        "graphHelp": "Each star is a name the book has used by {percent}. Bigger stars matter more to the story. Solid lines are ties the book states. Thicker means stated more often.",
+        "selectStar": "Select a star to see who it connects to.",
+        "toggleLinks": "Show names often mentioned together",
+        "open": "Open",
+        "clear": "Clear"
       },
       "storyGuide": {
         "title": "Story guide",
@@ -17446,6 +17573,7 @@
         "edit": "Edit · {base}",
         "files": "Files · {base}",
         "chapters": "Chapters · {base}",
+        "storyGuide": "Story Guide · {base}",
         "readingLog": "Reading Log · {base}",
         "highlights": "Highlights · {base}"
       }

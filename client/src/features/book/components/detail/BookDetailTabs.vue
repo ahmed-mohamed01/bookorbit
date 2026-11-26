@@ -1,16 +1,19 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, inject } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { normalizeBookDetailTab, type BookDetailTab } from '@/features/book/lib/book-detail-tabs'
+import { STORY_GUIDE_TAB_AVAILABLE } from '@/features/story-guide-tab/composables/useStoryGuideTabAvailability'
 
 const props = defineProps<{ bookId: number; canEditMetadata?: boolean; hasChapters?: boolean }>()
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
+const hasStoryGuide = inject(STORY_GUIDE_TAB_AVAILABLE, null)
 
 const activeTab = computed(() => {
   const requested = normalizeBookDetailTab(route.query.tab)
+  if (requested === 'story-guide' && !hasStoryGuide?.value) return 'details'
   return requested === 'edit' && !props.canEditMetadata ? 'details' : requested
 })
 
@@ -21,6 +24,7 @@ const tabs = computed<{ label: string; tab: BookDetailTab }[]>(() => {
   }
   result.push({ label: t('book.detail.tabs.files'), tab: 'files' })
   if (props.hasChapters) result.push({ label: t('book.detail.tabs.chapters'), tab: 'chapters' })
+  if (hasStoryGuide?.value) result.push({ label: t('book.detail.tabs.storyGuide'), tab: 'story-guide' })
   result.push({ label: t('book.detail.tabs.readingLog'), tab: 'reading-log' })
   result.push({ label: t('book.detail.tabs.highlights'), tab: 'highlights' })
   return result

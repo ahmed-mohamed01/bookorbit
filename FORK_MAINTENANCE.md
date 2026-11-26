@@ -848,7 +848,11 @@ isolates this tab's changes from earlier fork changes in the same files.
 
 | Upstream file                                                   | Feature added / removed | Total added / removed | Hook                                                                  |
 | --------------------------------------------------------------- | ----------------------: | --------------------: | --------------------------------------------------------------------- |
+| `client/src/features/book/lib/book-detail-tabs.ts`              |                   1 / 1 |                 1 / 1 | Recognize the tab query value                                         |
+| `client/src/features/book/components/detail/BookDetailTabs.vue` |                   5 / 1 |                 5 / 1 | Read the optional availability flag and insert the tab after Chapters |
+| `client/src/views/BookDetailView.vue`                           |                   7 / 1 |                21 / 7 | Provide availability, lazy-load the tab and fall back to Details      |
 | `packages/types/src/index.ts`                                   |                   1 / 0 |                13 / 0 | Re-export the fork recap contract                                     |
+| `client/src/locales/en.json`                                    |                 128 / 0 |             2858 / 59 | Tab, window title, section and unavailable-state copy                 |
 
 ### Jobs queue action and request drawer hooks
 
