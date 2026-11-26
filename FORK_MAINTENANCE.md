@@ -1166,6 +1166,11 @@ through `db.select()` on module-local `pgTable` declarations. Monitored settings
 monitored-owned table, not in `app_settings` (they did until 2026-09-16; the legacy keys are read
 once to seed the table and then ignored).
 
+**Covers:** a work's `coverUrl` comes from Hardcover only (`cluster-merger.ts`). Audible's art is
+kept apart as `audioCoverUrl` (`author_catalog_works.audio_cover_url`, added by the bootstrap) so a
+client can show the audiobook cover of a release it does not own yet; existing works fill it on
+their next catalog refresh.
+
 **Seams / hooks in shared files (keep minimal + generic):**
 
 | Shared file                                                                       | Hook                                                                                                | Conflict cost                                               |

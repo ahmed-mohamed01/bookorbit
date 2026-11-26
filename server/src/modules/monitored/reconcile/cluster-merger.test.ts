@@ -88,6 +88,25 @@ describe('mergeCluster', () => {
     expect(work.audioDateSource).toBe('audible');
   });
 
+  it('keeps the Audible cover as the audiobook cover and the Hardcover one as the cover', () => {
+    const work = mergeCluster(
+      cluster(
+        observation('hardcover', { cover: 'https://assets.hardcover.app/book.jpg' }),
+        observation('audible', { cover: 'https://m.media-amazon.com/images/I/audio.jpg' }),
+      ),
+      '2026-11-26',
+    );
+
+    expect(work.cover).toBe('https://assets.hardcover.app/book.jpg');
+    expect(work.audioCover).toBe('https://m.media-amazon.com/images/I/audio.jpg');
+  });
+
+  it('has no audiobook cover without an Audible one', () => {
+    const work = mergeCluster(cluster(observation('hardcover', { cover: 'https://assets.hardcover.app/book.jpg' })), '2026-11-26');
+
+    expect(work.audioCover).toBeNull();
+  });
+
   it('keeps a released Hardcover date as the ebook date', () => {
     const work = mergeCluster(cluster(observation('hardcover', { releaseDate: '2024-05-12', releaseYear: 2024, precision: 'day' })), '2026-09-03');
 

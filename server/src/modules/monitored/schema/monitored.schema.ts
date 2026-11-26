@@ -142,6 +142,7 @@ export const authorCatalogWorks = pgTable(
     audioReleaseDate: varchar('audio_release_date', { length: 10 }),
     audioDatePrecision: varchar('audio_date_precision', { length: 5 }).$type<MonitoredDatePrecision>(),
     coverUrl: text('cover_url'),
+    audioCoverUrl: text('audio_cover_url'),
     description: text('description'),
     verdict: varchar('verdict', { length: 10 }).$type<MonitoredWorkVerdict>().notNull(),
     flags: jsonb('flags').$type<MonitoredWorkFlag[]>().notNull().default([]),

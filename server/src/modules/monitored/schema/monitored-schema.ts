@@ -841,4 +841,6 @@ ALTER TABLE "monitored_authors" ADD COLUMN IF NOT EXISTS "fetch_started_at" time
 CREATE INDEX IF NOT EXISTS "monitored_authors_fetch_owner_idx" ON "monitored_authors" ("owner_user_id","fetch_state") WHERE "fetch_state" <> 'idle';
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "monitored_authors_fetch_finish_idx" ON "monitored_authors" ("owner_user_id",(coalesce("fetch_error_at", "last_refreshed_at")),"id" COLLATE "C");
+--> statement-breakpoint
+ALTER TABLE "author_catalog_works" ADD COLUMN IF NOT EXISTS "audio_cover_url" text;
 `;

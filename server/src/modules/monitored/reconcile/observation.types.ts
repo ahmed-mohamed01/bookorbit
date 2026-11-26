@@ -62,6 +62,8 @@ export interface MergedWork {
   seriesSource: ObservationSource | null;
   cover: string | null;
   coverSource: ObservationSource | null;
+  /** Audible's art for the audiobook edition, kept apart from [cover], which never takes it. */
+  audioCover?: string | null;
   description: string | null;
   hasDesc: boolean;
   sources: ObservationSource[];

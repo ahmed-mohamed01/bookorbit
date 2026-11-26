@@ -476,6 +476,8 @@ export interface MonitoredWork {
   /** Per-format release probe results; absent for works outside the probe window. */
   formatReleases?: Partial<Record<MonitoredFormat, MonitoredFormatRelease>>;
   coverUrl: string | null;
+  /** Audible's audiobook cover, when the catalog saw one; [coverUrl] is the book's. */
+  audioCoverUrl?: string | null;
   description: string | null;
   verdict: MonitoredWorkVerdict;
   flags: MonitoredWorkFlag[];

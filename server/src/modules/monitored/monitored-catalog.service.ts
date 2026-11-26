@@ -942,6 +942,7 @@ export class MonitoredCatalogService {
       audioReleaseDate: work.audioReleaseDate,
       audioDatePrecision: work.audioDatePrecision,
       coverUrl: work.cover,
+      audioCoverUrl: work.audioCover ?? null,
       description: work.description,
       verdict: result.verdict,
       flags: result.flags,

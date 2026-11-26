@@ -284,6 +284,7 @@ export function mergeCluster(cluster: WorkCluster, today: string): MergedWork {
     seriesSource: series.source,
     cover: cover.value,
     coverSource: cover.source,
+    audioCover: firstValue(observations, ['audible'], (observation) => observation.cover).value,
     description,
     hasDesc: observations.some((observation) => observation.hasDesc),
     sources,

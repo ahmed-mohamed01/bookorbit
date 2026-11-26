@@ -1642,6 +1642,7 @@ export class MonitoredStoreService implements OnModuleDestroy {
                 audioReleaseDate: sql`excluded.audio_release_date`,
                 audioDatePrecision: sql`excluded.audio_date_precision`,
                 coverUrl: sql`excluded.cover_url`,
+                audioCoverUrl: sql`excluded.audio_cover_url`,
                 description: sql`excluded.description`,
                 verdict: sql`excluded.verdict`,
                 flags: sql`excluded.flags`,
@@ -2384,6 +2385,7 @@ export class MonitoredStoreService implements OnModuleDestroy {
           }
         : {}),
       coverUrl: row.coverUrl,
+      audioCoverUrl: row.audioCoverUrl ?? null,
       description: row.description,
       verdict: row.verdict,
       flags: row.flags,
@@ -2548,6 +2550,7 @@ export class MonitoredStoreService implements OnModuleDestroy {
       audioReleaseDate: work.audioReleaseDate,
       audioDatePrecision: work.audioDatePrecision,
       coverUrl: work.coverUrl,
+      audioCoverUrl: work.audioCoverUrl ?? null,
       description: work.description,
       verdict: work.verdict,
       flags: work.flags,
