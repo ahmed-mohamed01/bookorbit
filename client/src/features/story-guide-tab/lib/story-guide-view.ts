@@ -5,6 +5,7 @@ import {
   type ForkStoryGuidePayload,
   type ForkStoryRecap,
   type StoryGuideAnchor,
+  type StoryGuideChronicleTimelineEntry,
   type StoryGuideEntityKind,
   type StoryGuideJoin,
 } from '@bookorbit/types'
@@ -16,7 +17,9 @@ export function anchorVisibility(cut: ForkStoryGuideCut | null) {
 }
 
 function compareAnchors(a: StoryGuideAnchor, b: StoryGuideAnchor): number {
-  return a.s - b.s || ('o' in a ? a.o : Infinity) - ('o' in b ? b.o : Infinity)
+  if (a.s !== b.s) return a.s - b.s
+  if ('o' in a && 'o' in b) return a.o - b.o
+  return Number('end' in a) - Number('end' in b)
 }
 
 export type EntityGroup = 'people' | 'places' | 'terms'
@@ -36,11 +39,14 @@ export interface EntityView {
   firstSeen: number
   aliases: { name: string; s: number }[]
   profiles: { text: string; s: number }[]
+  /** Set for a character the reader last met at least LAST_SEEN_CHAPTERS chapters ago: shown in place of Now. */
+  lastSeen: string | null
   search: string[]
 }
 
 type Entry = Pick<StoryGuideJoin, 'key' | 'name' | 'names' | 'lines' | 'profiles'>
 type Visible = ReturnType<typeof anchorVisibility>
+type CutEntity = EntityView & { firstAnchor: StoryGuideAnchor }
 
 function firstName(entry: Entry) {
   return entry.names.reduce<(typeof entry.names)[number] | undefined>(
@@ -49,14 +55,7 @@ function firstName(entry: Entry) {
   )
 }
 
-function entityView(
-  entry: Entry,
-  merged: StoryGuideJoin[],
-  kind: StoryGuideEntityKind,
-  importance: EntityView['importance'],
-  mentions: number | undefined,
-  visible: Visible,
-): EntityView | undefined {
+function entityView(entry: Entry, merged: StoryGuideJoin[], kind: StoryGuideEntityKind, visible: Visible): CutEntity | undefined {
   const first = firstName(entry)
   if (!first || !visible(first.at)) return
   const sources = [entry, ...merged]
@@ -80,17 +79,19 @@ function entityView(
     key: entry.key,
     name,
     kind,
-    importance,
-    mentions: mentions ?? names.length,
+    importance: 2,
+    mentions: 0,
     firstSeen: first.at.s,
+    firstAnchor: first.at,
     aliases: Array.from(aliases, ([name, s]) => ({ name, s })),
     profiles: profiles.map(({ through, text }) => ({ s: through.s, text })),
+    lastSeen: null,
     search: [name, ...aliases.keys()].map((name) => name.toLocaleLowerCase()),
   }
 }
 
 function visibleEntities(guide: ForkStoryGuidePayload, visible: Visible) {
-  const byKey = new Map<string, EntityView>()
+  const byKey = new Map<string, CutEntity>()
   const resolved = new Map<string, EntityView>()
   for (const entity of guide.entities) {
     const first = firstName(entity)
@@ -101,14 +102,14 @@ function visibleEntities(guide: ForkStoryGuidePayload, visible: Visible) {
       if (shown && (visible(join.at) || (early && visible(early)))) {
         merged.push(join)
       } else {
-        const view = entityView(join, [], entity.kind, 2, undefined, visible)
+        const view = entityView(join, [], entity.kind, visible)
         if (view) {
           byKey.set(view.key, view)
           resolved.set(view.key, view)
         }
       }
     }
-    const view = entityView(entity, merged, entity.kind, entity.importance ?? 2, entity.count, visible)
+    const view = entityView(entity, merged, entity.kind, visible)
     if (view) {
       byKey.set(view.key, view)
       resolved.set(view.key, view)
@@ -122,6 +123,139 @@ function addToIndex<K, T>(map: Map<K, T[]>, key: K, item: T) {
   const entries = map.get(key)
   if (entries) entries.push(item)
   else map.set(key, [item])
+}
+
+type EntityEntries = Map<EntityView, { entry: StoryGuideChronicleTimelineEntry; own: boolean }[]>
+
+/** Every visible chronicle row, under the shown entity it resolves to (its own or a merged join's). */
+function visibleEntries(chronicle: ForkStoryGuidePayload['chronicle'], resolved: Map<string, EntityView>, visible: Visible): EntityEntries {
+  const entriesByEntity: EntityEntries = new Map()
+  for (const [key, { timeline }] of Object.entries(chronicle?.entities ?? {})) {
+    const entity = resolved.get(key)
+    if (!entity) continue
+    for (const entry of timeline) {
+      if (visible(entry.through) && visible(entry.at)) addToIndex(entriesByEntity, entity, { entry, own: key === entity.key })
+    }
+  }
+  return entriesByEntity
+}
+
+/** Chapters a character may go unseen before the sheet says "Last seen in" instead of "Now". */
+export const LAST_SEEN_CHAPTERS = 10
+
+const CHAPTER_NUMBER = /^\s*(?:chapter|ch\.?)\s*(\d+)(?:\s*[-–]\s*(\d+))?/i
+
+function chapterNumber(label: string | null | undefined, endOfRange = false) {
+  const match = label ? CHAPTER_NUMBER.exec(label) : null
+  const number = (endOfRange ? match?.[2] : undefined) ?? match?.[1]
+  return number === undefined ? null : Number(number)
+}
+
+function sectionTitles(guide: ForkStoryGuidePayload) {
+  const titled = guide.sections
+    .filter(({ title }) => title?.trim())
+    .map(({ s, title }) => ({ s, title: title!.trim() }))
+    .sort((a, b) => a.s - b.s)
+  /** The title of section s, else the nearest titled section before it. */
+  return (s: number) => {
+    let found: string | null = null
+    for (const section of titled) {
+      if (section.s > s) break
+      found = section.title
+    }
+    return found
+  }
+}
+
+/**
+ * The chapter label of the unit the reader is in, when the chronicle establishes one: the next unseen unit
+ * end must lie at or after the reader's section, the last seen one before it, and an entry of that unit must
+ * start at or before the reader's section, so a unit no entity has never borrows a later chapter's label.
+ */
+function readerUnitChapter(chronicle: ForkStoryGuidePayload['chronicle'], cut: ForkStoryGuideCut, visible: Visible) {
+  const timelines = Object.values(chronicle?.entities ?? {}).map(({ timeline }) => timeline)
+  let previous: StoryGuideAnchor | undefined
+  let next: StoryGuideAnchor | undefined
+  for (const timeline of timelines) {
+    for (const { through } of timeline) {
+      if (visible(through)) {
+        if (!previous || compareAnchors(through, previous) > 0) previous = through
+      } else if (!next || compareAnchors(through, next) < 0) next = through
+    }
+  }
+  if (!next || next.s < cut.s || (previous && previous.s >= cut.s)) return null
+  const end = next
+  const unit = timelines.flatMap((timeline) => timeline.filter(({ through }) => compareAnchors(through, end) === 0))
+  if (!unit.some(({ at }) => at.s <= cut.s)) return null
+  return unit.find(({ chapter }) => chapter != null)?.chapter ?? null
+}
+
+function markLastSeen(guide: ForkStoryGuidePayload, cut: ForkStoryGuideCut | null, entriesByEntity: EntityEntries, visible: Visible) {
+  if (!cut) return
+  const titleOf = sectionTitles(guide)
+  const readerChapter = chapterNumber(
+    readerUnitChapter(guide.chronicle, cut, visible) ?? (guide.sections.some(({ s }) => s === cut.s) ? titleOf(cut.s) : null),
+  )
+  if (readerChapter === null) return
+  for (const [entity, entries] of entriesByEntity) {
+    if (entity.kind !== 'character') continue
+    let latest: (typeof entries)[number] | undefined
+    for (const candidate of entries) {
+      const order = latest ? compareAnchors(candidate.entry.through, latest.entry.through) : 1
+      if (order > 0 || (order === 0 && candidate.own && !latest!.own)) latest = candidate
+    }
+    if (!latest) continue
+    const { chapter, through } = latest.entry
+    const seen = chapterNumber(chapter ?? titleOf(through.s), true)
+    if (seen === null || readerChapter - seen < LAST_SEEN_CHAPTERS) continue
+    entity.lastSeen = chapter ? chapter.replace(/^Ch\s+/, 'Chapter ') : sectionChapter(titleOf(through.s), through.s)
+  }
+}
+
+function sectionChapter(title: string | null, s: number) {
+  if (!title) return `Chapter ${s + 1}`
+  const number = CHAPTER_NUMBER.exec(title)?.[1]
+  return number ? `Chapter ${number}` : title
+}
+
+function rankEntities(entriesByEntity: EntityEntries, entities: CutEntity[], tieCount: (key: string) => number) {
+  const units = new Set<string>()
+  for (const [entity, entries] of entriesByEntity) {
+    entries.sort(
+      (a, b) =>
+        compareAnchors(a.entry.through, b.entry.through) ||
+        Number(b.entry.note !== null) - Number(a.entry.note !== null) ||
+        Number(b.own) - Number(a.own),
+    )
+    let previousEnd: StoryGuideAnchor | undefined
+    let previousRow: string | undefined
+    for (const {
+      entry: { through, chapter },
+    } of entries) {
+      if (previousEnd && compareAnchors(previousEnd, through) === 0) continue
+      previousEnd = through
+      const row = chapter == null ? `s${through.s}` : `c${chapter}`
+      if (row === previousRow) continue
+      previousRow = row
+      units.add(row)
+      entity.mentions++
+    }
+  }
+  if (units.size) {
+    for (const entity of entities) {
+      if (entity.mentions <= 1) entity.importance = 3
+      else if (entity.mentions >= units.size * 0.25) entity.importance = 1
+    }
+  }
+
+  return entities.sort(
+    (a, b) =>
+      a.importance - b.importance ||
+      b.mentions - a.mentions ||
+      tieCount(b.key) - tieCount(a.key) ||
+      compareAnchors(a.firstAnchor, b.firstAnchor) ||
+      a.name.localeCompare(b.name),
+  )
 }
 
 /** The newest pair description the reader has reached, under the two raw keys in either order. */
@@ -251,7 +385,9 @@ export function buildStoryGuideView(guide: ForkStoryGuidePayload, cut: ForkStory
     if (visible(through)) chapter.summaries.push(text)
     else chapter.hidden++
   }
-  const entities = [...byKey.values()].sort((a, b) => a.importance - b.importance || a.firstSeen - b.firstSeen)
+  const entriesByEntity = visibleEntries(guide.chronicle, resolved, visible)
+  markLastSeen(guide, cut, entriesByEntity, visible)
+  const entities = rankEntities(entriesByEntity, [...byKey.values()], (key) => tiesByKey.get(key)?.length ?? 0)
   const groups = { people: [], places: [], terms: [] } as Record<EntityGroup, EntityView[]>
   for (const entity of entities) groups[entityGroup(entity.kind)].push(entity)
 

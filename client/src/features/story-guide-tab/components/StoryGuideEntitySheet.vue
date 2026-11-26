@@ -65,12 +65,19 @@ function handleOpenChange(open: boolean) {
             <ul v-if="entity.profiles.length" class="divide-y divide-border rounded-lg border border-border">
               <li v-for="(profile, index) in entity.profiles" :key="index" class="space-y-0.5 px-2.5 py-2">
                 <span class="block truncate text-xs text-muted-foreground">{{
-                  index === 0 ? t('book.detail.storyGuideTab.now') : view.chapterTitle(profile.s)
+                  index > 0
+                    ? view.chapterTitle(profile.s)
+                    : entity.lastSeen
+                      ? t('book.detail.storyGuideTab.lastSeen', { chapter: entity.lastSeen })
+                      : t('book.detail.storyGuideTab.now')
                 }}</span>
                 <span class="block" :class="{ 'text-muted-foreground': index > 0 }">{{ profile.text }}</span>
               </li>
             </ul>
             <p v-else class="text-muted-foreground">{{ t('book.detail.storyGuideTab.noProfile') }}</p>
+            <p v-if="!entity.profiles.length && entity.lastSeen" class="mt-1 text-xs text-muted-foreground">
+              {{ t('book.detail.storyGuideTab.lastSeen', { chapter: entity.lastSeen }) }}
+            </p>
           </section>
           <section v-if="details.recent.length">
             <h3 class="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{{ t('book.detail.storyGuideTab.recent') }}</h3>

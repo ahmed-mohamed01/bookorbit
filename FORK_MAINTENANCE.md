@@ -852,7 +852,9 @@ isolates this tab's changes from earlier fork changes in the same files.
 | `client/src/features/book/components/detail/BookDetailTabs.vue` |                   5 / 1 |                 5 / 1 | Read the optional availability flag and insert the tab after Chapters |
 | `client/src/views/BookDetailView.vue`                           |                   7 / 1 |                21 / 7 | Provide availability, lazy-load the tab and fall back to Details      |
 | `packages/types/src/index.ts`                                   |                   1 / 0 |                13 / 0 | Re-export the fork recap contract                                     |
-| `client/src/locales/en.json`                                    |                 128 / 0 |             2858 / 59 | Tab, window title, section and unavailable-state copy                 |
+| `client/src/locales/en.json`                                    |                 129 / 0 |             2859 / 59 | Tab, window title, section and unavailable-state copy                 |
+
+The cut-based ranking lives entirely in the tab overlay and adds no upstream hooks.
 
 ### Jobs queue action and request drawer hooks
 
@@ -993,7 +995,7 @@ are excluded.
 | `metadata-fetch.module.ts` / `providers/goodreads/goodreads.provider.ts`                                 | 2 / 2             | monitored     | `GoodreadsProvider` exported, `fetchHtml` made public (was a copy)                                      |
 | `scanner/lib/classify.ts`                                                                                | 1                 | ABS           | `metadata.json` sidecar recognition (was 6)                                                             |
 | Book Knowledge: 17 files, `ReaderView.vue` 27 the largest (2026-11-24, uncommitted)                      | 91 total          | knowledge     | see the per-file table in its overlay section                                                           |
-| Book Knowledge fiction entry and description rules                                                     | 0 added           | knowledge     | implemented in the fork-owned module                                                                   |
+| Book Knowledge fiction entry and description rules                                                       | 0 added           | knowledge     | implemented in the fork-owned module                                                                    |
 | everything else                                                                                          | <= 6 each         | mixed         | enum members, `Record<Union>` exhaustiveness, trivial registrations                                     |
 | `client/src/locales/*.json`                                                                              | ~60 each          | all           | i18n keys, trivial conflicts                                                                            |
 
@@ -1328,6 +1330,17 @@ from the job's phase, with minutes left once Writing descriptions can estimate i
 chapters with an "All chapters" button, and the Timeline the latest ten chapters with "Show earlier
 chapters", so a long series stays bounded. Ties show the chronicle's pair note for the two names,
 else the quote, both inside the cut. The constellation draws at most 120 links, strongest first.
+
+Characters, places and terms use the visible chronicle to rank at the reader's cut. Two or more
+visible rows covering at least a quarter of the distinct visible chapter rows rank Main. Zero or one
+row ranks Mentioned when the cut has any rows, and other entries rank Supporting. With no visible rows,
+all entries rank Supporting. Within a rank, row count and then visible tie count determine priority.
+The constellation uses this ranking for its 80 stars and their sizes.
+
+A character's sheet says "Last seen in Chapter N" in place of Now once the reader is 10 or more
+chapters past the character's latest visible chronicle row, own or merged join, matching Absorb. The
+reader's chapter comes from the chronicle unit holding the cut, else the section title at the cut; with
+no chapter number on either side the sheet keeps Now.
 
 The recap uses the current user's EPUB CFI on the guide's own source file (progress on another file of
 the book does not move the cut) and returns the spine index and original quotes whose

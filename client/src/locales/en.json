@@ -9958,6 +9958,7 @@
         "showMore": "Show more",
         "who": "Who they are",
         "now": "Now",
+        "lastSeen": "Last seen in {chapter}",
         "recent": "Recently",
         "ties": "Ties",
         "tieGroups": {

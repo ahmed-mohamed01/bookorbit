@@ -1,4 +1,4 @@
-import type { ForkStoryGuidePayload, StoryGuideAnchor } from '@bookorbit/types'
+import type { ForkStoryGuidePayload, StoryGuideAnchor, StoryGuideChronicleTimelineEntry } from '@bookorbit/types'
 
 export const end = (s: number): StoryGuideAnchor => ({ s, end: true })
 export const quote = (s: number, q: string, o = 0): StoryGuideAnchor => ({ s, o, q })
@@ -81,3 +81,25 @@ export const guideFixture: ForkStoryGuidePayload = {
   },
 }
 export const fixtureCut = { s: 1, placedQuotes: ['gate opens'] }
+
+export function timelineRow(s: number, chapter: string | null = null): StoryGuideChronicleTimelineEntry {
+  return { at: quote(s, `evidence in section ${s}`), through: end(s), chapter, note: null }
+}
+
+export const rankFixture: ForkStoryGuidePayload = {
+  ...guideFixture,
+  entities: [
+    { ...guideFixture.entities[0]!, joins: [] },
+    { ...guideFixture.entities[1]!, names: [{ text: 'Ben', at: arrived }], importance: 3, count: 1 },
+  ],
+  ties: [],
+  links: [],
+  chronicle: {
+    version: 1,
+    basis: guideFixture.builtAt,
+    entities: {
+      ana: { about: [], timeline: [timelineRow(0), timelineRow(1), timelineRow(2)] },
+      ben: { about: [], timeline: [timelineRow(0), { ...timelineRow(1), through: opened, at: opened }] },
+    },
+  },
+}
