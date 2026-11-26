@@ -50,7 +50,7 @@ export interface XrayUnit<T> {
   tries?: number;
 }
 
-/** A reply that can be retried: unreadable JSON, a cut-short reply, or a refusal. */
+/** A reply that can be retried: unreadable JSON or a cut-short reply. A refusal is not retried. */
 export function retryable(error: unknown): boolean {
   return isAiError(error) && (error.code === 'invalid-json' || error.code === 'too-long');
 }
@@ -106,10 +106,12 @@ export class XrayStepRun {
         `[book_knowledge.xray_call] [start] ${this.ids} step=${this.record.step} unit=${unit.id} attempt=${attempt} sentences=${sent.sentences} characters=${sent.characters} sections=${sent.sections.size} - sending sentences`,
       );
       let read: ReturnType<Read<T>> = null;
+      let refused = false;
       const sentAt = Date.now();
       try {
         const reply = await unit.send();
         this.used(reply.usage, Date.now() - sentAt);
+        refused = reply.finish === 'refused' || reply.finish === 'filtered';
         const first = extractJson(reply.text);
         const json = first.ok ? first : extractJson(repairJson(reply.text));
         read = json.ok ? unit.read(json.value) : null;
@@ -130,6 +132,8 @@ export class XrayStepRun {
         return read.items;
       }
       this.record.invalid++;
+      // The same prompt is refused again, so a second paid call buys nothing.
+      if (refused) break;
     }
     this.record.skipped++;
     (this.record.skippedUnits ??= []).push(unit.id);

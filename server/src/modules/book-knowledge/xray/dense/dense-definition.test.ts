@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Sentence } from '../../core/model';
-import { bareLabel, definitionOf, definitionScore, sameText } from './dense-definition';
+import { bareLabel, definitionOf, definitionScore, glossOf, sameText } from './dense-definition';
 
 const book = (texts: string[]): Sentence[] =>
   texts.map((text, index) => ({
@@ -73,5 +73,14 @@ describe('definition picker', () => {
 
   it('compares lines without case, spacing or digits', () => {
     expect(sameText('Fireball  3/10 ')).toBe(sameText('fireball 4/10'));
+  });
+});
+
+describe('glossOf', () => {
+  it('takes only an outright gloss, not a sentence that says what the thing was like', () => {
+    const sentences = book(['The city was a ruin by dusk.', 'They left the city.', 'City: the walled capital of the old kingdom.']);
+    expect(definitionOf([1, 2], sentences, ['city'], 'explicit')).toBe(1);
+    expect(glossOf([1, 2], sentences, ['city'])).toBeNull();
+    expect(glossOf([1, 2, 3], sentences, ['city'])).toBe(3);
   });
 });

@@ -2,10 +2,20 @@ import { STORY_GUIDE_TIE_TYPES, type BookKnowledgeXrayMode } from '@bookorbit/ty
 import { CONCEPT_TIE_TYPES } from '../xray-tie-types';
 import type { PassSlot } from '../pass/pass-cast';
 import { ABILITY_GROUPS, IDENTITY_FACTS, IDENTITY_LEAVE_OUT, NOTE_DISCIPLINE, SUMMARY_RULES } from '../pass/pass-prompt';
+import { THOUGHT_DESCRIPTION } from '../xray-description-context';
 
-export const DENSE_PROMPT_VERSION = 12;
+export const DENSE_PROMPT_VERSION = 15;
 /** Hard caps: a reply cut here is not resent with more room (round 7). */
 export const NOTES_MAX_OUTPUT_TOKENS = 6000;
+/** A chunk note; the unit's joined note allows NOTE_WORDS. */
+export const CHUNK_NOTE_WORDS = 100;
+/** A note at the word limit with its key and cites, at a generous two tokens a word, so a valid note is never cut. */
+export const NOTE_TOKENS = 2 * CHUNK_NOTE_WORDS + 20;
+
+/** The notes reply's cap: the base, plus room for a full-length note for each of `slots`. */
+export function notesOutputTokens(slots: readonly PassSlot[]): number {
+  return NOTES_MAX_OUTPUT_TOKENS + NOTE_TOKENS * slots.length;
+}
 export const FACTS_MAX_OUTPUT_TOKENS = 2500;
 /** Room each `is` phrase takes in a facts reply, so an early chunk where most names are new is not cut short. */
 export const FACTS_IS_TOKENS = 40;
@@ -17,8 +27,6 @@ export function factsOutputTokens(slots: readonly PassSlot[], needsIs: ReadonlyS
   return FACTS_MAX_OUTPUT_TOKENS + Math.min(FACTS_IS_MAX_EXTRA, FACTS_IS_TOKENS * asked);
 }
 export const TIES_MAX_OUTPUT_TOKENS = 3000;
-/** A chunk note; the unit's joined note keeps the timeline's forty. */
-export const CHUNK_NOTE_WORDS = 25;
 /** Missing required ids are asked again in batches of at most this many. */
 export const RETRY_BATCH = 12;
 /** An id named in at least this many sentences of the chunk is on its required list. */
@@ -27,6 +35,12 @@ export const FACTS_PER_ID = 3;
 
 const NUMBERED = 'each sentence led by its number in brackets, such as [1234]';
 const CITE_RULE = 'n: the numbers of the one to three sentences of the stretch that show it, such as [1234].';
+const NOTE_STYLE =
+  `Write the note as one or two complete, plain sentences in the present tense: as short as it can be while clear and concise, usually 20 to 30 words, never more than ${CHUNK_NOTE_WORDS}. ` +
+  'In the note write names, never ids: the first sentence has the id as its subject, called by the name its line gives; later ones may use ' +
+  'he, she, it or they. Name the people and places involved by name. Add one short identifying phrase, such as "Marta, the old ferrywoman,", ' +
+  'only when the reader needs it to follow the event. No chains of verbs joined by commas, no notes-style fragments, no list of ' +
+  'every action: the events that matter.';
 
 const NOTES_SYSTEM: Record<BookKnowledgeXrayMode, string> = {
   fiction: [
@@ -35,7 +49,7 @@ const NOTES_SYSTEM: Record<BookKnowledgeXrayMode, string> = {
       'kind | how many sentences of the stretch name it, with "about:" its current description when it has one; then the Required line. The ' +
       'summary before it and the descriptions are context only: never retell them. Notes and the summary cover only the text between ' +
       '<chapter> tags. Refer to names only by their ids.',
-    `notes: an object keyed by id. Every id on the Required line gets a key: {"note", "n"}, or null when nothing happens to it here. Other ids get a key only when something happens to them. note: what happens to the id in this stretch alone, in at most ${CHUNK_NOTE_WORDS} words: events, not who it is. ${CITE_RULE} ${NOTE_DISCIPLINE}`,
+    `notes: an object keyed by id. Every id on the Required line gets a key: {"note", "n"}, or null when nothing happens to it here. Other ids get a key only when something happens to them. note: what happens to the id in this stretch alone: events, not who it is. ${NOTE_STYLE} ${CITE_RULE} ${NOTE_DISCIPLINE}`,
     `summary: ${SUMMARY_RULES}`,
     'Answer with JSON only: {"notes": {"e1": {"note": "...", "n": [1234]}, "e2": null}, "summary": "..."}.',
   ].join('\n\n'),
@@ -45,7 +59,7 @@ const NOTES_SYSTEM: Record<BookKnowledgeXrayMode, string> = {
       'per entry: id | name | other names | kind | how many sentences of the stretch name it, with "about:" its current description when it ' +
       'has one; then the Required line. The summary before it and the descriptions are context only: never retell them. Notes and the ' +
       'summary cover only the text between <chapter> tags. Refer to entries only by their ids.',
-    `notes: an object keyed by id. Every id on the Required line gets a key: {"note", "n"}, or null when the stretch adds nothing about it. Other ids get a key only when the stretch says something about them. note: what the stretch says about the id, in at most ${CHUNK_NOTE_WORDS} words: the claim, argument or use it gets here. ${CITE_RULE} Write only what the stretch states; never use what you know about the book or its subject from elsewhere.`,
+    `notes: an object keyed by id. Every id on the Required line gets a key: {"note", "n"}, or null when the stretch adds nothing about it. Other ids get a key only when the stretch says something about them. note: what the stretch says about the id: the claim, argument or use it gets here. ${NOTE_STYLE} ${CITE_RULE} Write only what the stretch states; never use what you know about the book or its subject from elsewhere.`,
     'summary: two to four plain sentences, at most 120 words, on the main points and arguments of this stretch alone, in its order. Name people ' +
       'the stretch names, including authors it cites, but never this book or its own author. Never say what later chapters argue. When the ' +
       'stretch has no argument (contents, notes, an index), answer with an empty summary.',
@@ -70,6 +84,7 @@ const FACTS_SYSTEM: Record<BookKnowledgeXrayMode, string> = {
       '"name", "detail" (such as "Beginner 7", "+1", "rank 5", or null), "n"}. name: the ability\'s own name as the cited sentence writes it, ' +
       'never a bare "skill", "level" or "power". An empty list when the book states no stats.',
     'merges: {"a", "b", "n"} only when a cited sentence states plainly that two listed ids are the same person or thing.',
+    `For identity facts and is phrases: ${THOUGHT_DESCRIPTION} Keep is to twelve words.`,
     FACTS_SHAPE,
   ].join('\n\n'),
   nonfiction: [
@@ -129,9 +144,22 @@ export const readSystem = (mode: BookKnowledgeXrayMode) => READ_SYSTEM[mode];
 
 const read = (text: string, task: string) => `<chapter>\n${text}\n</chapter>\n\n<task>\n${task}\n</task>\n\n`;
 
-export function sceneUser(text: string, slots: readonly PassSlot[], about: ReadonlyMap<string, string>, mode: BookKnowledgeXrayMode): string {
+export function sceneUser(
+  text: string,
+  slots: readonly PassSlot[],
+  about: ReadonlyMap<string, string>,
+  mode: BookKnowledgeXrayMode,
+  firstPerson = false,
+): string {
   const roster = slots.map((slot) => `${slot.id} | ${slot.name} | ${slot.aliases.join(', ')} | ${slot.kind} | about: ${about.get(slot.id) ?? ''}`);
-  return `${read(text, SCENE_SYSTEM[mode])}Roster:\n${roster.join('\n')}`;
+  const task =
+    mode === 'nonfiction' && firstPerson
+      ? SCENE_SYSTEM[mode].replace(
+          '1. pov: always null.',
+          '1. pov: the roster id of the named person whose first-person narration tells this passage, or null.',
+        )
+      : SCENE_SYSTEM[mode];
+  return `${read(text, task)}Roster:\n${roster.join('\n')}`;
 }
 
 export interface DenseContext {
@@ -139,6 +167,13 @@ export interface DenseContext {
   abilities: ReadonlyMap<string, string>;
   previous: string | null;
   needsIs?: ReadonlySet<string>;
+  narratorId?: string;
+}
+
+function narratorContext(slots: readonly PassSlot[], context: DenseContext): string {
+  return slots.some((slot) => slot.id === context.narratorId)
+    ? `First-person narration outside dialogue refers to ${context.narratorId}. Treat those sentences as evidence for that entry.\n\n`
+    : '';
 }
 
 function castLines(slots: readonly PassSlot[], context: DenseContext, abilities: boolean): string {
@@ -164,13 +199,13 @@ export function requiredIds(slots: readonly PassSlot[]): string[] {
 export function notesUser(text: string, slots: readonly PassSlot[], context: DenseContext, mode: BookKnowledgeXrayMode): string {
   const required = requiredIds(slots);
   return (
-    `${read(text, NOTES_SYSTEM[mode])}${context.previous ? `<before>\n${context.previous}\n</before>\n\n` : ''}Cast:\n${castLines(slots, context, false)}\n\n` +
+    `${read(text, NOTES_SYSTEM[mode])}${context.previous ? `<before>\n${context.previous}\n</before>\n\n` : ''}${narratorContext(slots, context)}Cast:\n${castLines(slots, context, false)}\n\n` +
     `Required: ${required.join(', ') || 'none'}`
   );
 }
 
 export function factsUser(text: string, slots: readonly PassSlot[], context: DenseContext, mode: BookKnowledgeXrayMode): string {
-  return `${read(text, FACTS_SYSTEM[mode])}Cast:\n${castLines(slots, context, true)}`;
+  return `${read(text, FACTS_SYSTEM[mode])}${narratorContext(slots, context)}Cast:\n${castLines(slots, context, true)}`;
 }
 
 export interface DenseFailure {

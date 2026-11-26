@@ -845,31 +845,6 @@ Measured with `git diff -w upstream/main --numstat`. Totals include the existing
 | `client/src/features/book-requests/composables/useRequestQueue.ts` |     1 |       1 | Lets the shared stepper accept Jobs rows adapted to request IDs                                                 |
 | `client/src/locales/en.json`                                       |  2753 |     143 | Grip labels, movement results and per-type Move to top copy, alongside existing fork copy                       |
 
-### Release picker: file panel width and Shelfmark search budget
-
-| Upstream file                                                                     | Added | Removed | Hook                                                                                                                                                         |
-| --------------------------------------------------------------------------------- | ----: | ------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `client/src/features/book-requests/components/ReleaseFileInspectionPanel.vue`     |   141 |      47 | Includes `min-w-0` on the root box so the fork's one-line file names in `ReleaseFileTree.vue` scroll in place instead of widening the release card on phones |
-| `server/src/modules/book-request/indexers/indexer-adapter.ts`                     |    26 |       0 | Optional `ReleaseQuery.interactive`, set when a person is waiting on the search                                                                              |
-| `server/src/modules/book-request/indexers/indexer-config.service.ts`              |     4 |       1 | Reads the fork's standalone timeout and uses the standard indexer settings error for invalid values on save                                                  |
-| `server/src/modules/book-request/indexers/indexer-config.service.test.ts`         |    67 |       0 | Covers timeout resolution, manager precedence, unset values and the save error code on create and update                                                     |
-| `server/src/modules/book-request/indexers/indexer-search.service.ts`              |   217 |      45 | Adds the interactive flag to the existing cache key and adapter query, with a helper for the automatic cache fallback                                        |
-| `server/src/modules/book-request/indexers/indexer-search.service.test.ts`         |   415 |       9 | Covers flag propagation, one-way cache reuse, refresh, expiry and the query used for candidate refresh                                                       |
-| `server/src/modules/book-request/fulfillment/request-fulfillment.service.ts`      |   394 |      48 | `prepareReleaseSearch` marks its search interactive; automation calls `search` directly and leaves it unset                                                  |
-| `server/src/modules/book-request/fulfillment/request-fulfillment.service.test.ts` |   482 |      21 | Checks the release picker passes the interactive flag                                                                                                        |
-
-The fork owns `indexer-search-cache.ts`, `indexer-search-timeout.ts` and their tests
-under `server/src/modules/book-request/indexers/`.
-
-The fork's `shelfmark.adapter.ts` marks slow sources during automatic searches and cuts their
-automatic search budget to 4 seconds. The Requests and Watchlist release pickers and Watchlist
-grab warm-up use the full per-source budget, and their failures leave the slow mark alone.
-Standalone Shelfmark indexers accept 5 to 180 whole seconds on save and default to 20 seconds.
-Picker searches read only their own cache entries. An automatic search without a refresh can
-reuse a fresh picker result for the same request, overrides, indexer mode and source IDs when
-its own result is missing or expired. The fallback derives the picker key from the existing
-cache key by changing its final `interactive` field. This avoids sending another search to private trackers.
-
 ### 2026-11-14 surface shrink after the v3.8.0 merge
 
 Measured on the v3.8.0 merge tree (`70c6a7cb0`, upstream `c77966cc5`) with
@@ -964,6 +939,7 @@ are excluded.
 | `metadata-fetch.module.ts` / `providers/goodreads/goodreads.provider.ts`                                 | 2 / 2             | monitored     | `GoodreadsProvider` exported, `fetchHtml` made public (was a copy)                                      |
 | `scanner/lib/classify.ts`                                                                                | 1                 | ABS           | `metadata.json` sidecar recognition (was 6)                                                             |
 | Book Knowledge: 17 files, `ReaderView.vue` 27 the largest (2026-11-24, uncommitted)                      | 91 total          | knowledge     | see the per-file table in its overlay section                                                           |
+| Book Knowledge fiction entry and description rules                                                     | 0 added           | knowledge     | implemented in the fork-owned module                                                                   |
 | everything else                                                                                          | <= 6 each         | mixed         | enum members, `Record<Union>` exhaustiveness, trivial registrations                                     |
 | `client/src/locales/*.json`                                                                              | ~60 each          | all           | i18n keys, trivial conflicts                                                                            |
 
@@ -1215,9 +1191,6 @@ as expected UI-registration coupling.
 - `leaseReleaseEvent` in `monitored-store.service.ts` is not transactional with `notify()`; a crash
   between lease and dispatch leaves `notifiedAt` set and the notification is never retried.
   A stale-lease reaper would close it.
-
-**Release picker.** The Watchlist search routes and the grab route's warm-up mark their indexer
-searches interactive so that Shelfmark uses the full per-source budget.
 
 **Background eligibility.** Every background path that can submit a request on an owner's behalf
 (the fetch job, fetch-event items, follow-ups, the release watcher and its recheck before fan-out,
@@ -1632,6 +1605,12 @@ The payload is position-stamped; the viewer cuts it client-side. It reuses upstr
 `storyGuideTieType`, `flattenWithOffsets` and `readBookText` by import, without editing them. The
 shared run type still has `tieVote` and `passRepeats` for the external viewer; nothing sets them.
 
+Fiction cast selection drops undefined dictionary vocabulary and single-section lowercase terms, folds
+descriptive names into existing entry names, and requires a one-off capitalised name to act or speak.
+Comparisons and dialogue-only forms of address supply no cast evidence. Descriptions attribute
+hypotheticals to the character thinking them. The minor-character writer sees accepted timeline notes
+through the end of its own unit before the sampled sentences.
+
 **Client.** `features/book-knowledge/` owns the panel and `KnowledgeReaderHost.vue`, which holds
 the panel state, the visit bar and the navigation handlers; `ReaderView.vue` only renders it and
 pauses tracking during a visit.
@@ -1657,7 +1636,7 @@ Measured 2026-11-24 with `git diff -w HEAD --stat` on the uncommitted branch (ad
 | `server/src/modules/book/book-read.service.ts`                                                                                   | `knowledgeEpubFiles` pass-through                                                                                                  | 4 lines   |
 | `server/src/app.module.ts`                                                                                                       | module registration                                                                                                                | 2 lines   |
 | `server/src/config/env.validation.ts`, `server/.env.example`                                                                     | `BOOK_KNOWLEDGE_GLINER_THREADS` (read by the module's own config, not `config.ts`)                                                 | 3 lines   |
-| `server/package.json` (+ lockfile)                                                                                               | `onnxruntime-node` (1.31.1, see below), `tokenizers`, `wink-nlp`, `wink-eng-lite-web-model`                                        | 4 lines   |
+| `server/package.json` (+ lockfile)                                                                                               | `onnxruntime-node`, `tokenizers`, `wink-nlp`, `wink-eng-lite-web-model`                                                            | 4 lines   |
 | `packages/types/src/app-info.ts`, `index.ts`                                                                                     | `book-knowledge` server feature, one export                                                                                        | 3 lines   |
 | `packages/types/src/ai.ts`                                                                                                       | `book-knowledge` in `AI_FEATURES` and `AI_FEATURE_DEFINITIONS` (`perReader: true`)                                                 | 10 lines  |
 | `client/src/features/ai/lib/ai-settings-ui.ts`                                                                                   | `book-knowledge` icon in `FEATURE_ICONS` (and its import)                                                                          | 3 lines   |
@@ -1671,9 +1650,6 @@ and usage label next to upstream's features), `ai.setup-flow.test.ts` (the AI ca
 `reading-help.service.test.ts`: one line each, the `'book-knowledge': defaultFeatureSettings('book-knowledge')`
 entry in their `AiFeatureSettingsMap` literal) and the fork-owned `book-merge-fork-rules.test.ts`
 (`drop-derived` rules and participant).
-
-`onnxruntime-node` stays on the read-aloud worker's version (1.31.1, 2026-11-25). Version 1.24.3
-pulled in `adm-zip` 0.5.18, which fails the image Trivy gate; bump the two together.
 
 Why the five test lines and not a type-level fix: making the key optional in
 `AiFeatureSettingsMap` (`ai-settings.service.ts`) would type every `features[id]` read as possibly

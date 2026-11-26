@@ -1,3 +1,4 @@
+import { COLLECTIVE } from './dense-collective';
 import { CLASSIFY_TEMPERATURE } from '../../book-knowledge-model.service';
 import type { BookKnowledgeXrayMode } from '@bookorbit/types';
 import { escapeRegExp } from '../../../story-guides/pipeline/name-text';
@@ -49,6 +50,8 @@ const SLIP_MENTIONS = 10;
 const NONFICTION_TOKEN_KINDS = new Set<XrayEntity['kind']>(['character', 'place', 'group']);
 const SITE_NOUNS = new Set([...PLACE_NOUNS, 'airport', 'station', 'port', 'harbour', 'harbor', 'hall', 'house', 'castle', 'market', 'mine']);
 
+const collective = (entity: XrayEntity) => entity.kind === 'group' || COLLECTIVE.test(entity.name);
+
 /** Edit distance with swaps of two neighbours counted once (Niyl and Nyil are one apart). */
 export function editDistance(a: string, b: string): number {
   const d = Array.from({ length: a.length + 1 }, (_, i) => Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)));
@@ -91,8 +94,12 @@ export function aliasCandidates(
   const paragraphs = paragraphsOf(heads, sentences);
   const found = new Map<string, AliasCandidate>();
   const offer = (x: XrayEntity, y: XrayEntity, reason: AliasReason) => {
+    if (collective(x) || collective(y)) return;
     // A misspelling's kind comes from few mentions, so it may disagree with the name it misspells; a sentence saying two names are one may too.
-    if (x === y || cast.headOf(x) === cast.headOf(y) || (!['epithet', 'spelling', 'evidence'].includes(reason) && x.kind !== y.kind)) return;
+    // "fort" and Fort Stone: the review may type the bare word an idea; the alias ask decides.
+    const bareWord = reason === 'token' && capitalised(x.name) !== capitalised(y.name);
+    if (x === y || cast.headOf(x) === cast.headOf(y) || (!['epithet', 'spelling', 'evidence'].includes(reason) && !bareWord && x.kind !== y.kind))
+      return;
     // A nonfiction term inside a longer one is a broader or narrower idea ("Revolution", "Industrial Revolution"), not another name.
     if (mode === 'nonfiction' && reason === 'token' && !NONFICTION_TOKEN_KINDS.has(x.kind)) return;
     let [member, head] = x.count < y.count || (x.count === y.count && x.first > y.first) ? [x, y] : [y, x];
@@ -102,34 +109,44 @@ export function aliasCandidates(
     if (!found.has(key)) found.set(key, { head, member, reason });
   };
   for (const item of evidence) offer(cast.headOf(item.a), cast.headOf(item.b), 'evidence');
+  /** Offers `a` and `b` when one name sits inside the other, or one misspells the other; true when it offered. */
+  const offerByName = (a: XrayEntity, b: XrayEntity, aName: string, bName: string): boolean => {
+    const before = found.size;
+    const [x, y] = [words(aName), words(bName)];
+    const inside = (small: string[], big: string[]) => small.length < big.length && small.every((word) => big.includes(word) && word.length > 2);
+    // "Mopti Airport" and "Cassian spring" are places at or named after the shorter name, not other names for it.
+    const placeAt = (small: string[], big: string[]) => big.some((word) => !small.includes(word) && SITE_NOUNS.has(word));
+    if ((capitalised(aName) || capitalised(bName)) && (inside(x, y) || inside(y, x))) {
+      if (!placeAt(x.length < y.length ? x : y, x.length < y.length ? y : x)) offer(a, b, 'token');
+    } else if (
+      capitalised(aName) &&
+      capitalised(bName) &&
+      aName.length >= 4 &&
+      bName.length >= 4 &&
+      // Past six letters a first-letter slip is still one name (Bibiane, Viviane); the alias ask decides.
+      (aName[0] === bName[0] || Math.min(aName.length, bName.length) >= 6) &&
+      // A misspelling is rare beside the name it misspells; two names a letter or two apart used alike are two people.
+      editDistance(aName.toLowerCase(), bName.toLowerCase()) <= 2 &&
+      (Math.min(a.count, b.count) * SPELLING_RATIO <= Math.max(a.count, b.count) ||
+        (Math.min(a.count, b.count) < SLIP_MENTIONS && slip(aName.toLowerCase(), bName.toLowerCase())))
+    )
+      offer(a, b, 'spelling');
+    return found.size > before;
+  };
+  // A name joined earlier still names its head: "Bob" is checked against Viv's "Princess Bob", "Bibiane" against her "Viviane".
+  const namesOf = (entity: XrayEntity) => [entity.name, ...entity.joins.map((join) => join.name)];
   for (const [index, a] of heads.entries())
-    for (const b of heads.slice(index + 1)) {
-      const [x, y] = [words(a.name), words(b.name)];
-      const inside = (small: string[], big: string[]) => small.length < big.length && small.every((word) => big.includes(word) && word.length > 2);
-      // "Mopti Airport" and "Cassian spring" are places at or named after the shorter name, not other names for it.
-      const placeAt = (small: string[], big: string[]) => big.some((word) => !small.includes(word) && SITE_NOUNS.has(word));
-      if ((capitalised(a.name) || capitalised(b.name)) && (inside(x, y) || inside(y, x))) {
-        if (!placeAt(x.length < y.length ? x : y, x.length < y.length ? y : x)) offer(a, b, 'token');
-      } else if (
-        capitalised(a.name) &&
-        capitalised(b.name) &&
-        a.name.length >= 4 &&
-        b.name.length >= 4 &&
-        a.name[0] === b.name[0] &&
-        // A misspelling is rare beside the name it misspells; two names a letter or two apart used alike are two people.
-        editDistance(a.name.toLowerCase(), b.name.toLowerCase()) <= 2 &&
-        (Math.min(a.count, b.count) * SPELLING_RATIO <= Math.max(a.count, b.count) ||
-          (Math.min(a.count, b.count) < SLIP_MENTIONS && slip(a.name.toLowerCase(), b.name.toLowerCase())))
-      )
-        offer(a, b, 'spelling');
-    }
+    for (const b of heads.slice(index + 1)) namesOf(a).some((aName) => namesOf(b).some((bName) => offerByName(a, b, aName, bName)));
   // Epithets and nicknames are a novel's; in nonfiction a capitalised hub ("AI") would draw every common word.
   if (mode === 'nonfiction') return [...found.values()].sort((x, y) => y.member.count - x.member.count).slice(0, MAX_CANDIDATES);
   const named = heads.filter((entity) => capitalised(entity.name));
   for (const { epithet, matches } of epithetMatches(heads, paragraphs))
     if (!possessed(epithet, sentences)) offer(epithet, matches[0].name, 'epithet');
   const main = named.filter((entity) => entity.importance === 1 && entity.kind === 'character');
-  for (const nickname of named.filter((entity) => entity.kind === 'character')) {
+  // A name the book also gives in full ("Ryland Grace") is someone's own name, said in dialogue because a first-person narrator never says it.
+  const fullName = (entity: XrayEntity) =>
+    [entity.name, ...entity.joins.map((join) => join.name)].some((name) => words(name).length > 1 && /^\p{Lu}/u.test(name));
+  for (const nickname of named.filter((entity) => entity.kind === 'character' && !fullName(entity))) {
     const said = nickname.ordinals.filter((ordinal) => quoted(sentences[ordinal - 1].text, nickname.name)).length;
     if (said < DIALOGUE_SHARE * nickname.ordinals.length) continue;
     const own = paragraphs.get(nickname)!;
@@ -178,7 +195,7 @@ export function epithetFolds(cast: PassCast, sentences: readonly Sentence[], mod
   const folds: AliasMerge[] = [];
   for (const { epithet, matches } of epithetMatches(cast.heads, paragraphsOf(cast.heads, sentences))) {
     const same = matches.filter(({ name }) => name.kind === epithet.kind);
-    if (same.length !== 1 || stopListed(epithet) || possessed(epithet, sentences)) continue;
+    if (same.length !== 1 || collective(epithet) || collective(same[0].name) || stopListed(epithet) || possessed(epithet, sentences)) continue;
     const head = same[0].name;
     const first = epithet.ordinals.find((ordinal) => head.ordinals.includes(ordinal)) ?? epithet.first;
     folds.push({ member: epithet, head, ordinal: Math.max(first, epithet.first), reason: 'epithet' });
@@ -222,13 +239,21 @@ export async function aliasMerges(
   mode: BookKnowledgeXrayMode,
   ask: Ask,
   step: XrayStepRun,
+  unitPrefix = 'alias',
 ): Promise<AliasMerge[]> {
   const groups = new Map<XrayEntity, AliasCandidate[]>();
   for (const candidate of candidates) groups.set(candidate.head, [...(groups.get(candidate.head) ?? []), candidate]);
+  const wordsIn = (ordinal: number) => words(sentences[ordinal - 1].text).length;
+  // A head's joined names are part of who it is: Viv is also "Princess Bob", which is what makes "Bob" her.
   const shown = (entity: XrayEntity, other: XrayEntity) => {
     const both = entity.ordinals.filter((ordinal) => other.ordinals.includes(ordinal));
-    return [...new Set([...both, ...entity.ordinals])].slice(0, ALIAS_SENTENCES).sort((a, b) => a - b);
+    const joined = entity.joins.flatMap((join) => join.names.slice(0, 1).map(({ ordinal }) => ordinal));
+    // A bare "Bob." in dialogue proves nothing; the fuller sentences ("Just call me Bob") carry the evidence.
+    const fullest = [...entity.ordinals].sort((a, b) => wordsIn(b) - wordsIn(a) || a - b);
+    return [...new Set([...both, ...joined, ...fullest])].slice(0, ALIAS_SENTENCES).sort((a, b) => a - b);
   };
+  const named = (entity: XrayEntity) =>
+    entity.joins.length ? `${entity.name} (also called ${[...new Set(entity.joins.map((join) => join.name))].join(', ')})` : entity.name;
   const line = (ordinal: number) => `  [${ordinal}] ${sentences[ordinal - 1].text.replace(/\s+/g, ' ').trim()}`;
   const list = [...groups];
   const batches: (typeof list)[] = [];
@@ -242,7 +267,7 @@ export async function aliasMerges(
         .map(([head, members], at) => {
           const own = members.flatMap((candidate) => shown(head, candidate.member));
           return [
-            `g${at + 1}: ${head.id} ${head.name}`,
+            `g${at + 1}: ${head.id} ${named(head)}`,
             ...[...new Set(own)].slice(0, ALIAS_SENTENCES).map(line),
             ...members.flatMap((candidate) => [
               `  candidate ${candidate.member.id} ${candidate.member.name}`,
@@ -252,7 +277,7 @@ export async function aliasMerges(
         })
         .join('\n\n');
       const answer = await step.unit({
-        id: `alias${index + 1}`,
+        id: `${unitPrefix}${index + 1}`,
         ordinals: batch.flatMap(([head, members]) => [
           ...members.flatMap((candidate) => shown(head, candidate.member)),
           ...members.flatMap((candidate) => shown(candidate.member, head)),
@@ -302,6 +327,7 @@ export async function aliasMerges(
  */
 export function joinAlias(cast: PassCast, merge: AliasMerge): void {
   const [head, member] = [cast.headOf(merge.head), cast.headOf(merge.member)];
+  if (collective(head) || collective(member)) return;
   const [join, keep] = namedFirst(member, head, () => (member.count > head.count ? [head, member] : [member, head]));
   cast.merge({ member: join, head: keep, ordinal: merge.ordinal, rule: 'alias', reason: merge.reason });
 }

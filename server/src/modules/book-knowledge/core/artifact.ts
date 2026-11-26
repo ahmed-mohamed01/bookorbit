@@ -51,15 +51,17 @@ function classify(mentions: Mention[], person: number, place: number): VisibleTe
   return place >= Math.max(2, minimum) && place / mentions.length >= (common ? 0.35 : 0.03) && place > person * 2 ? 'place' : 'concept';
 }
 const visibilityCache = new WeakMap<Artifact, Map<number, VisibleTerm[]>>();
-export function visibleTerms(artifact: Artifact, cutoff: number): VisibleTerm[] {
-  let cache = visibilityCache.get(artifact);
+const bodyVisibilityCache = new WeakMap<Artifact, Map<number, VisibleTerm[]>>();
+export function visibleTerms(artifact: Artifact, cutoff: number, bodyOnly = false): VisibleTerm[] {
+  const caches = bodyOnly ? bodyVisibilityCache : visibilityCache;
+  let cache = caches.get(artifact);
   if (!cache) {
     cache = new Map();
-    visibilityCache.set(artifact, cache);
+    caches.set(artifact, cache);
   }
   const cached = cache.get(cutoff);
   if (cached) return cached;
-  const result = computeVisibleTerms(artifact, cutoff);
+  const result = computeVisibleTerms(artifact, cutoff, bodyOnly);
   for (const term of result) {
     term.mentions.forEach(Object.freeze);
     Object.freeze(term.mentions);
@@ -72,7 +74,7 @@ export function visibleTerms(artifact: Artifact, cutoff: number): VisibleTerm[] 
   if (cache.size > (artifact.sentences.length > 20_000 ? 2 : 8)) cache.delete(cache.keys().next().value!);
   return result;
 }
-function computeVisibleTerms(artifact: Artifact, cutoff: number): VisibleTerm[] {
+function computeVisibleTerms(artifact: Artifact, cutoff: number, bodyOnly: boolean): VisibleTerm[] {
   if (!(cutoff >= 1)) return [];
   const visible = new Map<string, VisibleTerm>();
   const roots = new Map<string, string>();
@@ -80,7 +82,7 @@ function computeVisibleTerms(artifact: Artifact, cutoff: number): VisibleTerm[] 
   for (const term of artifact.terms) {
     // The full-book trie can find a mention before the term has a candidate-forming use.
     if (term.candidateOrdinal !== undefined && term.candidateOrdinal > cutoff) continue;
-    const uses = mentionsAt(term, cutoff);
+    const uses = mentionsAt(term, cutoff).filter(({ ordinal }) => !bodyOnly || artifact.sentences[ordinal - 1]?.structure === 'body');
     const hasDefinition = uses.some((mention) => mention.definition && !mention.nested);
     if (term.wordCount === 1 && !hasDefinition && uses.filter((mention) => mention.noun === false).length > uses.length / 2) continue;
     const accepted = uses.filter((mention) => term.wordCount > 1 || hasDefinition || mention.noun !== false);
@@ -136,6 +138,7 @@ function computeVisibleTerms(artifact: Artifact, cutoff: number): VisibleTerm[] 
   for (const link of artifact.aliasLinks) {
     if (
       link.ordinal > cutoff ||
+      (bodyOnly && artifact.sentences[link.ordinal - 1]?.structure !== 'body') ||
       (link.untilOrdinal !== undefined && link.untilOrdinal <= cutoff) ||
       !visible.has(link.left) ||
       !visible.has(link.right)
@@ -191,11 +194,11 @@ function computeVisibleTerms(artifact: Artifact, cutoff: number): VisibleTerm[] 
     return term;
   });
 }
-export function visibleTerm(artifact: Artifact, key: string, cutoff: number): VisibleTerm | undefined {
+export function visibleTerm(artifact: Artifact, key: string, cutoff: number, bodyOnly = false): VisibleTerm | undefined {
   const own = artifact.terms.find((term) => term.key === key);
-  const mentions = own && mentionsAt(own, cutoff);
+  const mentions = own && mentionsAt(own, cutoff).filter(({ ordinal }) => !bodyOnly || artifact.sentences[ordinal - 1]?.structure === 'body');
   if (!mentions?.length) return undefined;
-  return visibleTerms(artifact, cutoff).find(
+  return visibleTerms(artifact, cutoff, bodyOnly).find(
     (term) => term.key === key || term.mentions.some((mention) => mention.ordinal === mentions[0].ordinal && mention.alias === mentions[0].alias),
   );
 }

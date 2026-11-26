@@ -13,7 +13,23 @@ const GENERIC_WORDS = new Set(
 );
 
 /** Swearing and interjections a novel's dialogue repeats; never an entry. */
-const FICTION_EXCLAMATIONS = new Set('fuck fucking fucked shit shitty damn damned crap hell bloody ugh huh hmm wow'.split(' '));
+const FICTION_EXCLAMATIONS = new Set(
+  (
+    'fuck fucking fucked fucker fuckers motherfucker motherfuckers shit shits shitty shithead shitheads bullshit damn damned goddamn ' +
+    'goddamned crap hell bloody ugh huh hmm wow ass asses asshole assholes arse arsehole arseholes jackass dumbass bastard bastards ' +
+    'bitch bitches bitching dick dicks dickhead dickheads prick pricks piss pissed cunt cunts wanker wankers bollocks twat twats ballsack ' +
+    'alright okay yeah yep nope uh um erm dude bro'
+  ).split(' '),
+);
+
+/**
+ * A novel's swear word or interjection, written in lowercase: never an entry, whatever the kind review answered.
+ * A capitalised one ("Dick", "the Bastard") may be a name, so it is left to the review.
+ */
+export function isExclamationTerm(name: string, mode: BookKnowledgeXrayMode): boolean {
+  // A drawn-out sound ("errr", "aaah") is an interjection however it is spelled.
+  return mode === 'fiction' && (FICTION_EXCLAMATIONS.has(name) || /^\p{Ll}*(\p{Ll})\1\1\p{Ll}*$/u.test(name));
+}
 
 /** SCOWL level 35 and commoner: an everyday noun ("tent", "cloak") that a novel may use but a reader rarely looks up. */
 const FICTION_EVERYDAY_RARITY = 0.35;
@@ -34,7 +50,7 @@ const FICTION_COMMON_RARITY = 0.1;
  */
 export function isGenericTerm(name: string, mode: BookKnowledgeXrayMode): boolean {
   if (name !== name.toLowerCase()) return false;
-  if (mode === 'fiction' && FICTION_EXCLAMATIONS.has(name)) return true;
+  if (isExclamationTerm(name, mode)) return true;
   if (mode === 'fiction') return name.split(/[\s-]+/).every((word) => GENERIC_WORDS.has(word) || wordRarity(word) <= FICTION_COMMON_RARITY);
   if (name.includes(' ')) return false;
   return GENERIC_WORDS.has(name) || wordRarity(name) === 0;

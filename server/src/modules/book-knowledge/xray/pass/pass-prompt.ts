@@ -3,7 +3,7 @@ import { NAMES_SYSTEM } from '../../../story-guides/pipeline/names-step';
 import { SUMMARIES_SYSTEM } from '../../../story-guides/pipeline/summaries-step';
 import { TIES_SYSTEM } from '../../../story-guides/pipeline/ties-step';
 
-export const NOTE_WORDS = 40;
+export const NOTE_WORDS = 100;
 /** An id named in at least this many sentences of the unit must get a note, or null. */
 export const NOTE_MIN_MENTIONS = 3;
 export const ABILITY_GROUPS = ['path', 'class', 'level', 'spell', 'skill', 'trait', 'stat', 'gear', 'other'] as const;

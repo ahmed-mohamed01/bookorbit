@@ -4,11 +4,12 @@ import { summaryProblem } from '../../../story-guides/pipeline/summaries-step';
 import type { Sentence } from '../../core/model';
 import { guessesGender, type Read, type Rejections } from '../xray-checks';
 import type { XrayTieType } from '../xray-tie-types';
-import type { PassSlot } from '../pass/pass-cast';
+import { NARRATOR_ID, type PassSlot } from '../pass/pass-cast';
 import { ABILITY_GROUPS } from '../pass/pass-prompt';
 import {
   EMPTY_FACT,
   HEDGES,
+  NARRATOR_PHRASE,
   list,
   record,
   text,
@@ -23,9 +24,23 @@ import { citesIn } from './dense-chunks';
 import type { SceneLinkPair } from './dense-links';
 import { CHUNK_NOTE_WORDS, FACTS_PER_ID, type DenseFailure } from './dense-prompt';
 import { clean, descriptionProblem } from './dense-describe';
+import { unattributedModal } from '../xray-description-context';
 import { mapTieType } from './dense-tie-map';
 
 const FACT_WORDS = 40;
+const EMPTY_NOTE =
+  /\b(?:(?:(?:is|was) (?:just )?|^)(?:named|mentioned|referenced) (?:once|only)\b|(?:only|merely) (?:named|mentioned|referenced)\b|no (?:action|event) (?:occurs|happens|takes place)\b|nothing (?:happens|occurs)\b|(?:is|was) not (?:described|shown)\b|does not appear(?: in (?:this|the) (?:scene|passage|chapter|chunk|stretch))?(?=[.!?;]|$))/i;
+const CITE_RESIDUE = /\bn\s*:\s*(?:\[\s*)?\d+|\[\s*\d+(?:\s*,\s*\d+)*\s*\]|\(n\d+(?:\s*,\s*n\d+)*\)/i;
+/** A reference list the model wrote at the end of the note instead of in n, such as "| n: [336, 370]" or "(n12, n13)". */
+const TRAILING_CITES = /\s*(?:\|\s*)?(?:\bn\s*:\s*\[?\s*(\d+(?:\s*,\s*\d+)*)\s*\]?|\((n\d+(?:\s*,\s*n\d+)*)\))\s*\.?$/i;
+function splitTrailingCites(note: string): { note: string; cites: number[] } {
+  const match = TRAILING_CITES.exec(note);
+  if (!match) return { note, cites: [] };
+  const cites = (match[1] ?? match[2]).split(',').map((part) => Number(part.trim().replace(/^n/i, '')));
+  return { note: note.slice(0, match.index).trim(), cites };
+}
+const noteProblem = (note: string) =>
+  CITE_RESIDUE.test(note) ? 'contains inline citation markers' : NARRATOR_PHRASE.test(note) ? 'says "the narrator" instead of a name' : null;
 const TIE_SENTENCE_WORDS = 40;
 /** Bare words that name no ability on their own. */
 const GENERIC_ABILITY = /^(?:skills?|levels?|powers?|abilit(?:y|ies)|class(?:es)?|spells?|stats?|traits?|gear|items?|magic|status)$/i;
@@ -33,7 +48,7 @@ const GENERIC_ABILITY = /^(?:skills?|levels?|powers?|abilit(?:y|ies)|class(?:es)
 const CAUSAL =
   /\b(?:caus\w*|lead(?:s|ing)? to|led to|result\w*|because|bring\w* about|brought about|produc\w*|driv\w*|enabl\w*|therefore|thus|consequen\w*|so that|give[sn]? rise|gave rise|trigger\w*)\b/i;
 /** A sentence that says two names are one: a copula, "called", "known as", or apposition. */
-const SAME = /\b(?:is|was|are|were|called|named|known as|alias|real name|also)\b|,/i;
+export const SAME = /\b(?:is|was|are|were|called|named|known as|alias|real name|also)\b|,/i;
 
 export interface DenseChunkInput {
   chunk: PassUnit;
@@ -44,6 +59,7 @@ export interface DenseChunkInput {
   names: LineNames;
   /** Each slot's sentences in the chunk, fixed at launch; a tie cited on a sentence that does not name both sides moves to the chunk's end. */
   mentions?: ReadonlyMap<string, ReadonlySet<number>>;
+  firstPerson?: boolean;
 }
 
 function firstNaming(ordinals: readonly number[], sentences: readonly Sentence[], a: PassSlot, b: PassSlot): number | undefined {
@@ -100,22 +116,26 @@ export function notesReader(input: DenseChunkInput, rejected: Rejections): Read<
       }
       result.answered.add(slot.id);
       const item = record(value);
-      const note = typeof value === 'string' ? text(value) : text(item?.note);
-      if (!note) {
+      const written = splitTrailingCites(typeof value === 'string' ? text(value) : text(item?.note));
+      const note = written.note;
+      const problem = noteProblem(note);
+      if (!problem && (!note || EMPTY_NOTE.test(note))) {
         result.nulls.push(slot);
         continue;
       }
-      const { cites, outside } = citesIn(item?.n, inside);
+      const given = Array.isArray(item?.n) ? item.n.length > 0 : item?.n !== undefined && item?.n !== null;
+      const { cites, outside } = citesIn(given ? item?.n : written.cites, inside);
       count(rejected, 'notes:cite-outside', outside);
-      if (words(note) > CHUNK_NOTE_WORDS)
+      if (problem) result.failed.push({ field: 'notes', id: slot.id, text: note, detail: problem });
+      else if (words(note) > CHUNK_NOTE_WORDS)
         result.failed.push({ field: 'notes', id: slot.id, text: note, detail: `is longer than ${CHUNK_NOTE_WORDS} words` });
       else if (later(note).length)
         result.failed.push({ field: 'notes', id: slot.id, text: note, detail: `names ${later(note).join(', ')}, not introduced yet` });
       else result.notes.push({ slot, note, cites });
     }
     const summary = text(answer.summary);
-    const problem = summary ? summaryProblem(summary, names) : null;
-    if (problem) result.failed.push({ field: 'summary', id: 'summary', text: summary, detail: problem.detail });
+    const problem = summary ? (noteProblem(summary) ?? summaryProblem(summary, names)?.detail) : null;
+    if (problem) result.failed.push({ field: 'summary', id: 'summary', text: summary, detail: problem });
     else result.summary = summary || null;
     return { items: result, rejected: {} };
   };
@@ -168,8 +188,13 @@ export function factsReader(input: DenseChunkInput, rejected: Rejections, needsI
         const raw = text(description.text);
         const line = clean(raw, own);
         const { cites, outside } = citesIn(description.n, inside);
-        const cite = cites.find((ordinal) => own.some((name) => sentences[ordinal - 1].text.toLowerCase().includes(name.toLowerCase())));
-        const problem = words(raw) > 12 ? 'too-long' : descriptionProblem(line, names, own, 12);
+        const narrator = slot.id === NARRATOR_ID;
+        const cite = cites.find((ordinal) =>
+          narrator
+            ? input.mentions?.get(slot.id)?.has(ordinal)
+            : own.some((name) => sentences[ordinal - 1].text.toLowerCase().includes(name.toLowerCase())),
+        );
+        const problem = words(raw) > 12 ? 'too-long' : descriptionProblem(line, names, own, 12, narrator, mode === 'fiction');
         if (problem || outside || cite === undefined) count(rejected, `is:${problem ?? 'no-cite'}`);
         else {
           described.add(slot.id);
@@ -202,7 +227,10 @@ export function factsReader(input: DenseChunkInput, rejected: Rejections, needsI
       const problem = mode === 'fiction' ? lineProblem(fact, { later: names.later, visible: names.visible }) : null;
       const id = `${slot.id}#${seen.size}`;
       if (words(fact) > FACT_WORDS) fail('identity', id, fact, `is longer than ${FACT_WORDS} words`);
+      else if (NARRATOR_PHRASE.test(fact)) fail('identity', id, fact, 'says "the narrator" instead of a name');
       else if (HEDGES.test(fact)) fail('identity', id, fact, 'hedges ("possibly", "perhaps", "seems")');
+      else if (mode === 'fiction' && item.kind !== 'status' && unattributedModal(fact))
+        fail('identity', id, fact, 'uses would or could without attributing it to a thinker');
       else if (later(fact).length) fail('identity', id, fact, `names ${later(fact).join(', ')}, not introduced yet`);
       else if (problem && problem.reason !== 'too-long') fail('identity', id, fact, problem.detail);
       else result.facts.push({ slot, text: fact, cite: cites[0], ...(mode === 'fiction' && item.kind === 'status' ? { status: true } : {}) });
@@ -226,9 +254,14 @@ export function factsReader(input: DenseChunkInput, rejected: Rejections, needsI
           count(rejected, 'abilities:name-not-in-sentence');
           continue;
         }
+        const detail = text(item.detail);
+        if (NARRATOR_PHRASE.test(name) || NARRATOR_PHRASE.test(detail)) {
+          count(rejected, 'abilities:narrator');
+          continue;
+        }
         const change = item.change === 'lost' || item.change === 'changed' ? item.change : 'gained';
         const group = (ABILITY_GROUPS as readonly string[]).includes(String(item.group)) ? (item.group as StoryGuideChronicleAbilityGroup) : 'other';
-        result.abilities.push({ slot, change, group, name, detail: text(item.detail) || null, cite: cites[0] });
+        result.abilities.push({ slot, change, group, name, detail: detail || null, cite: cites[0] });
       }
 
     for (const item of list(answer.merges)) {
@@ -236,7 +269,17 @@ export function factsReader(input: DenseChunkInput, rejected: Rejections, needsI
       const cites = citesIn(item.n, inside).cites;
       const line = said(cites).toLowerCase();
       const named = (slot: PassSlot) => [slot.name, ...slot.aliases].some((name) => line.includes(name.toLowerCase()));
-      if (!a || !b || a.head === b.head || !cites.length || !named(a) || !named(b) || !SAME.test(line)) {
+      if (
+        !a ||
+        !b ||
+        a.id === NARRATOR_ID ||
+        b.id === NARRATOR_ID ||
+        a.head === b.head ||
+        !cites.length ||
+        !named(a) ||
+        !named(b) ||
+        !SAME.test(line)
+      ) {
         count(rejected, 'merges:not-stated');
         continue;
       }
@@ -249,6 +292,8 @@ export function factsReader(input: DenseChunkInput, rejected: Rejections, needsI
 export interface SceneSamePair {
   a: PassSlot;
   b: PassSlot;
+  /** The cited sentence inside the chunk, or null when the answer gave none there. */
+  cite: number | null;
 }
 
 export interface DenseScene {
@@ -277,6 +322,7 @@ export function tieProblem(info: XrayTieType | undefined, evidence: string, sent
   if (info?.type === 'leads_to' && !CAUSAL.test(evidence)) return 'leads-to-not-stated';
   if (info?.type === 'lives_at' && !DWELLING.test(evidence)) return 'lives-at-not-stated';
   if (!sentence || words(sentence) > TIE_SENTENCE_WORDS) return 'sentence-length';
+  if (NARRATOR_PHRASE.test(sentence)) return 'narrator';
   if (namedLater(sentence, names()).length) return 'later-name';
   if (HEDGES.test(sentence)) return 'hedge';
   return null;
@@ -285,7 +331,7 @@ export function tieProblem(info: XrayTieType | undefined, evidence: string, sent
 const rosterName = (name: string) => name.toLowerCase().replace(/^the\s+/, '');
 
 export function sceneReader(input: DenseChunkInput, rejected: Rejections): Read<DenseScene> {
-  const { chunk, slots, sentences, mode, names, mentions } = input;
+  const { chunk, slots, sentences, mode, names, mentions, firstPerson } = input;
   const byId = lookupOf(slots);
   const byName = new Map<string, PassSlot | null>();
   for (const slot of slots)
@@ -299,19 +345,18 @@ export function sceneReader(input: DenseChunkInput, rejected: Rejections): Read<
   return (raw) => {
     const given = record(raw);
     if (!given || !('pov' in given || Array.isArray(given.same) || Array.isArray(given.relations))) return null;
-    const pov = mode === 'fiction' ? (resolve(given.pov)?.id ?? null) : null;
+    const pov = mode === 'fiction' || firstPerson ? (resolve(given.pov)?.id ?? null) : null;
     const relations: unknown[] = Array.isArray(given.relations) ? given.relations : [];
     const result: DenseScene = { pov, same: [], ties: [], linkPairs: [], relations: relations.length, mapped: {} };
     for (const value of Array.isArray(given.same) ? given.same : []) {
       const item = record(value);
       const a = resolve(item?.id);
       const b = resolve(item?.same_as);
-      // The two-chunk vote guards a same-entity answer, so a missing sentence number does not void it.
       if (!a || !b) count(rejected, 'scene:same-unknown');
       // A reply often pairs an entry with itself; counting that apart keeps same-already to pairs the cast had joined.
       else if (a === b) count(rejected, 'scene:same-self');
       else if (a.head === b.head) count(rejected, 'scene:same-already');
-      else result.same.push({ a, b });
+      else result.same.push({ a, b, cite: citesIn(item?.n, inside).cites[0] ?? null });
     }
     count(rejected, 'ties:over-limit', Math.max(0, relations.length - 12));
     for (const value of relations.slice(0, 12)) {

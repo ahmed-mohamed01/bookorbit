@@ -6,9 +6,9 @@ import type { Rejections } from '../xray-checks';
 import type { XrayEntity } from '../xray-entities';
 import { namesAt } from '../xray-lines';
 import { type XrayStepRun } from '../xray-runner';
-import { namedFirst, PassCast, patternMerges, type PassSlot } from '../pass/pass-cast';
+import { namedFirst, NARRATOR_ID, ordered, PassCast, patternMerges, type PassSlot } from '../pass/pass-cast';
 import { NOTE_WORDS } from '../pass/pass-prompt';
-import { HEDGES, record, text, words, type PassAnswer, type PassFact } from '../pass/pass-read';
+import { HEDGES, NARRATOR_PHRASE, record, text, words, type PassAnswer, type PassFact } from '../pass/pass-read';
 import { cloned, writeAbout, type AboutEvidence, type Ask, type PassRunResult } from '../pass/pass-run';
 import { ungroundedNames } from '../pass/pass-grounding';
 import { factsAbout, PassState } from '../pass/pass-state';
@@ -19,7 +19,7 @@ import {
   factsOutputTokens,
   notesUser,
   readSystem,
-  NOTES_MAX_OUTPUT_TOKENS,
+  notesOutputTokens,
   notesBatchUser,
   RETRY_BATCH,
   sceneUser,
@@ -39,8 +39,9 @@ import { describeEntities, descriptionProblem, IDENTITY, IDENTITY_PROSE } from '
 import { bareLabel, definitionGloss, definitionOf, sameText } from './dense-definition';
 import type { SceneLinkPair } from './dense-links';
 import { factsReader, notesReader, sceneReader, type DenseChunkInput, type DenseFacts, type DenseNotes, type DenseScene } from './dense-read';
+import { NarrationDetector, NarratorVotes } from './dense-narration';
 import { sceneRoster, SceneRelations, SceneSame } from './dense-scene';
-import { slotTier } from '../xray-tiers';
+import { MINOR_TIER, slotTier } from '../xray-tiers';
 
 const DENSE_EFFORT: AiEffort = 'low';
 /** Units an entry with no line is sent to the describe step before it is left to its facts. */
@@ -56,6 +57,7 @@ export interface DenseRunInput {
   sentences: readonly Sentence[];
   units: readonly PassUnit[];
   mode: BookKnowledgeXrayMode;
+  readDescription?: () => Promise<string | null>;
   ask: Ask;
   askAbout: Ask;
   /** Ask A: notes and summary. */
@@ -111,8 +113,15 @@ export function stitchNotes(notes: readonly { note: string; cites: readonly numb
       seen.add(key);
       return [note];
     });
-  const together = texts.join(' ');
-  return words(together) <= NOTE_WORDS ? together : texts[0];
+  const kept: string[] = [];
+  let used = 0;
+  for (const note of texts) {
+    const size = words(note);
+    if (kept.length && used + size > NOTE_WORDS) break;
+    kept.push(note);
+    used += size;
+  }
+  return kept.join(' ');
 }
 
 /** The chunk sentences that name any of `slots`, for a re-ask that sends only the evidence. */
@@ -131,6 +140,8 @@ function held<T>(promise: Promise<T>): Promise<T> {
 }
 
 interface LaunchedChunk {
+  slots: PassSlot[];
+  narratorDone?: (pov: string | null) => Promise<void>;
   chunk: PassUnit;
   notes: Promise<DenseNotes | null>;
   facts: Promise<DenseFacts | null>;
@@ -141,8 +152,7 @@ interface LaunchedChunk {
 interface LaunchedUnit {
   unit: PassUnit;
   slots: PassSlot[];
-  chunks: LaunchedChunk[];
-  /** The unit's notes, one per entity, merged as soon as its chunks answer so the merge stays off the serial tail. */
+  chunks: Promise<LaunchedChunk>[];
   joined: Promise<PassAnswer['notes']>;
 }
 
@@ -153,32 +163,59 @@ export async function runDense(input: DenseRunInput): Promise<DenseRunResult> {
   for (const merge of patternMerges(entities, sentences, { guard: true })) cast.merge(merge);
   const identity = resolveIdentities(cast, sentences, mode, input.alias);
   const pattern = cast.merges.length;
-  for (const merge of await aliasMerges(aliasCandidates(cast, sentences, mode, identity), sentences, mode, ask, input.alias)) joinAlias(cast, merge);
+  const offered = aliasCandidates(cast, sentences, mode, identity);
+  for (const merge of await aliasMerges(offered, sentences, mode, ask, input.alias)) joinAlias(cast, merge);
+  // A join opens pairs the first round could not see ("Princess Bob" joins Viv, so "Bob" now meets her); ask only about those.
+  const asked = new Set(offered.map(({ member, head }) => `${member.key}|${head.key}`));
+  const opened = aliasCandidates(cast, sentences, mode).filter(
+    ({ member, head }) => !asked.has(`${member.key}|${head.key}`) && !asked.has(`${head.key}|${member.key}`),
+  );
+  for (const merge of await aliasMerges(opened, sentences, mode, ask, input.alias, 'alias-joined')) joinAlias(cast, merge);
   const state = new PassState();
   const same = new SceneSame();
   const linkPairs: SceneLinkPair[] = [];
   const pov = new Map<string, string | null>();
   const relations = new SceneRelations();
+  const narrationDetector = new NarrationDetector();
+  const narrators = new NarratorVotes(cast, input.readDescription);
+  let previousNarration = Promise.resolve();
+  let narrator: XrayEntity | null = null;
   const required = { keys: 0, first: 0, retry: 0 };
   const namesFor = (ordinal: number): LineNames => namesAt(entities, ordinal);
   let rewrites = 0;
   const describeTries = new Map<string, number>();
+  const minorCharacter = (slot: PassSlot) => slot.kind === 'character' && slotTier(slot, mode) === MINOR_TIER;
 
-  /** Entries of the unit still without a line once facts, glosses and `about` are in: a rejected `is` lands here too. */
-  const describeGaps = async (unit: PassUnit, slots: readonly PassSlot[], names: LineNames) => {
+  const describeGaps = async (unit: PassUnit, slots: readonly PassSlot[], names: LineNames, minorIntros: ReadonlyMap<string, string>) => {
+    const through = unit.ordinals.at(-1)!;
     const pending = slots.flatMap((slot) => {
+      if (state.currentAbout(slot.id)) return [];
+      const notes = minorCharacter(slot)
+        ? (state.timeline.get(slot.id) ?? []).flatMap(({ unit: source, value: { note, at } }) => {
+            const end = source.ordinals.at(-1) ?? Infinity;
+            const anchor = at ?? end;
+            return note && end <= through && anchor <= through ? [{ note, at: anchor }] : [];
+          })
+        : [];
+      const intro = minorIntros.get(slot.id);
+      if (intro && !notes.length) {
+        state.setAbout(slot.id, unit, intro);
+        return [];
+      }
       const tried = describeTries.get(slot.id) ?? 0;
-      if (tried >= DESCRIBE_TRIES || state.currentAbout(slot.id)) return [];
+      if (tried >= DESCRIBE_TRIES) return [];
       const mentions = cast.mentionsOf(slot, unit);
       if (!mentions.length) return [];
       describeTries.set(slot.id, tried + 1);
       if (tried) input.describe.reject({ 'describe:deferred': 1 });
-      return [{ slot, mentions }];
+      return [{ slot, mentions, notes }];
     });
-    if (!pending.length) return;
-    input.describe.tally('counts', { 'describe:gap': pending.length });
-    const lines = await describeEntities(pending, unit.id, names, sentences, mode, ask, input.describe);
-    for (const [id, line] of lines) state.setAbout(id, unit, line);
+    if (pending.length) {
+      input.describe.tally('counts', { 'describe:gap': pending.length });
+      const lines = await describeEntities(pending, unit.id, names, sentences, mode, ask, input.describe);
+      for (const [id, line] of lines) state.setAbout(id, unit, line);
+    }
+    for (const [id, intro] of minorIntros) if (!state.currentAbout(id)) state.setAbout(id, unit, intro);
   };
 
   /** `seen`: each slot's sentences in the chunk, fixed at launch. `others`: the chunk's facts and scene asks are done. */
@@ -193,7 +230,8 @@ export async function runDense(input: DenseRunInput): Promise<DenseRunResult> {
     const user = notesUser(numberedText(sentences, chunk.chunk.ordinals), chunk.slots, context, mode);
     const rejected: Rejections = {};
     const read = notesReader(chunk, rejected);
-    const send = (body: string) => ask({ system, user: body, maxOutputTokens: NOTES_MAX_OUTPUT_TOKENS, effort: DENSE_EFFORT, capped: true });
+    const send = (body: string, slots: readonly PassSlot[] = chunk.slots) =>
+      ask({ system, user: body, maxOutputTokens: notesOutputTokens(slots), effort: DENSE_EFFORT, capped: true });
     const wanted = requiredIds(chunk.slots);
     required.keys += wanted.length;
     const replied = await input.notes
@@ -233,6 +271,7 @@ export async function runDense(input: DenseRunInput): Promise<DenseRunResult> {
               failedNotes.filter((item) => ids.includes(item.id)),
               summaryWanted && index === 0,
             ),
+            slots,
           ),
           read: notesReader({ ...chunk, chunk: { ...chunk.chunk, ordinals }, slots }, rejected),
           tries: 1,
@@ -309,7 +348,7 @@ export async function runDense(input: DenseRunInput): Promise<DenseRunResult> {
       ordinals: chunk.chunk.ordinals,
       send: ask({
         system: readSystem(mode),
-        user: sceneUser(numberedText(sentences, chunk.chunk.ordinals), chunk.slots, about, mode),
+        user: sceneUser(numberedText(sentences, chunk.chunk.ordinals), chunk.slots, about, mode, chunk.firstPerson),
         maxOutputTokens: TIES_MAX_OUTPUT_TOKENS,
         effort: DENSE_EFFORT,
         capped: true,
@@ -338,24 +377,23 @@ export async function runDense(input: DenseRunInput): Promise<DenseRunResult> {
     previous: state.summaryAt(through),
   });
 
-  const joinNotes = async (slots: readonly PassSlot[], chunks: readonly LaunchedChunk[]): Promise<PassAnswer['notes']> => {
-    const byId = new Map(slots.map((slot) => [slot.id, slot]));
-    const chunkNotes = new Map<string, { note: string; cites: number[] }[]>();
-    for (const asked of chunks.map((chunk) => chunk.notes))
-      for (const note of (await asked)?.notes ?? [])
-        if (byId.has(note.slot.id)) chunkNotes.set(note.slot.id, [...(chunkNotes.get(note.slot.id) ?? []), note]);
-    return [...chunkNotes].map(([id, notes]) => {
+  const joinNotes = async (chunks: readonly Promise<LaunchedChunk>[]): Promise<PassAnswer['notes']> => {
+    const chunkNotes = new Map<string, DenseNotes['notes']>();
+    for (const chunk of chunks)
+      for (const note of (await (await chunk).notes)?.notes ?? []) chunkNotes.set(note.slot.id, [...(chunkNotes.get(note.slot.id) ?? []), note]);
+    return [...chunkNotes.values()].map((notes) => {
       const at = notes.flatMap((note) => note.cites);
-      return { slot: byId.get(id)!, note: stitchNotes(notes), at: at.length ? Math.min(...at) : null };
+      return { slot: notes[0].slot, note: stitchNotes(notes), at: at.length ? Math.min(...at) : null };
     });
   };
 
   const launch = (unit: PassUnit, through: number): LaunchedUnit => {
     const slots = cast.slots(unit);
-    const chunks = denseChunks(sentences, unit).map((chunk): LaunchedChunk => {
+    const launchChunk = (chunk: PassUnit, narratorId?: string): LaunchedChunk => {
       const slots = cast.slots(unit, chunk.ordinals);
       const read: DenseChunkInput = { chunk, slots, sentences, mode, names: namesFor(chunk.ordinals.at(-1)!) };
       const context = contextOf(slots, through);
+      context.narratorId = narratorId;
       const seen = new Map(slots.map((slot) => [slot.id, cast.mentionsOf(slot, chunk, chunk.ordinals)]));
       const needsIs = new Set<string>();
       const glosses: PassFact[] = [];
@@ -364,11 +402,12 @@ export async function runDense(input: DenseRunInput): Promise<DenseRunResult> {
         const own = [slot.name, ...slot.aliases];
         const cite = slot.kind === 'character' ? null : definitionOf(seen.get(slot.id)!, sentences, own);
         const gloss = cite === null ? null : definitionGloss(sentences[cite - 1].text, own, slot.kind);
-        if (gloss && cite !== null && !descriptionProblem(gloss, read.names, own, slotTier(slot, mode).limit))
+        if (gloss && cite !== null && !descriptionProblem(gloss, read.names, own, slotTier(slot, mode).limit, false, mode === 'fiction'))
           glosses.push({ slot, text: gloss, cite });
         else if (!input.writesAbout(slot)) needsIs.add(slot.id);
       }
       context.needsIs = needsIs;
+      read.mentions = new Map([...seen].map(([id, ordinals]) => [id, new Set(ordinals)]));
       const roster = sceneRoster(cast, chunk, mode);
       const rosterMentions = new Map(roster.map((slot) => [slot.id, new Set(cast.mentionsOf(slot, chunk, chunk.ordinals))]));
       let firstResponse!: () => void;
@@ -377,11 +416,39 @@ export async function runDense(input: DenseRunInput): Promise<DenseRunResult> {
       const others = new Promise<void>((resolve) => (othersDone = resolve));
       const notes = held(askNotes(read, context, firstResponse, seen, others));
       const facts = held(ready.then(() => askFacts(read, context, seen)));
-      const scene = held(ready.then(() => askScene({ ...read, slots: roster, mentions: rosterMentions }, aboutOf(roster, through))));
+      const scene = held(
+        ready.then(() => askScene({ ...read, slots: roster, mentions: rosterMentions, firstPerson: !!narratorId }, aboutOf(roster, through))),
+      );
       void Promise.allSettled([facts, scene]).then(othersDone);
-      return { chunk, notes, facts, scene, glosses };
+      return { chunk, slots, notes, facts, scene, glosses };
+    };
+    const chunks = denseChunks(sentences, unit).map((chunk) => {
+      const narration = narrationDetector.mentions(chunk, sentences);
+      if (!narration.length) return Promise.resolve(launchChunk(chunk));
+
+      const prior = previousNarration;
+      let processed!: () => void;
+      previousNarration = new Promise<void>((resolve) => (processed = resolve));
+      return held(
+        prior.then(() => {
+          const owner = narrator ?? narrators.anonymous(narration[0]);
+          cast.creditNarration(owner, chunk, narration);
+          return {
+            ...launchChunk(chunk, owner.id),
+            async narratorDone(pov: string | null) {
+              const end = chunk.ordinals.at(-1)!;
+              narrators.record(pov, end);
+              narrator = await narrators.consensus(end);
+              const anonymous = cast.entity(NARRATOR_ID);
+              if (narrator && anonymous && cast.joinedAt(anonymous) === null)
+                cast.merge({ member: anonymous, head: narrator, ordinal: end, rule: 'narrator' });
+              processed();
+            },
+          };
+        }),
+      );
     });
-    return { unit, slots, chunks, joined: held(joinNotes(slots, chunks)) };
+    return { unit, slots, chunks, joined: held(joinNotes(chunks)) };
   };
   // Unit i launches right after unit i - DENSE_UNIT_WINDOW is processed, before the next unit's processing starts, so its prompts see a fixed state.
   const launched: LaunchedUnit[] = [];
@@ -392,16 +459,27 @@ export async function runDense(input: DenseRunInput): Promise<DenseRunResult> {
   for (let index = 0; index < DENSE_UNIT_WINDOW; index++) start(index);
 
   for (const index of units.keys()) {
-    const { unit, slots, chunks, joined } = launched[index];
-    const byId = new Map(slots.map((slot) => [slot.id, slot]));
+    const { unit, slots: initialSlots, chunks: waiting, joined } = launched[index];
+    const byId = new Map(initialSlots.map((slot) => [slot.id, slot]));
+    const chunks: LaunchedChunk[] = [];
+    const minorIntros = new Map<string, string>();
     const answer: PassAnswer = { notes: [], facts: [], abilities: [], ties: [], merges: [], summary: null, failed: [] };
     // A point of view never carries into the next unit, which may open on someone else.
     let lastPov: string | null = null;
-    for (const { chunk, notes: asked, facts: told, scene: card, glosses } of chunks) {
+    for (const wait of waiting) {
+      const launched = await wait;
+      chunks.push(launched);
+      const { chunk, notes: asked, facts: told, scene: card, glosses, narratorDone } = launched;
+      for (const slot of launched.slots) if (!byId.has(slot.id)) byId.set(slot.id, slot);
       const [notes, facts, scene] = await Promise.all([asked, told, card]);
       if (notes?.summary) state.summaries.push({ unit: chunk, value: notes.summary });
-      for (const fact of [...glosses, ...(facts?.descriptions ?? [])])
-        if (!state.currentAbout(fact.slot.id)) state.setAbout(fact.slot.id, unit, factsAbout([{ unit, value: fact }]));
+      for (const fact of [...glosses, ...(facts?.descriptions ?? [])]) {
+        const { id } = fact.slot;
+        if (state.currentAbout(id) || minorIntros.has(id)) continue;
+        const intro = factsAbout([{ unit, value: fact }]);
+        if (minorCharacter(fact.slot)) minorIntros.set(id, intro);
+        else state.setAbout(id, unit, intro);
+      }
       if (facts) {
         answer.facts.push(...facts.facts);
         answer.abilities.push(...facts.abilities);
@@ -411,12 +489,14 @@ export async function runDense(input: DenseRunInput): Promise<DenseRunResult> {
       if (scene) lastPov = scene.pov ?? null;
       pov.set(chunk.id, lastPov);
       if (scene) {
-        input.ties.reject(same.apply(cast, chunk, scene.same));
+        input.ties.reject(same.apply(cast, chunk, scene.same, sentences));
         linkPairs.push(...scene.linkPairs);
         relations.record(unit, scene.ties);
       }
+      await narratorDone?.(scene?.pov ?? null);
     }
 
+    const slots = [...byId.values()];
     const names = namesFor(unit.ordinals.at(-1)!);
     answer.notes.push(...(await joined));
 
@@ -430,7 +510,8 @@ export async function runDense(input: DenseRunInput): Promise<DenseRunResult> {
       return true;
     });
     for (const merge of answer.merges) {
-      const [member, head] = namedFirst(merge.a.member ?? merge.a.head, merge.b.member ?? merge.b.head, (a, b) => [a, b]);
+      // The model only says the two are one; which name heads it is the book's weight, not the order of its answer.
+      const [member, head] = namedFirst(merge.a.member ?? merge.a.head, merge.b.member ?? merge.b.head, ordered);
       // One cited sentence is thin evidence, so a single-chunk merge never joins two kinds ("her cloak" into the heroine).
       if (member.kind !== head.kind) continue;
       cast.merge({ member, head, ordinal: merge.cite, rule: 'model' });
@@ -445,7 +526,7 @@ export async function runDense(input: DenseRunInput): Promise<DenseRunResult> {
     const changed = [...new Set(answer.facts.filter((fact) => fact.status).map((fact) => fact.slot.id))]
       .map((id) => byId.get(id)!)
       .filter((slot) => input.writesAbout(slot));
-    await Promise.all([describeGaps(unit, slots, names), changed.length ? writeNow(changed, unit, state, names, input) : null]);
+    await Promise.all([describeGaps(unit, slots, names, minorIntros), changed.length ? writeNow(changed, unit, state, names, input) : null]);
     start(index + DENSE_UNIT_WINDOW);
   }
   // An entry that never got an `is` phrase or a gloss falls back to its first unit's facts, stamped at that unit so it spoils nothing.
@@ -456,6 +537,7 @@ export async function runDense(input: DenseRunInput): Promise<DenseRunResult> {
   }
   const never = [...describeTries.keys()].filter((id) => !state.currentAbout(id)).length;
   if (never) input.describe.reject({ 'describe:never': never });
+  cast.finishNarration();
   relations.apply(cast, state, input.ties);
   input.ties.tally('counts', { 'kin:ties': addKinTies(cast, state, units) });
   return { cast, state, merged: { pattern, model: cast.merges.length - pattern }, rewrites, required, linkPairs, pov };
@@ -554,8 +636,9 @@ async function writeNow(slots: readonly PassSlot[], unit: PassUnit, state: PassS
     const own = [slot.name, ...slot.aliases].map((name) => name.toLowerCase());
     const { about, now, facts } = rows[index];
     const support = [...facts, about ?? '', now ?? '', slot.name, ...slot.aliases];
-    const reason =
-      words(line) > NOW_WORDS
+    const reason = NARRATOR_PHRASE.test(line)
+      ? 'now:narrator'
+      : words(line) > NOW_WORDS
         ? 'now:too-long'
         : /^now\b/i.test(line)
           ? 'now:starts-with-now'

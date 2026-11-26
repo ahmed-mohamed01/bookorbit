@@ -1,21 +1,30 @@
+import { COLLECTIVE } from './dense-collective';
 import type { BookKnowledgeXrayMode } from '@bookorbit/types';
 import type { PassTie } from '../pass/pass-read';
 import type { PassState } from '../pass/pass-state';
 import type { XrayStepRun } from '../xray-runner';
 import type { Rejections } from '../xray-checks';
-import { namedFirst, type PassCast, type PassSlot } from '../pass/pass-cast';
+import { namedFirst, NARRATOR_ID, type PassCast, type PassSlot } from '../pass/pass-cast';
 import type { PassUnit } from '../pass/pass-units';
-import type { SceneSamePair } from './dense-read';
+import type { Sentence } from '../../core/model';
+import { SAME, type SceneSamePair } from './dense-read';
 
 const CUMULATIVE_ROSTER = 30;
 const CHUNK_ROSTER = 25;
 const NONFICTION_ROSTER = 40;
 const MAIN_MENTIONS = 20;
+/** The vote rests on a sentence of the chunk that names both entries and says they are one, as a facts merge does. */
+function stated({ a, b, cite }: SceneSamePair, chunk: PassUnit, sentences: readonly Sentence[]): boolean {
+  if (cite === null || !chunk.ordinals.includes(cite)) return false;
+  const line = sentences[cite - 1].text.toLowerCase();
+  const named = (slot: PassSlot) => [slot.name, ...slot.aliases].some((name) => line.includes(name.toLowerCase()));
+  return named(a) && named(b) && SAME.test(line);
+}
 
 export function sceneRoster(cast: PassCast, chunk: PassUnit, mode: BookKnowledgeXrayMode): PassSlot[] {
   const ranked = (slots: PassSlot[], limit: number) =>
     slots
-      .filter((slot) => !slot.member)
+      .filter((slot) => !slot.member && slot.id !== NARRATOR_ID)
       .sort((a, b) => b.mentions - a.mentions)
       .slice(0, limit);
   const chapter = ranked(cast.slots(chunk, [1, chunk.ordinals.at(-1)!]), mode === 'nonfiction' ? NONFICTION_ROSTER : CUMULATIVE_ROSTER);
@@ -27,14 +36,19 @@ export class SceneSame {
   // A null records a pair already decided on its second vote, even if a guard blocked the merge.
   private readonly votes = new Map<string, number | null>();
 
-  apply(cast: PassCast, chunk: PassUnit, pairs: readonly SceneSamePair[]): Rejections {
+  apply(cast: PassCast, chunk: PassUnit, pairs: readonly SceneSamePair[], sentences: readonly Sentence[]): Rejections {
     const counts: Rejections = {};
     // The chunk's last sentence, since a reveal anywhere in it may be what the vote rests on.
     const ordinal = chunk.ordinals.at(-1)!;
-    for (const { a, b } of pairs) {
+    for (const pair of pairs) {
+      const { a, b } = pair;
       const left = cast.headOf(a.member ?? a.head);
       const right = cast.headOf(b.member ?? b.head);
       if (left === right) continue;
+      if (!stated(pair, chunk, sentences)) {
+        counts['scene:same-not-stated'] = (counts['scene:same-not-stated'] ?? 0) + 1;
+        continue;
+      }
       const key = JSON.stringify([left.id, right.id].sort());
       const first = this.votes.get(key);
       if (first === undefined) {
@@ -43,11 +57,14 @@ export class SceneSame {
       }
       if (first === ordinal || first === null) continue;
       this.votes.set(key, null);
+      if (left.kind !== right.kind || [left, right, a, b].some(({ name }) => COLLECTIVE.test(name))) {
+        counts['scene:same-kind'] = (counts['scene:same-kind'] ?? 0) + 1;
+        continue;
+      }
       const leftCount = cast.mentionsOf({ ...a, head: left, member: null }, chunk).length;
       const rightCount = cast.mentionsOf({ ...b, head: right, member: null }, chunk).length;
       const mainCharacters = left.kind === 'character' && right.kind === 'character' && leftCount >= MAIN_MENTIONS && rightCount >= MAIN_MENTIONS;
-      const characterAndPlace = (left.kind === 'character' && right.kind === 'place') || (left.kind === 'place' && right.kind === 'character');
-      if (mainCharacters || characterAndPlace) {
+      if (mainCharacters) {
         counts['scene:same-guard'] = (counts['scene:same-guard'] ?? 0) + 1;
         continue;
       }

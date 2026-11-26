@@ -244,8 +244,9 @@ describe('named heads', () => {
     const unit: PassUnit = { id: 'u1', index: 0, s: 0, ordinals: busy, sectionEnd: true };
     const [a, b] = scene.slots(unit);
     const same = new SceneSame();
-    same.apply(scene, { ...unit, ordinals: [1] }, [{ a, b }]);
-    expect(same.apply(scene, { ...unit, ordinals: [2] }, [{ a, b }])).toEqual({ 'scene:same-merge': 1 });
+    const said = sentences(['Pell was the stranger.', 'The stranger is Pell.']);
+    same.apply(scene, { ...unit, ordinals: [1] }, [{ a, b, cite: 1 }], said);
+    expect(same.apply(scene, { ...unit, ordinals: [2] }, [{ a, b, cite: 2 }], said)).toEqual({ 'scene:same-merge': 1 });
     expect(scene.heads).toEqual([pell]);
   });
 });

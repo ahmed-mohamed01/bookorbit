@@ -1,13 +1,16 @@
+import { WORD_EDGE } from '../../../story-guides/pipeline/name-text';
 import type { StoryGuideChronicleAbilityGroup } from '@bookorbit/types';
 import type { PassSlot } from './pass-cast';
 
-/** Upstream's hedge check looks for "or"; the brief adds these. */
+export const NARRATOR_PHRASE = new RegExp(`${WORD_EDGE}the narrator${WORD_EDGE}`, 'iu');
+
 /** A fact that says nothing: "Viv is a character." */
 export const EMPTY_FACT = /^[^.]{0,40}\b(?:is|was) an? (?:character|person|name|entity|term|concept)\.?$/i;
 /** A line that opens by naming its own category ("An idea describing", "A character named") instead of saying what it is. */
 export const SELF_LABEL =
   /^(?:an?\s+)?(?:idea|concept|notion|term|character|entity)\s+(?:named|called|describing|indicating|expressing|expressed|representing|referring|related|relating|that|which|of)\b/i;
 
+/** Upstream's hedge check looks for "or"; the brief adds these. */
 export const HEDGES = /\b(?:possibly|perhaps|likely|may be|seems?|seemingly|apparently)\b/i;
 
 export interface PassNote {

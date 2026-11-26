@@ -10,11 +10,12 @@ export const CHUNK_SENTENCES = 100;
  * ends its section.
  */
 export function denseChunks(sentences: readonly Sentence[], unit: PassUnit, size = CHUNK_SENTENCES): PassUnit[] {
-  const count = Math.max(1, Math.round(unit.ordinals.length / size));
-  const target = unit.ordinals.length / count;
+  const body = unit.ordinals.filter((ordinal) => sentences[ordinal - 1].structure === 'body');
+  const count = Math.max(1, Math.round(body.length / size));
+  const target = body.length / count;
   const parts: number[][] = [];
   let current: number[] = [];
-  for (const ordinal of unit.ordinals) {
+  for (const ordinal of body) {
     const startsParagraph = current.length > 0 && sentences[current.at(-1)! - 1].paragraphIndex !== sentences[ordinal - 1].paragraphIndex;
     if (startsParagraph && current.length >= target && parts.length + 1 < count) {
       parts.push(current);

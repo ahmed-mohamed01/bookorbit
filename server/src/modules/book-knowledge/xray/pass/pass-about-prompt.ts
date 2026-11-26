@@ -1,4 +1,5 @@
 import { MAIN_TIER, tierShape, type DescriptionTier } from '../xray-tiers';
+import { THOUGHT_DESCRIPTION } from '../xray-description-context';
 
 /** What the line holds after what it is: the main cast's drive and ties, the rest one or two things that matter most. */
 function aboutContent(tier: DescriptionTier): string {
@@ -18,7 +19,9 @@ export function fictionAboutSystem(tier: DescriptionTier): string {
     'details to make room; never list everything. Trust the sentences over a fact that contradicts them. When a sentence is ' +
     'labelled definition, the line must agree with it. Never define a thing by ' +
     'its own name, never call a person, place or spell "an idea" or "a concept". Name other characters by name, never "the ' +
-    'protagonist". Do not start with the entry\'s own name. No scene events, no hedging. If the new facts change nothing ' +
+    'protagonist". Do not start with the entry\'s own name. No scene events, no hedging. ' +
+    THOUGHT_DESCRIPTION +
+    ' If the new facts change nothing ' +
     'lasting, give "unchanged". n: the numbers of the one to three sentences the line rests on. Never use what you know of ' +
     'the book from elsewhere. Answer with JSON only: {"e1": {"about": "...", "n": [1234]}, "e2": "unchanged"}.'
   );

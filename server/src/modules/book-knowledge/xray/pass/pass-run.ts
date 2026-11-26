@@ -14,16 +14,17 @@ import type { AiEffort, AiResult } from '../../../ai/ai-client.types';
 import type { Rejections } from '../xray-checks';
 import type { XrayEntity } from '../xray-entities';
 import type { XrayStepRun } from '../xray-runner';
+import { unattributedModal } from '../xray-description-context';
 import { descriptionTokens, DESCRIPTION_TIERS, slotTier, tierShape, type DescriptionTier } from '../xray-tiers';
 import { fictionAboutSystem } from './pass-about-prompt';
-import type { PassCast, PassSlot } from './pass-cast';
-import { record, SELF_LABEL } from './pass-read';
+import { NARRATOR_ID, type PassCast, type PassSlot } from './pass-cast';
+import { NARRATOR_PHRASE, record, SELF_LABEL } from './pass-read';
 import { ungroundedNames } from './pass-grounding';
 import type { PassState } from './pass-state';
 import type { PassUnit } from './pass-units';
 
 const HEDGES = /\b(?:possibly|perhaps|likely|may be|seems?|seemingly|apparently)\b/i;
-const FICTION_LINE_PHRASES = new RegExp(`${WORD_EDGE}(?:or|the narrator)${WORD_EDGE}`, 'iu');
+const FICTION_LINE_PHRASES = new RegExp(`${WORD_EDGE}or${WORD_EDGE}`, 'iu');
 
 const nonfictionAboutSystem = (tier: DescriptionTier) =>
   'Below are terms and names of a nonfiction book that the chapter just read says something lasting about. Each has its current ' +
@@ -147,22 +148,28 @@ export async function writeAbout(
   const noNames: LineNames = { later: [], visible: [] };
   const tierOf = (row: LinesRow) => slotTier(slots[row.entity], mode);
   const problem = (row: LinesRow, { line, cites }: AboutLine) => {
+    const narrator = slots[row.entity].id === NARRATOR_ID;
+    if (!narrator && NARRATOR_PHRASE.test(line)) return 'says "the narrator" instead of a name';
     const limit = tierOf(row).limit;
     if (fiction && line.toLowerCase() === 'unchanged') return null;
     if (HEDGES.test(line)) return 'hedges ("possibly", "perhaps", "seems")';
     if (fiction) {
+      if (unattributedModal(line)) return 'uses would or could without attributing it to a thinker';
       const slot = slots[row.entity];
-      if ([slot.name, ...slot.aliases].some((name) => new RegExp(`^(?:the\\s+)?${escapeRegExp(name)}(?!${WORD_CHAR})`, 'iu').test(line)))
+      if (
+        !(narrator && /^the narrator\b/i.test(line)) &&
+        [slot.name, ...slot.aliases].some((name) => new RegExp(`^(?:the\\s+)?${escapeRegExp(name)}(?!${WORD_CHAR})`, 'iu').test(line))
+      )
         return 'starts with its own name';
       if (SELF_LABEL.test(line)) return 'opens with a label ("An idea describing", "A character named") instead of saying what it is';
       const given = new Set(shown.get(row.entity)!.map((sentence) => sentence.ordinal));
       if (given.size && (!cites.length || cites.some((cite) => !given.has(cite))))
         return 'n must list the numbers of the given sentences the line rests on';
       const upstream = lineProblem(line, names);
-      if (upstream && upstream.reason !== 'too-long') return upstream.detail;
-      if (upstream) {
+      if (upstream && upstream.reason !== 'too-long' && !(narrator && upstream.reason === 'narrator')) return upstream.detail;
+      if (upstream?.reason === 'too-long') {
         if (splitWords(line).length > limit) return `is longer than ${limit} words`;
-        // The upstream word limit runs before its hedge and narrator checks.
+        // The upstream word limit runs before its hedge check.
         const phrase = line.match(FICTION_LINE_PHRASES)?.[0];
         const narrated = phrase ? lineProblem(phrase, noNames)?.detail : undefined;
         if (narrated) return narrated;

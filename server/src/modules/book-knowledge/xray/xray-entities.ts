@@ -4,12 +4,13 @@ import type { BookKnowledgeKind, BookKnowledgeXrayMode, BookKnowledgeXraySub, St
 import { mentionsAt, visibleTerm } from '../core/artifact';
 import { termFragments } from '../core/term-fragments';
 import { words } from '../core/text-utils';
-import { isGenericTerm } from '../core/generic-terms';
-import type { KindAnswer } from '../core/kind-review';
+import { isExclamationTerm, isGenericTerm } from '../core/generic-terms';
+import { PLACE_NOUNS, type KindAnswer } from '../core/kind-review';
 import { termKinds } from '../core/kinds';
 import type { Artifact, Sentence, VisibleTerm } from '../core/model';
-import { rankTerms } from '../core/term-ranking';
-import { bareLabel } from './dense/dense-definition';
+import { rankTerms, type RankedTerm } from '../core/term-ranking';
+import { bareLabel, glossOf } from './dense/dense-definition';
+import { descriptiveEntries, fictionNameCheck, isDictionaryTerm } from './xray-fiction-entries';
 
 /** The X-Ray spec caps a payload at 400 entities. */
 export const XRAY_ENTITY_LIMIT = 400;
@@ -169,13 +170,18 @@ function joinsByGroup(artifact: Artifact, groups: ReadonlyMap<string, VisibleTer
   const groupOf = new Map<string, string | undefined>();
   const joins = new Map<string, Map<string, XrayJoin>>();
   for (const link of artifact.aliasLinks) {
-    if (link.ordinal > through || (link.untilOrdinal !== undefined && link.untilOrdinal <= through)) continue;
+    if (
+      artifact.sentences[link.ordinal - 1]?.structure !== 'body' ||
+      link.ordinal > through ||
+      (link.untilOrdinal !== undefined && link.untilOrdinal <= through)
+    )
+      continue;
     for (const side of [link.left, link.right]) {
-      if (!groupOf.has(side)) groupOf.set(side, visibleTerm(artifact, side, through)?.key);
+      if (!groupOf.has(side)) groupOf.set(side, visibleTerm(artifact, side, through, true)?.key);
       const group = groups.get(groupOf.get(side) ?? '');
       if (!group || side === group.key || joins.get(group.key)?.has(side)) continue;
       const term = terms.get(side);
-      const mentions = term ? mentionsAt(term, through) : [];
+      const mentions = term ? mentionsAt(term, through).filter(({ ordinal }) => artifact.sentences[ordinal - 1]?.structure === 'body') : [];
       if (!mentions.length || mentions[0].ordinal >= link.ordinal) continue;
       const names = firstNames(mentions.filter((mention) => group.aliases.includes(mention.alias) || mention.alias === group.displayName));
       if (!names.length) continue;
@@ -217,6 +223,44 @@ export function inCast(sentences: number, typed: boolean): boolean {
  * (rules, GLiNER votes and the kind review's answers), kept when named in enough body sentences, with
  * names and joins. No model is called here.
  */
+/**
+ * A novel's lowercase dictionary word needs this ranking score to be an entry: in The Calamitous Bob it keeps
+ * willpower (12.6) and endurance (10.1) and drops armor (5.7), shield (4.4) and cloak (3.5). Coined words skip it.
+ */
+export const DICTIONARY_TERM_MIN_SCORE = 8;
+
+/** Whether a novel's lowercase term is a plain word too weak to stand alone; one inside a name waits for the alias step. */
+export function weakDictionaryTerm(name: string, score: number, inNames: ReadonlySet<string>): boolean {
+  return isDictionaryTerm(name) && score < DICTIONARY_TERM_MIN_SCORE && !inNames.has(name);
+}
+
+/**
+ * Place words ("fort", "palace", "city") that open or close the name of one of the book's named places. `single`: in
+ * exactly one (Fort Stone), so the bare word is kept for the alias step to fold into it. `shared`: in two or more
+ * (Fort Stone, Fort Sky), so the bare word means any of them and is no entry. Other words face the score floor.
+ */
+export function nameWords(ranked: readonly RankedTerm[], isPlace: (key: string) => boolean): { single: Set<string>; shared: Set<string> } {
+  const seen = new Map<string, number>();
+  for (const term of ranked) {
+    const parts = words(term.displayName);
+    if (!/^\p{Lu}/u.test(term.displayName) || parts.length < 2 || !isPlace(term.key)) continue;
+    for (const word of new Set([parts[0], parts.at(-1)!])) if (PLACE_NOUNS.has(word)) seen.set(word, (seen.get(word) ?? 0) + 1);
+  }
+  const single = new Set<string>();
+  const shared = new Set<string>();
+  for (const [word, names] of seen) (names === 1 ? single : shared).add(word);
+  return { single, shared };
+}
+
+const HONORIFIC_SHARE = 0.5;
+
+/** "Grace" said mostly as "your Grace" or "her Grace" is a form of address, not someone's name. */
+export function honorific(name: string, ordinals: readonly number[], sentences: readonly Sentence[]): boolean {
+  if (/\s/.test(name)) return false;
+  const address = new RegExp(`\\b(?:your|his|her|their)\\s+${escapeRegExp(name)}\\b`, 'iu');
+  return ordinals.filter((ordinal) => address.test(sentences[ordinal - 1].text)).length >= ordinals.length * HONORIFIC_SHARE;
+}
+
 export function xrayEntities(
   artifact: Artifact,
   through: number,
@@ -225,25 +269,63 @@ export function xrayEntities(
   limit = mode === 'nonfiction' ? XRAY_NONFICTION_ENTITY_LIMIT : XRAY_ENTITY_LIMIT,
   dropped: { generic: number; fragment: number } = { generic: 0, fragment: 0 },
 ): XrayEntity[] {
-  const ranked = rankTerms(artifact, through);
+  const ranked = rankTerms(artifact, through, true);
   const decided = termKinds(artifact, ranked, through);
   const kindOf = (key: string): BookKnowledgeKind | 'junk' | null => answers.get(key) ?? decided.get(key)?.kind ?? null;
-  const eligible: { term: VisibleTerm; sentences: number }[] = [];
-  for (const term of ranked) {
+  let eligible: { term: VisibleTerm; sentences: number }[] = [];
+  const realName = fictionNameCheck(artifact.sentences);
+  const inNames = nameWords(ranked, (key) => kindOf(key) === 'place');
+  for (const rankedTerm of ranked) {
+    let term: VisibleTerm = rankedTerm;
     const kind = kindOf(term.key);
-    if (kind === 'junk') continue;
-    // The review typed it as a real entry, so the common-word rule no longer speaks for it.
-    if (!answers.has(term.key) && isGenericTerm(term.displayName, mode)) {
+    if (kind === 'junk' || isExclamationTerm(term.displayName, mode)) continue;
+    if (
+      mode === 'fiction' &&
+      (kind === 'person' || kind === 'animal' || kind === 'place') &&
+      term.displayName === term.displayName.toLowerCase() &&
+      term.mentions.every(({ alias }) => /^\p{Lu}/u.test(alias))
+    )
+      term = { ...term, displayName: term.mentions[0].alias };
+    const ordinals = bodyOrdinals(artifact, term);
+    const sentences = ordinals.length;
+    if (!sentences) continue;
+    const lowercase = mode === 'fiction' && term.displayName === term.displayName.toLowerCase();
+    const clutter =
+      lowercase &&
+      (weakDictionaryTerm(term.displayName, rankedTerm.score, inNames.single) ||
+        inNames.shared.has(term.displayName) ||
+        ordinals.every((ordinal) => artifact.sentences[ordinal - 1].spineIndex === artifact.sentences[ordinals[0] - 1].spineIndex));
+    // In a novel neither the review's kind nor a sentence like "the city was a ruin" rescues an everyday word; only a gloss does.
+    const generic = (mode === 'fiction' || !answers.has(term.key)) && isGenericTerm(term.displayName, mode);
+    // Clutter and everyday words need an outright gloss; the extractor's definition flag fires on plain narration for them.
+    const explicit =
+      lowercase &&
+      (clutter || generic
+        ? glossOf(ordinals, artifact.sentences, [term.displayName, ...term.aliases]) !== null
+        : term.mentions.some((mention) => mention.explicitDefinition));
+    if (!explicit && (clutter || generic)) {
       dropped.generic++;
       continue;
     }
-    const sentences = bodyOrdinals(artifact, term).length;
-    // A novel's named one-off (a typed, capitalised name) still gets an entry and a one-line description.
-    const named = mode === 'fiction' && kind !== null && sentences >= 1 && /^\p{Lu}/u.test(term.displayName);
+    const named = mode === 'fiction' && /^\p{Lu}/u.test(term.displayName);
+    if (named && honorific(term.displayName, ordinals, artifact.sentences)) {
+      dropped.generic++;
+      continue;
+    }
     // A nonfiction term the book defines outright, or defines under its own heading, is a concept whatever its kind.
     const defined =
       mode === 'nonfiction' && term.mentions.some((mention) => mention.explicitDefinition || (mention.definition && mention.structural));
-    if (inCast(sentences, kind !== null || defined) || named) eligible.push({ term, sentences });
+    if (!inCast(sentences, kind !== null || defined) && !explicit && !(named && kind !== null)) continue;
+    if (named && !realName(term)) {
+      dropped.generic++;
+      continue;
+    }
+    eligible.push({ term, sentences });
+  }
+  if (mode === 'fiction') {
+    const descriptive = descriptiveEntries(eligible.map(({ term }) => term));
+    dropped.fragment += descriptive.size;
+    eligible = eligible.filter(({ term }) => !descriptive.has(term.key));
   }
   // Over the cap, the thinnest entries go first, so a late-ranked but much-discussed concept is kept.
   // In nonfiction a coined phrase used three times outweighs an everyday word used five times.

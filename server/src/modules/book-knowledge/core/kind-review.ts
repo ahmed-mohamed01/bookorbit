@@ -191,9 +191,9 @@ export function selectForReview(
   return selected;
 }
 
-export function planKindReview(artifact: Artifact, cutoff: number, mode: BookKnowledgeXrayMode): KindReviewBatch[] {
+export function planKindReview(artifact: Artifact, cutoff: number, mode: BookKnowledgeXrayMode, bodyOnly = false): KindReviewBatch[] {
   if (cutoff < 1) return [];
-  const ranked = rankTerms(artifact, cutoff);
+  const ranked = rankTerms(artifact, cutoff, bodyOnly);
   const decisions = termKinds(artifact, ranked, cutoff);
   const entries = selectForReview(ranked, decisions, mode, artifact.sentences);
   return reviewBatches(artifact, entries, new Map(ranked.map((term) => [term.key, term])), decisions, cutoff);

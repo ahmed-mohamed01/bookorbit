@@ -44,7 +44,7 @@ interface Trie {
   key?: string;
 }
 // Each pass reads the body in book order from a new instance, so a sentence's tokens depend only on the text up to it.
-function createTokenizer(): (text: string) => Token[] {
+export function createTokenizer(): (text: string) => Token[] {
   const nlp = createWinkNlp();
   return (text) => tokenize(nlp, text);
 }

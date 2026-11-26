@@ -5,6 +5,7 @@ import type { Sentence } from '../../core/model';
 const LEAD = String.raw`^[\s["/]*`;
 const END = `(?!${WORD_CHAR})`;
 const COPULA = String.raw`(?:is|are|was|were|means|represents|refers\s+to|occurs\s+when|allows|lets|grants)`;
+const DEFINING_COPULA = String.raw`(?:(?:is|are|was|were)(?=\s+(?:a|an|the)\b)|means|refers\s+to)`;
 const GLOSS_WORDS = 3;
 const LIST_ITEMS = 3;
 
@@ -48,17 +49,19 @@ function inColonList(text: string, name: RegExp): boolean {
 }
 
 /** How plainly a sentence says what the name is: a gloss, a definition, how it was gained, or a place in a list. 0 when it does not. */
-export function definitionScore(text: string, names: readonly string[]): number {
+export function definitionScore(text: string, names: readonly string[], explicitOnly = false): number {
   const own = alternation(names);
   if (!own || bareLabel(text, names)) return 0;
   const name = `(?:${own})${END}`;
   const gloss = text.match(new RegExp(`${LEAD}${name}(?:\\s*:|\\s*\\(|\\s+-\\s)`, 'iu'));
   if (gloss && wordCount(text.slice(gloss[0].length)) >= GLOSS_WORDS) return SCORE.gloss;
+  const copula = explicitOnly ? DEFINING_COPULA : COPULA;
   if (
-    new RegExp(`${LEAD}(?:(?:the|a|an|your)\\s+)?${name}\\s+${COPULA}${END}`, 'iu').test(text) ||
-    new RegExp(`(?<!${WORD_CHAR})(?:the|a|your)\\s+${name}\\s+${COPULA}${END}`, 'iu').test(text)
+    new RegExp(`${LEAD}(?:(?:the|a|an|your)\\s+)?${name}\\s+${copula}${END}`, 'iu').test(text) ||
+    new RegExp(`(?<!${WORD_CHAR})(?:the|a|your)\\s+${name}\\s+${copula}${END}`, 'iu').test(text)
   )
     return SCORE.copula;
+  if (explicitOnly) return 0;
   if (
     new RegExp(
       `(?<!${WORD_CHAR})(?:gained|learned|unlocked|acquired)\\s+(?:the\\s+)?(?:(?:skill|spell|ability|class|title)\\s*:?\\s*)?["[]?${name}`,
@@ -73,13 +76,23 @@ export function definitionScore(text: string, names: readonly string[]): number 
 }
 
 /** The sentence that best defines the name among `ordinals`, the earliest on a tie; null when none does. */
-export function definitionOf(ordinals: readonly number[], sentences: readonly Sentence[], names: readonly string[]): number | null {
+export function definitionOf(
+  ordinals: readonly number[],
+  sentences: readonly Sentence[],
+  names: readonly string[],
+  style?: 'explicit',
+): number | null {
   let best: { ordinal: number; score: number } | null = null;
   for (const ordinal of ordinals) {
-    const score = definitionScore(sentences[ordinal - 1].text, names);
+    const score = definitionScore(sentences[ordinal - 1].text, names, style === 'explicit');
     if (score && (!best || score > best.score)) best = { ordinal, score };
   }
   return best?.ordinal ?? null;
+}
+
+/** The first sentence among `ordinals` that glosses the name outright ("Mana: the energy that..."); null when none does. */
+export function glossOf(ordinals: readonly number[], sentences: readonly Sentence[], names: readonly string[]): number | null {
+  return ordinals.find((ordinal) => definitionScore(sentences[ordinal - 1].text, names, true) === SCORE.gloss) ?? null;
 }
 
 export function definitionGloss(text: string, names: readonly string[], kind: PassSlot['kind']): string | null {

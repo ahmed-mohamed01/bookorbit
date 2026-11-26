@@ -3,7 +3,9 @@ import type { Sentence } from '../../core/model';
 import type { XrayEntity, XrayName } from '../xray-entities';
 import type { PassUnit } from './pass-units';
 
-export type PassMergeRule = 'full-name' | 'short-name' | 'title' | 'descriptor' | 'model' | 'alias';
+export type PassMergeRule = 'full-name' | 'short-name' | 'title' | 'descriptor' | 'model' | 'alias' | 'narrator';
+
+export const NARRATOR_ID = 'narrator';
 
 export interface PassMerge {
   member: XrayEntity;
@@ -38,26 +40,43 @@ function only(pool: readonly XrayEntity[], name: string, except: XrayEntity): Xr
 export const namedCharacter = (entity: XrayEntity) => entity.kind === 'character' && /^\p{Lu}/u.test(entity.name);
 
 /**
- * Of two entities for one referent, a capitalised character heads it when exactly one of them is one ("Viv", not "the
- * medic" or a title the kinds step typed as an idea), whatever the counts; otherwise `fallback` decides.
+ * Of two entities for one referent, the one a reader looks up heads it, whatever the counts: never the stand-in
+ * Narrator; a capitalised character ("Viv", not "the medic" or a title the kinds step typed as an idea); then any
+ * capitalised name over a lowercase word (Fort Stone, not "fort"); then the more important entry (the lead, not her
+ * nickname). Otherwise `fallback` decides.
  */
 export function namedFirst(
   a: XrayEntity,
   b: XrayEntity,
   fallback: (a: XrayEntity, b: XrayEntity) => [member: XrayEntity, head: XrayEntity],
 ): [member: XrayEntity, head: XrayEntity] {
+  if ((a.id === NARRATOR_ID) !== (b.id === NARRATOR_ID)) return a.id === NARRATOR_ID ? [a, b] : [b, a];
   if (namedCharacter(a) !== namedCharacter(b)) return namedCharacter(a) ? [b, a] : [a, b];
+  const capital = (entity: XrayEntity) => /^\p{Lu}/u.test(entity.name);
+  if (capital(a) !== capital(b)) return capital(a) ? [b, a] : [a, b];
+  if (a.importance !== b.importance) return a.importance < b.importance ? [b, a] : [a, b];
   return fallback(a, b);
 }
 
 /** Of two entities for one referent, the one with more mentions heads it. */
-function ordered(a: XrayEntity, b: XrayEntity): [member: XrayEntity, head: XrayEntity] {
+export function ordered(a: XrayEntity, b: XrayEntity): [member: XrayEntity, head: XrayEntity] {
   return a.count > b.count || (a.count === b.count && a.first < b.first) ? [b, a] : [a, b];
 }
 
 function paragraphOf(sentences: readonly Sentence[], ordinal: number): string {
   const sentence = sentences[ordinal - 1];
   return `${sentence.spineIndex}:${sentence.paragraphIndex}`;
+}
+
+function firstAtOrAfter(ordinals: readonly number[], ordinal: number): number {
+  let first = 0;
+  let last = ordinals.length;
+  while (first < last) {
+    const middle = Math.floor((first + last) / 2);
+    if (ordinals[middle] < ordinal) first = middle + 1;
+    else last = middle;
+  }
+  return first;
 }
 
 /**
@@ -171,10 +190,40 @@ export class PassCast {
   /** Each entity's own sentences, before any merge adds its members'. */
   private readonly own: Map<XrayEntity, number[]>;
 
+  private readonly narration = new Map<XrayEntity, number[]>();
+
   constructor(entities: readonly XrayEntity[]) {
-    this.heads = [...entities];
-    this.byId = new Map(entities.map((entity) => [entity.id, entity]));
-    this.own = new Map(entities.map((entity) => [entity, entity.ordinals]));
+    this.heads = [];
+    this.byId = new Map();
+    this.own = new Map();
+    for (const entity of entities) this.add(entity);
+  }
+
+  add(entity: XrayEntity): void {
+    this.heads.push(entity);
+    this.byId.set(entity.id, entity);
+    this.own.set(entity, entity.ordinals);
+  }
+
+  creditNarration(entity: XrayEntity, chunk: PassUnit, ordinals: readonly number[]): void {
+    const slot = { id: entity.id, head: entity, member: null, name: entity.name, aliases: [], kind: entity.kind, mentions: 0 };
+    const seen = new Set(this.mentionsOf(slot, chunk, chunk.ordinals));
+    const fresh = ordinals.filter((ordinal) => !seen.has(ordinal));
+    const credited = this.narration.get(entity) ?? [];
+    for (const ordinal of fresh) credited.push(ordinal);
+    this.narration.set(entity, credited);
+    entity.count += fresh.length;
+  }
+
+  finishNarration(): void {
+    const credited = new Map<XrayEntity, Set<number>>();
+    for (const [entity, ordinals] of this.narration) {
+      const head = this.headOf(entity);
+      const all = credited.get(head) ?? new Set(head.ordinals);
+      for (const ordinal of ordinals) all.add(ordinal);
+      credited.set(head, all);
+    }
+    for (const [head, ordinals] of credited) head.ordinals = [...ordinals].sort((a, b) => a - b);
   }
 
   entity(id: string): XrayEntity | undefined {
@@ -204,7 +253,10 @@ export class PassCast {
     );
     member.joins = [];
     head.ordinals = [...new Set([...head.ordinals, ...member.ordinals])].sort((a, b) => a - b);
-    head.count += member.count;
+    if (merge.rule === 'narrator') {
+      const already = new Set(head.ordinals);
+      head.count += (this.narration.get(member) ?? []).filter((ordinal) => !already.has(ordinal)).length;
+    } else head.count += member.count;
     head.first = Math.min(head.first, member.first);
     this.merges.push({ ...merge, head, member });
     return true;
@@ -214,6 +266,8 @@ export class PassCast {
   headMentions(): Map<XrayEntity, number[]> {
     const found = new Map<XrayEntity, Set<number>>(this.heads.map((head) => [head, new Set<number>()]));
     for (const [entity, ordinals] of this.own) for (const ordinal of ordinals) found.get(this.headOf(entity, ordinal))?.add(ordinal);
+    for (const [entity, ordinals] of this.narration)
+      for (const ordinal of ordinals) found.get(this.headOf(entity, entity.id === NARRATOR_ID ? Infinity : ordinal))?.add(ordinal);
     return new Map([...found].map(([head, ordinals]) => [head, [...ordinals].sort((a, b) => a - b)]));
   }
 
@@ -224,13 +278,25 @@ export class PassCast {
   mentionsOf(slot: PassSlot, unit: PassUnit, within?: readonly number[]): number[] {
     const end = unit.ordinals.at(-1)!;
     const listed = within ? new Set(within) : null;
-    const wanted = { has: (ordinal: number) => (listed ? listed.has(ordinal) : ordinal <= end) };
+    const wanted = (ordinal: number) => (listed ? listed.has(ordinal) : ordinal <= end);
+    const from = within?.[0] ?? 0;
+    const to = (within?.at(-1) ?? end) + 1;
     const owners = slot.member
       ? [slot.member]
       : [slot.head, ...[...this.joinOf].filter(([, join]) => this.headOf(join.head) === slot.head && join.ordinal <= end).map(([member]) => member)];
-    return [...new Set(owners.flatMap((owner) => (this.own.get(owner) ?? owner.ordinals).filter((ordinal) => wanted.has(ordinal))))].sort(
-      (a, b) => a - b,
-    );
+    return [
+      ...new Set(
+        owners.flatMap((owner) => [
+          ...(this.own.get(owner) ?? owner.ordinals).filter(wanted),
+          ...this.narrationBetween(owner, from, to).filter(wanted),
+        ]),
+      ),
+    ].sort((a, b) => a - b);
+  }
+
+  private narrationBetween(entity: XrayEntity, from: number, to: number): number[] {
+    const ordinals = this.narration.get(entity);
+    return ordinals?.slice(firstAtOrAfter(ordinals, from), firstAtOrAfter(ordinals, to)) ?? [];
   }
 
   /**
@@ -240,7 +306,12 @@ export class PassCast {
   slots(unit: PassUnit, counted: readonly number[] = unit.ordinals): PassSlot[] {
     const [start, stop] = [counted[0], counted.at(-1)!];
     const end = unit.ordinals.at(-1)!;
-    const within = (entity: XrayEntity) => (this.own.get(entity) ?? entity.ordinals).filter((ordinal) => ordinal >= start && ordinal <= stop).length;
+    const inRange = (ordinal: number) => ordinal >= start && ordinal <= stop;
+    const within = (entity: XrayEntity) => {
+      const narration = this.narration.get(entity);
+      const credited = narration ? firstAtOrAfter(narration, stop + 1) - firstAtOrAfter(narration, start) : 0;
+      return (this.own.get(entity) ?? entity.ordinals).filter(inRange).length + credited;
+    };
     const named = (entity: XrayEntity) => within(entity) > 0;
     const seen = (names: readonly XrayName[]) => names.filter((name) => name.ordinal <= end).map((name) => name.text);
     const slots: PassSlot[] = [];
@@ -248,7 +319,9 @@ export class PassCast {
       const members = [...this.joinOf].filter(([, join]) => this.headOf(join.head) === head).map(([member]) => member);
       const joined = members.filter((member) => this.joinOf.get(member)!.ordinal <= end);
       if (named(head) || joined.some(named)) {
-        const aliases = [...new Set([...seen(head.names), ...joined.flatMap((member) => seen(member.names))])].filter((name) => name !== head.name);
+        const aliases = [
+          ...new Set([...seen(head.names), ...joined.filter((member) => member.id !== NARRATOR_ID).flatMap((member) => seen(member.names))]),
+        ].filter((name) => name !== head.name);
         const mentions = within(head) + joined.reduce((sum, member) => sum + within(member), 0);
         slots.push({ id: head.id, head, member: null, name: head.name, aliases, kind: head.kind, mentions });
       }

@@ -1,8 +1,12 @@
+import { wordRarity } from '../core/common-words';
 import type { Artifact, Mention, Sentence, Term } from '../core/model';
-import { isEverydayTerm } from '../core/generic-terms';
+import { isEverydayTerm, isExclamationTerm } from '../core/generic-terms';
 import { termFragments } from '../core/term-fragments';
 import { extractAliasLinks, extractTerms } from '../core/term-extractor';
-import { importanceOf, isGenericTerm, rankImportance, xrayEntities } from './xray-entities';
+import { termKey } from '../core/text-utils';
+import type { KindAnswer } from '../core/kind-review';
+import { honorific, importanceOf, isGenericTerm, nameWords, rankImportance, weakDictionaryTerm, xrayEntities } from './xray-entities';
+import type { RankedTerm } from '../core/term-ranking';
 import { inBatches, spread } from './xray-evidence';
 import { entity } from './xray-fixtures.testing';
 
@@ -53,10 +57,27 @@ describe('batching', () => {
 });
 
 describe('X-Ray cast selection', () => {
-  it('admits typed one-offs and drops a chosen whole-word fragment only when all its mentions are covered', () => {
-    const text = sentences(2);
-    text[0].text = 'They entered Apex Palace and greeted Dame Viv.';
-    text[1].text = 'Later Viv waved.';
+  it('does not admit title-page names and starts later body names at their first body mention', () => {
+    const text = sentences(6, (ordinal) => ordinal);
+    const lines = ['The Calamitous Bob.', 'Written by Viv.', 'Contents for Viv.', 'Index for Viv.', 'Bibliography for Viv.', 'Then Viv walked.'];
+    text.forEach((sentence, index) => (sentence.text = lines[index]));
+    (['front', 'front', 'contents', 'index', 'bibliography'] as const).forEach((structure, index) => (text[index].structure = structure));
+    const book = artifact(text);
+    const answers = new Map([
+      ['bob', 'person'],
+      ['viv', 'person'],
+    ] as const);
+    expect(xrayEntities(book, 5, answers)).toEqual([]);
+    expect(xrayEntities(book, 6, answers)).toMatchObject([
+      { name: 'Viv', first: 6, count: 1, importance: 3, ordinals: [6], names: [{ text: 'Viv', ordinal: 6 }] },
+    ]);
+  });
+
+  it('drops a chosen whole-word fragment only when all its mentions are covered', () => {
+    const text = sentences(3);
+    text[0].text = 'They entered Apex Palace, where Dame Viv greeted them.';
+    text[1].text = 'They left Apex Palace, and Dame Viv shut the gate.';
+    text[2].text = 'Later Viv waved.';
     const answers = new Map([
       ['apex palace', 'place'],
       ['apex', 'place'],
@@ -64,7 +85,7 @@ describe('X-Ray cast selection', () => {
       ['viv', 'person'],
     ] as const);
     const dropped = { generic: 0, fragment: 0 };
-    const cast = xrayEntities(artifact(text), 2, answers, 'fiction', undefined, dropped);
+    const cast = xrayEntities(artifact(text), 3, answers, 'fiction', undefined, dropped);
     expect(cast.map(({ name }) => name)).toEqual(expect.arrayContaining(['Apex Palace', 'Dame Viv', 'Viv']));
     expect(cast.map(({ name }) => name)).not.toContain('Apex');
     expect(dropped.fragment).toBe(1);
@@ -187,7 +208,7 @@ describe('X-Ray cast selection', () => {
     expect(cast.map(({ name }) => name)).toEqual(['alpha concept']);
   });
 
-  it('keeps a more frequent everyday fiction term out of the main and supporting cast', () => {
+  it('keeps a more frequent everyday fiction term out of the cast even when the review types it', () => {
     const names = [...NAMES, 'Kelwin', 'Lysandra'];
     const text = sentences(names.length * 10);
     for (const [index, sentence] of text.entries()) {
@@ -210,14 +231,15 @@ describe('X-Ray cast selection', () => {
     });
     const answers = new Map(names.map((name) => [name.toLowerCase(), 'person'] as const));
     const cast = xrayEntities(artifact(text, terms), text.length, new Map([...answers, ['tent', 'object'] as const]), 'fiction');
+    // Named in every sentence of every chapter, it clears the central-word bar, but stays a minor entry.
     expect(cast.find(({ name }) => name === 'tent')).toMatchObject({ count: 120, importance: 3 });
     expect(cast.filter(({ name, importance }) => names.includes(name) && importance === 1)).toHaveLength(12);
   });
 
-  it('keeps a word the common-word rule drops once the review types it, and drops it unreviewed', () => {
+  it('drops dictionary words and lowercase exclamations even after kind review', () => {
     const names = [...NAMES, 'Kelwin', 'Lysandra'];
     const text = sentences(names.length * 10);
-    for (const [index, sentence] of text.entries()) sentence.text = `That evening, ${names[index % names.length]} cast wow.`;
+    for (const [index, sentence] of text.entries()) sentence.text = `That evening, ${names[index % names.length]} cast barrel.`;
     const terms: Term[] = names.map((name, index) => ({
       key: name.toLowerCase(),
       rarity: 1,
@@ -225,11 +247,166 @@ describe('X-Ray cast selection', () => {
       deltas: [index + 1, ...Array<number>(9).fill(names.length)],
       features: Array.from({ length: 10 }, () => mention(name)),
     }));
-    terms.push({ key: 'wow', rarity: 0.35, wordCount: 1, deltas: Array<number>(text.length).fill(1), features: text.map(() => mention('wow')) });
+    terms.push({
+      key: 'barrel',
+      rarity: 0.35,
+      wordCount: 1,
+      deltas: Array<number>(text.length).fill(1),
+      features: text.map(() => mention('barrel')),
+    });
     const answers = new Map(names.map((name) => [name.toLowerCase(), 'person'] as const));
-    expect(xrayEntities(artifact(text, terms), text.length, answers, 'fiction').some(({ key }) => key === 'wow')).toBe(false);
-    const typed = xrayEntities(artifact(text, terms), text.length, new Map([...answers, ['wow', 'idea'] as const]), 'fiction');
-    expect(typed.find(({ key }) => key === 'wow')).toMatchObject({ kind: 'idea' });
+    expect(xrayEntities(artifact(text, terms), text.length, answers, 'fiction').some(({ key }) => key === 'barrel')).toBe(false);
+    const typed = xrayEntities(artifact(text, terms), text.length, new Map([...answers, ['barrel', 'object'] as const]), 'fiction');
+    expect(typed.find(({ key }) => key === 'barrel')).toBeUndefined();
+    terms.push({
+      key: 'assholes',
+      rarity: 0.4,
+      wordCount: 1,
+      deltas: Array<number>(text.length).fill(1),
+      features: text.map(() => mention('assholes')),
+    });
+    const sworn = xrayEntities(artifact(text, terms), text.length, new Map([...answers, ['assholes', 'idea'] as const]), 'fiction');
+    expect(sworn.some(({ key }) => key === 'assholes')).toBe(false);
+  });
+
+  function fixture(
+    chapters: string[][],
+    entries: [name: string, kind: KindAnswer, ordinals: number[], explicit?: boolean][],
+  ): { book: Artifact; answers: Map<string, KindAnswer> } {
+    const text = sentences(chapters.flat().length);
+    let index = 0;
+    chapters.forEach((chapter, spineIndex) => chapter.forEach((line) => Object.assign(text[index++], { text: line, spineIndex })));
+    const terms = entries.map(([name, , ordinals, explicit]) => ({
+      key: termKey(name),
+      rarity: name.split(' ').reduce((sum, word) => sum + wordRarity(word), 0) / name.split(' ').length,
+      wordCount: name.split(' ').length,
+      deltas: ordinals.map((ordinal, at) => ordinal - (ordinals[at - 1] ?? 0)),
+      features: ordinals.map((_, at) => ({ ...mention(name), explicitDefinition: at === 0 && explicit })),
+    }));
+    return { book: { ...artifact(text, terms), aliasLinks: [] }, answers: new Map(entries.map(([name, kind]) => [termKey(name), kind])) };
+  }
+
+  /** Long chapters with none of the terms, so a word met twice is neither dense nor spread through the book. */
+  const FILLER_CHAPTERS = Array.from({ length: 4 }, () => [Array.from({ length: 600 }, () => 'quiet').join(' ') + '.']);
+
+  it('drops dictionary-only terms regardless of review and retains coined words and defined dictionary terms', () => {
+    const coined = ['necrarchs', 'skinsuit', 'revenants', 'golem', 'black mana', 'mana poisoning'];
+    const { book, answers } = fixture(
+      [
+        [
+          'She wore armor and packed the rucksacks.',
+          `She dealt with ${coined.join(', ')}.`,
+          'A cloak means a compact invisibility field.',
+          'A saddle conceals the anchor in its lining.',
+        ],
+        [
+          'The armor was dented, and the rucksacks were heavy.',
+          `He hid from ${coined.join(', ')}.`,
+          'She switched on the cloak.',
+          'She retrieved the saddle.',
+        ],
+        ...FILLER_CHAPTERS,
+      ],
+      [
+        ['armor', 'idea', [1, 5]],
+        ['rucksacks', 'object', [1, 5]],
+        ...coined.map((name): [string, KindAnswer, number[]] => [name, name === 'necrarchs' ? 'group' : 'idea', [2, 6]]),
+        ['cloak', 'object', [3, 7]],
+        ['saddle', 'object', [4, 8], true],
+      ],
+    );
+    const dropped = { generic: 0, fragment: 0 };
+    const cast = xrayEntities(book, 8, answers, 'fiction', undefined, dropped);
+    expect(cast.map(({ name }) => name)).toEqual(expect.arrayContaining([...coined, 'cloak', 'saddle']));
+    expect(cast.find(({ name }) => name === 'necrarchs')?.kind).toBe('group');
+  });
+
+  it('spares a place word in one named place, drops one that several places share, and ignores other words in names', () => {
+    const term = (displayName: string) => ({ key: displayName.toLowerCase(), displayName }) as RankedTerm;
+    const ranked = [term('Fort Stone'), term('Fort Sky'), term('Apex Palace'), term('City of Gods'), term('The Other Side'), term('First Revenant')];
+    const { single, shared } = nameWords(ranked, (key) => key !== 'first revenant');
+    expect([...single].sort()).toEqual(['city', 'palace']);
+    expect([...shared]).toEqual(['fort']);
+  });
+
+  it('drops a plain word below the score floor unless a name holds it', () => {
+    const inNames = new Set(['fort']);
+    expect(weakDictionaryTerm('shield', 4.4, inNames)).toBe(true);
+    expect(weakDictionaryTerm('willpower', 12.6, inNames)).toBe(false);
+    expect(weakDictionaryTerm('fort', 8.7, inNames) || weakDictionaryTerm('fort', 2, inNames)).toBe(false);
+    expect(weakDictionaryTerm('skinsuit', 1, inNames)).toBe(false);
+  });
+
+  it('folds descriptive prefixes and a generic creature head into retained entries', () => {
+    const descriptions = ['dangerous undead creature', 'powerful undead', 'more mana', 'first revenant', 'armored revenants'];
+    const { book, answers } = fixture(
+      [
+        ['They fought the undead and the revenant and collected mana.', `They saw ${descriptions.join(', ')}.`],
+        ['They hid from the undead and the revenant and stored mana.', `They fled ${descriptions.join(', ')}.`],
+      ],
+      [
+        ['undead', 'group', [1, 3]],
+        ['revenant', 'group', [1, 3]],
+        ['mana', 'idea', [1, 3]],
+        ...descriptions.map((name): [string, KindAnswer, number[]] => [name, 'idea', [2, 4]]),
+      ],
+    );
+    const dropped = { generic: 0, fragment: 0 };
+    expect(
+      xrayEntities(book, 4, answers, 'fiction', undefined, dropped)
+        .map(({ name }) => name)
+        .sort(),
+    ).toEqual(['mana', 'revenant', 'undead']);
+    expect(dropped).toEqual({ generic: 0, fragment: 5 });
+  });
+
+  it('drops an undefined prop confined to one chapter and allows it once it spans sections', () => {
+    const { book, answers } = fixture([['She picked up the orb.', 'The orb glowed.'], ['She broke the orb.']], [['orb', 'object', [1, 2, 3]]]);
+    const dropped = { generic: 0, fragment: 0 };
+    expect(xrayEntities(book, 2, answers, 'fiction', undefined, dropped)).toEqual([]);
+    expect(dropped).toEqual({ generic: 1, fragment: 0 });
+    expect(xrayEntities(book, 2, answers, 'nonfiction')).toMatchObject([{ name: 'orb' }]);
+    expect(xrayEntities(book, 3, answers)).toMatchObject([{ name: 'orb' }]);
+  });
+
+  it('drops comparison and vocative names, but keeps a one-off acting or speaking in narration', () => {
+    const { book, answers } = fixture(
+      [
+        [
+          'She moved like a Xenomorph.',
+          'It sounded as if a Neral had attacked.',
+          'A Neral-like screech rang out.',
+          'That was some kind of Neral.',
+          'It looked like a real Neral.',
+          '“Wake up, Cinderella!”',
+          '“Cinderella, get moving.”',
+          'Kestrel unlocked the cellar.',
+          '“Get inside,” said Lark.',
+          'They saw Wren running for the gate.',
+          'Piper and Lark like Finch.',
+          'The others like Finch too.',
+          'Starling, the night porter, unlocked the cellar.',
+        ],
+      ],
+      [
+        ['Xenomorph', 'person', [1]],
+        ['Neral', 'person', [2, 3, 4, 5]],
+        ['Cinderella', 'person', [6, 7]],
+        ['Kestrel', 'person', [8]],
+        ['Lark', 'person', [9]],
+        ['Wren', 'person', [10]],
+        ['Finch', 'person', [11, 12]],
+        ['Starling', 'person', [13]],
+      ],
+    );
+    const dropped = { generic: 0, fragment: 0 };
+    expect(
+      xrayEntities(book, 13, answers, 'fiction', undefined, dropped)
+        .map(({ name }) => name)
+        .sort(),
+    ).toEqual(['Finch', 'Kestrel', 'Lark', 'Starling']);
+    expect(dropped).toEqual({ generic: 4, fragment: 0 });
+    expect(xrayEntities(book, 6, answers, 'fiction').some(({ name }) => name === 'Cinderella')).toBe(false);
   });
 
   it('keeps a name whose mentions all fall inside a lowercase role and name', () => {
@@ -255,7 +432,7 @@ describe('importance from spread', () => {
     text[0].text = '"Come here, Bree," said Ash.';
     const busy = entity('busy', 'character', [1, 2, 3, 4, 5, 6, 7, 8], { name: 'Busy' });
     const bree = entity('bree', 'character', [1, 5, 9, 13, 17, 21], { name: 'Bree' });
-    const sword = entity('sword', 'object', [1, 5, 9, 13, 17, 21, 25, 29, 33, 37], { name: 'sword' });
+    const sword = entity('world', 'object', [1, 5, 9, 13, 17, 21, 25, 29, 33, 37], { name: 'world' });
     const ward = entity('ward', 'idea', [1, 5, 9, 13, 17, 21, 25, 29, 33, 37], { name: 'Mana Ward' });
     rankImportance([busy, bree, sword, ward], text);
     expect([busy, bree, sword, ward].map((entry) => entry.importance)).toEqual([2, 1, 3, 2]);
@@ -277,12 +454,15 @@ describe('importanceOf', () => {
 describe('generic terms and line checks', () => {
   it('keeps closed-class words out of the cast, and common vocabulary out of a nonfiction one', () => {
     expect(isGenericTerm('such', 'fiction')).toBe(true);
-    expect(isGenericTerm('problem', 'fiction')).toBe(true);
+    expect(isGenericTerm('world', 'fiction')).toBe(true);
     expect(isGenericTerm('front door', 'fiction')).toBe(true);
     expect(isGenericTerm('necrarchs', 'fiction')).toBe(false);
     expect(isGenericTerm('skinsuit', 'fiction')).toBe(false);
+    expect(isGenericTerm('assholes', 'fiction')).toBe(true);
+    expect(isGenericTerm('Dick', 'fiction')).toBe(false);
+    expect(isGenericTerm('bullshit', 'nonfiction')).toBe(false);
     expect(isGenericTerm('control problem', 'nonfiction')).toBe(false);
-    expect(isGenericTerm('problem', 'nonfiction')).toBe(true);
+    expect(isGenericTerm('world', 'nonfiction')).toBe(true);
     expect(isGenericTerm('singleton', 'nonfiction')).toBe(false);
     expect(isGenericTerm('One', 'nonfiction')).toBe(false);
   });
@@ -299,5 +479,24 @@ describe('generic terms and line checks', () => {
       expect(isGenericTerm(term, 'nonfiction')).toBe(false);
     }
     expect(isGenericTerm('Yoink', 'fiction')).toBe(false);
+  });
+});
+
+describe('forms of address and interjections', () => {
+  it('treats a name said mostly as "your X" as a form of address', () => {
+    const text = sentences(4);
+    text[0].text = 'Yes, your Grace.';
+    text[1].text = 'Her Grace will see you.';
+    text[2].text = 'Grace Holt came in.';
+    text[3].text = 'As you wish, your Grace.';
+    expect(honorific('Grace', [1, 2, 3, 4], text)).toBe(true);
+    expect(honorific('Grace', [3], text)).toBe(false);
+  });
+
+  it('drops lowercase interjections and drawn-out sounds in a novel, not in nonfiction or as names', () => {
+    expect(['alright', 'dude', 'errr', 'aaah', 'hmmmm'].every((word) => isExclamationTerm(word, 'fiction'))).toBe(true);
+    expect(isExclamationTerm('errr', 'nonfiction')).toBe(false);
+    expect(isExclamationTerm('Dude', 'fiction')).toBe(false);
+    expect(isExclamationTerm('necrarch', 'fiction')).toBe(false);
   });
 });

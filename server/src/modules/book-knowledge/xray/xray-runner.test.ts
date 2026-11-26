@@ -41,6 +41,14 @@ describe('XrayStepRun', () => {
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('[book_knowledge.xray_unit] [fail]'));
   });
 
+  it.each(['refused', 'filtered'] as const)('does not resend a reply the model %s', async (finish) => {
+    const { step } = setup();
+    const send = vi.fn(() => Promise.resolve({ ...reply(''), finish }));
+    expect(await step.unit({ id: 'l1', ordinals: [1], send, read })).toBeNull();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(step.finish()).toMatchObject({ calls: 1, invalid: 1, skipped: 1 });
+  });
+
   it('treats a reply that fails the checks the same as unreadable JSON', async () => {
     const { step } = setup();
     const send = vi.fn().mockResolvedValueOnce(reply('{"other": 1}')).mockResolvedValueOnce(reply('Here: {"lines": ["a"]}'));
