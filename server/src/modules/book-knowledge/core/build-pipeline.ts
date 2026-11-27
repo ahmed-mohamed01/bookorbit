@@ -5,7 +5,15 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { performance } from 'node:perf_hooks';
-import { ARTIFACT_TOO_LARGE_MESSAGE, ArtifactTooLargeError, writeArtifact, readGzipJson, writeGzipJsonAtomic } from './artifact';
+import {
+  ARTIFACT_MAX_BYTES,
+  ARTIFACT_TOO_LARGE_MESSAGE,
+  ArtifactReadLimitError,
+  ArtifactTooLargeError,
+  writeArtifact,
+  readGzipJson,
+  writeGzipJsonAtomic,
+} from './artifact';
 import { ARTIFACT_VERSION, TEXT_VERSION, TERMS_VERSION } from './versions';
 import type { Artifact, TextStage, Term, AliasLink } from './model';
 import type { GlinerBuildOptions } from '../gliner/stage';
@@ -30,6 +38,13 @@ export interface BuildResult {
   jsonBytes: number;
 }
 
+/** A stage file that is missing, damaged or too large is rebuilt from the source; a failing disk is still an error. */
+export function unusableStage(error: unknown): boolean {
+  if (error instanceof SyntaxError || error instanceof ArtifactReadLimitError) return true;
+  const code = error instanceof Error && 'code' in error ? error.code : undefined;
+  return code === 'ENOENT' || (typeof code === 'string' && code.startsWith('Z_'));
+}
+
 export async function buildArtifactInProcess(bookPath: string, options: BuildOptions = {}): Promise<BuildResult> {
   const stageMs = { fingerprint: 0, text: 0, gliner: 0, terms: 0, kinds: 0, artifact: 0 };
   const stagePeakRssBytes = { fingerprint: 0, text: 0, gliner: 0, terms: 0, kinds: 0, artifact: 0 };
@@ -50,11 +65,12 @@ export async function buildArtifactInProcess(bookPath: string, options: BuildOpt
     if (!cacheRoot) return build();
     const path = join(cacheRoot, filename);
     try {
-      const value = await readGzipJson<T>(path);
+      // The pipeline wrote this file itself, so only the artifact's own ceiling applies.
+      const value = await readGzipJson<T>(path, ARTIFACT_MAX_BYTES);
       reused[stage] = true;
       return value;
     } catch (error) {
-      if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error;
+      if (!unusableStage(error)) throw error;
     }
     const value = await build();
     await writeGzipJsonAtomic(path, value);

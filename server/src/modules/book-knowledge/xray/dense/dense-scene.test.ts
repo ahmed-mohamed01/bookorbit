@@ -35,7 +35,7 @@ function applied(record: (relations: SceneRelations, a: PassSlot, b: PassSlot) =
 }
 
 describe('scene relations', () => {
-  it('keeps every cited type of a pair in chunk order', () => {
+  it('keeps one feeling a pair, the one more chunks gave', () => {
     const { ties, counts } = applied((relations, a, b) => {
       relations.record(unit, [{ a, b, type: 'friend_of', sentence: 'Viv and Fern are friends.', cite: 1 }]);
       relations.record(unit, [{ a, b, type: 'enemy_of', sentence: 'Viv hates Fern.', cite: 2 }]);
@@ -43,10 +43,26 @@ describe('scene relations', () => {
     });
     expect(ties).toEqual([
       ['friend_of', 1],
-      ['enemy_of', 2],
       ['friend_of', 3],
     ]);
-    expect(counts).toBeUndefined();
+    expect(counts).toEqual({ 'ties:outvoted': 1 });
+  });
+
+  it('drops a type one chunk gave once another has three, and serving a group the pair also belongs to', () => {
+    const { ties } = applied((relations, a, b) => {
+      for (const cite of [1, 2, 3]) relations.record(unit, [{ a, b, type: 'member_of', sentence: 'Viv is one of the Ferns.', cite }]);
+      relations.record(unit, [{ a, b, type: 'works_for', sentence: 'Viv works for the Ferns.', cite: 2 }]);
+      relations.record(unit, [{ a, b, type: 'teaches', sentence: 'Viv teaches the Ferns.', cite: 3 }]);
+      relations.record(unit, [{ a, b, type: 'teaches', sentence: 'Viv teaches the Ferns again.', cite: 3 }]);
+      relations.record(unit, [{ a, b, type: 'owns', sentence: 'Viv owns the Ferns.', cite: 3 }]);
+    });
+    expect(ties).toEqual([
+      ['member_of', 1],
+      ['member_of', 2],
+      ['member_of', 3],
+      ['teaches', 3],
+      ['teaches', 3],
+    ]);
   });
 
   it('keeps a one-way type only in the direction more chunks gave', () => {
@@ -62,10 +78,8 @@ describe('scene relations', () => {
     expect(ties).toEqual([
       ['parent_of', 2],
       ['parent_of', 3],
-      ['loves', 3],
-      ['loves', 3],
     ]);
-    expect(counts).toEqual({ 'ties:contradicted': 1 });
+    expect(counts).toEqual({ 'ties:contradicted': 1, 'ties:outvoted': 2 });
   });
 
   it('breaks an even split by the earlier cite', () => {

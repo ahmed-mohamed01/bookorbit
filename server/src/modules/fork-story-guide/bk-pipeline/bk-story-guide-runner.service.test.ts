@@ -2,7 +2,7 @@ import { BadRequestException, Logger } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AiJobFailure, AiJobPause, AiUnitSkipped } from '../../ai-jobs/ai-feature';
 import type { StoryGuideSubject } from '../../story-guides/pipeline/story-guide-subject';
-import { BK_INDEX_POLL_MS, BK_INDEX_TIMEOUT_MS, BK_PLAN_FAILURE_TTL_MS, BkStoryGuideRunner } from './bk-story-guide-runner.service';
+import { BK_INDEX_POLL_MS, BK_INDEX_TIMEOUT_MS, BkStoryGuideRunner } from './bk-story-guide-runner.service';
 
 const models = { fast: { connectionId: 1, model: 'm', effort: 'low' } };
 const subject = { key: 'k', bookId: 7, file: { id: 3 }, text: { sections: [{ words: 400 }, { words: 600 }] } } as unknown as StoryGuideSubject;
@@ -17,14 +17,12 @@ function setup(contexts: unknown[]) {
     enabled: vi.fn().mockResolvedValue(true),
     sourceFileId: vi.fn().mockResolvedValue(3),
     context,
-    peek: vi.fn().mockResolvedValue({ artifact: {}, fingerprint: 'f' }),
     build: vi.fn().mockResolvedValue({}),
   };
   const payload = { entities: [], coverage: 1 };
-  const xray = { buildForStoryGuide: vi.fn().mockResolvedValue(payload), planEstimate: vi.fn() };
+  const xray = { buildForStoryGuide: vi.fn().mockResolvedValue(payload) };
   const aiSettings = {
     features: vi.fn().mockResolvedValue({ 'book-knowledge': { enabled: true } }),
-    slots: vi.fn().mockResolvedValue({ fast: { prices: { input: 1, output: 2 } } }),
   };
   const current = { slot: 'fast', connectionId: 1, model: 'm', prices: { input: 1, output: 2 }, jsonMode: 'native', maxOutputTokens: 8000 };
   const client = { resolveSlot: vi.fn().mockResolvedValue(current) };
@@ -137,36 +135,6 @@ describe('BkStoryGuideRunner', () => {
     expect(knowledge.build).toHaveBeenCalledWith(7, expect.anything(), 'full');
   });
 
-  it('estimate prices the dry-run plan, claims no minutes, and keeps the plan per index', async () => {
-    const { runner, xray, knowledge } = setup([ready]);
-    xray.planEstimate.mockResolvedValue({ promptTokens: 2_000_000, outputTokens: 500_000, minutes: 12.2 });
-    expect(await runner.estimate(7, subject.text)).toEqual({ words: 1000, minutes: null, cost: 3 });
-    await runner.estimate(7, subject.text);
-    expect(xray.planEstimate).toHaveBeenCalledTimes(1);
-    knowledge.peek.mockResolvedValue({ artifact: {}, fingerprint: 'g' });
-    await runner.estimate(7, subject.text);
-    expect(xray.planEstimate).toHaveBeenCalledTimes(2);
-  });
-
-  it('estimate is null and logs the failure with its duration and error class when the plan fails', async () => {
-    const { runner, xray } = setup([ready]);
-    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
-    xray.planEstimate.mockRejectedValue(new TypeError('bad "plan"'));
-    expect(await runner.estimate(7, subject.text)).toBeNull();
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringMatching(/^\[story_guide\.bk_estimate\] \[fail\] bookId=7 durationMs=\d+ errorClass=TypeError error="bad \\"plan\\"" - /),
-    );
-    warn.mockRestore();
-  });
-
-  it('estimate is null and queues nothing when the index is stale or missing', async () => {
-    const { runner, xray, knowledge } = setup([waiting('queued')]);
-    knowledge.peek.mockResolvedValue(null);
-    expect(await runner.estimate(7, subject.text)).toBeNull();
-    expect(xray.planEstimate).not.toHaveBeenCalled();
-    expect(knowledge.context).not.toHaveBeenCalled();
-    expect(knowledge.build).not.toHaveBeenCalled();
-  });
   it('reports the index wait and the build stages as upstream phases, and forgets the build after', async () => {
     const { runner, xray, ctx, progress } = setup([waiting('queued'), waiting('running'), ready]);
     xray.buildForStoryGuide.mockImplementation(({ onProgress }) => {
@@ -266,19 +234,5 @@ describe('BkStoryGuideRunner', () => {
     knowledge.enabled.mockResolvedValue(true);
     aiSettings.features.mockResolvedValue({ 'book-knowledge': { enabled: false } });
     await expect(runner.enabled()).resolves.toBe(false);
-  });
-
-  it('keeps a failed plan briefly, so status polls neither retry nor log it', async () => {
-    const { runner, xray } = setup([ready]);
-    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
-    xray.planEstimate.mockRejectedValue(new Error('no model'));
-    expect(await runner.estimate(7, subject.text)).toBeNull();
-    expect(await runner.estimate(7, subject.text)).toBeNull();
-    expect(xray.planEstimate).toHaveBeenCalledTimes(1);
-    expect(warn).toHaveBeenCalledTimes(1);
-    vi.advanceTimersByTime(BK_PLAN_FAILURE_TTL_MS);
-    await runner.estimate(7, subject.text);
-    expect(xray.planEstimate).toHaveBeenCalledTimes(2);
-    warn.mockRestore();
   });
 });

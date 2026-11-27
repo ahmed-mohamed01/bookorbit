@@ -105,6 +105,65 @@ describe('description tiers', () => {
     });
   });
 
+  it.each([1, 2] as const)('keeps three early identity facts alongside newer facts for importance %i', async (importance) => {
+    const { slot, names, ask, step } = setup(importance, [{ e1: 'unchanged' }]);
+    const state = new PassState();
+    const core = ['Worked as a cook on the coast.', 'Woke in the body of a dead queen.', 'Shares an oath with the stone guardian.'];
+    const newer = [
+      'Inherited a ruined tower.',
+      'Learned to mend a hull.',
+      'Leads the river clans.',
+      'Keeps the ferry crews on watch.',
+      'Won the loyalty of the lockkeepers.',
+      'Practises weather magic.',
+      'Runs the island granary.',
+      'Carries the royal seal.',
+      'Knows the old river channels.',
+      'Keeps a fleet of rescue boats.',
+    ];
+    const facts = ['Is staying at the inn.', ...core, ...newer];
+    const units = facts.map((_, index) => ({ ...unit, id: `u${index + 1}`, index, ordinals: [index + 1] }));
+    state.facts.set(
+      slot.id,
+      facts.map((text, index) => ({ unit: units[index], value: { slot, text, cite: index + 1, status: index === 0 } })),
+    );
+    const currentUnit = units.at(-1)!;
+    state.setAbout(slot.id, unit, 'A cook from the coast.');
+    await writeAbout([slot], currentUnit, state, names, 'fiction', ask, step('about'), undefined, undefined, () => ({
+      outgrown: true,
+      notes: ['The lockkeepers visited the tower.'],
+    }));
+    expect(ask.mock.calls[0][0].user.split(' | facts: ')[1].split('; ')).toEqual([
+      ...core.map((fact) => `core: ${fact}`),
+      ...newer.slice(2, -1),
+      `new: ${newer.at(-1)}`,
+    ]);
+  });
+
+  it.each([
+    ['A cook, a queen, a mage, a scout, and a sailor.', 'is a comma list; write prose'],
+    ['A cook who keeps the ferry running at level 5.', 'carries stat numbers'],
+  ])('rewrites malformed About prose once (%s)', async (line, detail) => {
+    const rewritten = 'A cook from the coast who woke in a dead queen’s body and now leads the river clans.';
+    const { slot, names, ask, step } = setup(1, [{ e1: line }, { e1: rewritten }]);
+    const state = new PassState();
+    await writeAbout([slot], unit, state, names, 'fiction', ask, step('about'));
+    expect(ask).toHaveBeenCalledTimes(2);
+    expect(ask.mock.calls[1][0].user).toContain(detail);
+    expect(state.currentAbout(slot.id)).toBe(rewritten);
+  });
+
+  it.each([
+    ['A cook, a queen, a mage, a scout, and a sailor.', 'list'],
+    ['A lockkeeper whose weather magic is Expert 4.', 'stat-numbers'],
+  ])('drops malformed About prose from the describe step (%s)', async (line, reason) => {
+    const { slot, names, ask, step } = setup(1, [{ e1: { about: line, n: [1] } }]);
+    const describe = step('describe');
+    const lines = await describeEntities([{ slot, mentions: [1] }], 'u1', names, sentences, 'fiction', ask, describe);
+    expect(lines.has(slot.id)).toBe(false);
+    expect(describe.record.rejected).toEqual({ [`describe:${reason}`]: 1 });
+  });
+
   it('batches about rows by tier, each call naming its own aim', async () => {
     const logger = new Logger('test');
     vi.spyOn(logger, 'log').mockImplementation(() => undefined);

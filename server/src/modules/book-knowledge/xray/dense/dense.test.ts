@@ -4,22 +4,24 @@ import { AiError } from '../../../ai/ai-client.types';
 import type { BookKnowledgeXrayStepId } from '@bookorbit/types';
 import type { Sentence } from '../../core/model';
 import { limiter, XrayPrivacy, XrayStepRun } from '../xray-runner';
-import { stitchNotes, introducing as introducingWith, runDense } from './dense-run';
+import { stitchNotes, introducing as introducingWith, readNow, runDense } from './dense-run';
 import type { Rejections } from '../xray-checks';
 import { entity } from '../xray-fixtures.testing';
 import { namesAt } from '../xray-lines';
+import { DESCRIPTION_PROSE, KIND_CONTENT, LASTING_ONLY } from '../xray-description-context';
 import { NARRATOR_ID, namedFirst, PassCast, patternMerges, type PassSlot } from '../pass/pass-cast';
 import type { Ask } from '../pass/pass-run';
 import type { PassUnit } from '../pass/pass-units';
 import { citesIn, denseChunks, numberedText } from './dense-chunks';
 import { factsOutputTokens, FACTS_MAX_OUTPUT_TOKENS, notesUser, requiredIds, retryUser } from './dense-prompt';
-import { ALIAS_GROUPS_PER_CALL, aliasCandidates, aliasMerges, joinAlias, editDistance, epithetFolds } from './dense-alias';
-import { clean, descriptionProblem } from './dense-describe';
-import { headingPairs, LINK_CAP, windowLinks } from './dense-links';
-import { factsReader, notesReader, sceneReader } from './dense-read';
+import { ALIAS_GROUPS_PER_CALL, aliasCandidates, aliasMerges, doubledLetter, joinAlias, editDistance, epithetFolds } from './dense-alias';
+import { clean, contextNamesOthers, describeSystem, descriptionEvidence, descriptionProblem, sharedLines, startsWithOwnName } from './dense-describe';
+import { DESCRIPTION_TIERS } from '../xray-tiers';
+import { cardLine, headingPairs, LINK_CAP, SINGLE_LINK_CAP, statLine, systemLine, windowLinks } from './dense-links';
+import { factsReader, NO_ACTOR, notesReader, sceneReader } from './dense-read';
 import { sceneRoster, SceneSame } from './dense-scene';
 import { mapTieType } from './dense-tie-map';
-import { NarrationDetector } from './dense-narration';
+import { NarrationDetector, NARRATOR_SETTLED_VOTES } from './dense-narration';
 import { passPayload } from '../pass/pass-payload';
 
 function book(texts: string[], paragraphOf: (index: number) => number = (index) => index): Sentence[] {
@@ -70,6 +72,18 @@ describe('about evidence', () => {
     expect(texts(introducing(slotOf(entityOf([1, 2, 3, 4])), unitOf([1]), sentences))).toEqual(['Solfis walked.']);
   });
 
+  it("leaves an inset letter out of the narrator's evidence and keeps it for anyone else", () => {
+    const sentences = book(['I unpacked the crate.', 'I am Mira, and I found the reef.', 'I kept the lamp lit.']);
+    sentences[1].inset = true;
+    const narrator = entity(NARRATOR_ID, 'character', [1, 2, 3], { name: 'Narrator' });
+    const slot = { id: NARRATOR_ID, head: narrator, member: null, name: 'Narrator', aliases: [], kind: 'character' } as unknown as PassSlot;
+    expect(texts(introducing(slot, unitOf([1, 2, 3]), sentences))).toEqual(['I unpacked the crate.', 'I kept the lamp lit.']);
+    expect(texts(introducing(slotOf(entityOf([1, 2, 3])), unitOf([1, 2, 3]), sentences))).toContain('I am Mira, and I found the reef.');
+    expect(descriptionEvidence([1, 2, 3], sentences, [], true).mentions).toEqual([1, 3]);
+    expect(descriptionEvidence([3], sentences, [], true).context).toEqual([]);
+    expect(descriptionEvidence([3], sentences).context).toEqual([2]);
+  });
+
   it('puts plain prose before shouted system text', () => {
     const sentences = book(['//SOLFIS STATUS REPORT, CITIZEN.', 'Solfis was a war golem.', '//SOLFIS AWAITS ORDERS.']);
     expect(texts(introducing(slotOf(entityOf([1, 2, 3])), unitOf([1, 2, 3]), sentences))).toEqual(['Solfis was a war golem.']);
@@ -116,6 +130,15 @@ describe('about evidence', () => {
     expect(introducing(slotOf(entityOf([1, 2])), unitOf([1, 2]), sentences).some((sentence) => sentence.definition)).toBe(false);
   });
 
+  it('labels a sentence from a quoted letter as written', () => {
+    const sentences = book(['Solfis is a war golem.', 'I sent Solfis north myself.']).map((sentence) =>
+      sentence.ordinal === 2 ? { ...sentence, inset: true } : sentence,
+    );
+    const found = introducing(slotOf(entityOf([1, 2])), unitOf([1, 2]), sentences);
+    expect(found.find((sentence) => sentence.ordinal === 2)?.written).toBe(true);
+    expect(found.find((sentence) => sentence.ordinal === 1)?.written).toBeUndefined();
+  });
+
   it('samples a concept from prose identity, not from every system line', () => {
     const lines = Array.from({ length: 12 }, (_, index) => `[Mana Sight used on ${String.fromCharCode(97 + index)}]`);
     const sentences = book([...lines, 'Mana Sight was the gift of her teacher.', 'Viv used Mana Sight.']);
@@ -148,6 +171,16 @@ describe('dense chunks', () => {
   it('numbers each sentence and keeps a paragraph on one line', () => {
     const text = numberedText(sentences, [1, 2, 8]);
     expect(text).toBe('[1] Sentence 1. [2] Sentence 2.\n[8] Sentence 8.');
+  });
+
+  it('sets a run of inset sentences between written tags', () => {
+    const marked = sentences.map((sentence) => (sentence.ordinal === 3 || sentence.ordinal === 4 ? { ...sentence, inset: true } : sentence));
+    const text = numberedText(marked, [2, 3, 4, 5]);
+    expect(text.split('\n')).toEqual(['[2] Sentence 2.', '<written>', '[3] Sentence 3. [4] Sentence 4.', '</written>', '[5] Sentence 5.']);
+    expect(numberedText(marked, [3])).toBe('<written>\n[3] Sentence 3.\n</written>');
+    const user = notesUser(text, [], { about: new Map(), abilities: new Map(), previous: null }, 'fiction');
+    expect(user).toContain("Their 'I' and 'we' are its writer, never the narrator");
+    expect(notesUser('[1] text', [], { about: new Map(), abilities: new Map(), previous: null }, 'fiction')).not.toContain('<written>');
   });
 
   it('keeps cited numbers inside the chunk and counts the rest', () => {
@@ -207,7 +240,7 @@ describe('dense readers', () => {
   const input = { chunk: unit, slots, sentences, mode: 'fiction' as const, names: namesAt([viv, solfis, red, fern], 5) };
 
   it('lists the ids named three or more times as required, and names them in the prompt and the retry', () => {
-    expect(requiredIds(slots)).toEqual(['e1', 'e2']);
+    expect(requiredIds(slots, 'fiction')).toEqual(['e1', 'e2']);
     const user = notesUser('[1] text', slots, { about: new Map(), abilities: new Map(), previous: null }, 'fiction');
     expect(user).toContain('Required: e1, e2');
     expect(retryUser(user, ['e2'], [])).toContain('left out these Required ids: e2');
@@ -218,6 +251,7 @@ describe('dense readers', () => {
     'Viv is mentioned only in passing.',
     'Viv is not described.',
     'Viv does not appear in this stretch.',
+    'Viv, a name, is not present in this stretch.',
   ])('treats a note about nothing happening as null: %s', (note) => {
     const read = notesReader(input, {});
     expect(read({ notes: { e1: note, e2: 'Solfis stops the attack before it happens.' } })?.items).toMatchObject({
@@ -233,6 +267,83 @@ describe('dense readers', () => {
       notes: [],
       failed: [{ field: 'notes', id: 'e1', text: note, detail: 'contains inline citation markers' }],
     });
+  });
+
+  describe('notes on places, objects and ideas', () => {
+    const tavia = entity('t1', 'character', [1, 2], { name: 'Tavia Marsh' });
+    const wardens = entity('t2', 'group', [2], { name: 'the Ash Wardens' });
+    const mill = entity('t3', 'place', [1, 2], { name: 'Greywater Mill' });
+    const key = entity('t4', 'object', [1, 2], { name: 'ember key' });
+    const place = { chunk: unit, sentences, mode: 'fiction' as const, names: namesAt([tavia, wardens, mill, key], 5) };
+    const read = (notes: Record<string, string>, extra: Partial<Parameters<typeof notesReader>[0]> = {}) =>
+      notesReader(
+        { ...place, slots: new PassCast([tavia, wardens, mill, key]).slots(unit), ...extra },
+        {},
+      )({ notes: Object.fromEntries(Object.entries(notes).map(([id, note]) => [id, { note, n: [1] }])) })?.items;
+
+    it('keeps a place or object note led by a character or group, by a word of a full name too', () => {
+      expect(
+        read({ t3: 'Tavia hides the ember key under the floor of Greywater Mill.', t4: 'The Ash Wardens melt the ember key down.' }),
+      ).toMatchObject({ notes: [{ slot: { id: 't3' } }, { slot: { id: 't4' } }], failed: [] });
+    });
+
+    it('sends a note on a thing that names no one acting back for a rewrite, and leaves character notes alone', () => {
+      expect(read({ t1: 'The storm keeps her awake all night.', t4: 'The ember key glows faintly in the dark.' })).toMatchObject({
+        notes: [{ slot: { id: 't1' } }],
+        failed: [{ field: 'notes', id: 't4', detail: NO_ACTOR }],
+      });
+    });
+
+    it('takes the actor from the whole cast when a re-ask narrows the slots', () => {
+      const cast = new PassCast([tavia, wardens, mill, key]).slots(unit);
+      const items = read({ t4: 'Tavia turns the ember key twice.' }, { slots: cast.filter((slot) => slot.id === 't4'), cast });
+      expect(items).toMatchObject({ notes: [{ slot: { id: 't4' } }], failed: [] });
+    });
+
+    it('counts the unnamed narrator called the narrator as the one acting', () => {
+      const narrator = entity(NARRATOR_ID, 'character', [1], { name: 'Narrator' });
+      const items = notesReader(
+        { ...place, slots: new PassCast([narrator, key]).slots(unit), narratorId: NARRATOR_ID },
+        {},
+      )({ notes: { t4: { note: 'The narrator pockets the ember key.', n: [1] } } })?.items;
+      expect(items).toMatchObject({ notes: [{ slot: { id: 't4' } }], failed: [] });
+    });
+
+    it('leaves a nonfiction note on a term alone', () => {
+      expect(read({ t4: 'The ember key is a test of the theory of heat.' }, { mode: 'nonfiction' })).toMatchObject({
+        notes: [{ slot: { id: 't4' } }],
+        failed: [],
+      });
+    });
+  });
+
+  it('sends a first-person note back for a rewrite, but lets quoted speech say I', () => {
+    const note = 'I climb the ladder and Viv follows.';
+    expect(
+      notesReader(input, {})({ notes: { e1: { note, n: [1] }, e2: { note: 'Solfis says “I will hold the gate.”', n: [1] } } })?.items,
+    ).toMatchObject({
+      notes: [{ slot: { id: 'e2' } }],
+      failed: [{ field: 'notes', id: 'e1', detail: 'is written in the first person; name the narrator instead of "I"' }],
+    });
+  });
+
+  it('lets the unnamed narrator and a summary of their chunk be called the narrator, and no one else', () => {
+    const narrator = entity(NARRATOR_ID, 'character', [1], { name: 'Narrator' });
+    const told = new PassCast([narrator, solfis]);
+    const read = notesReader({ ...input, slots: told.slots(unit), narratorId: NARRATOR_ID }, {});
+    const answer = read({
+      notes: {
+        [NARRATOR_ID]: { note: 'The narrator wakes strapped to a bed and cannot recall his own name.', n: [1] },
+        e2: { note: 'Solfis guards the narrator.', n: [2] },
+      },
+      summary: 'The narrator wakes in a strange room with tubes in his arm.',
+    })?.items;
+    expect(answer).toMatchObject({
+      notes: [{ slot: { id: NARRATOR_ID } }],
+      failed: [{ field: 'notes', id: 'e2', detail: 'says "the narrator" instead of a name' }],
+      summary: 'The narrator wakes in a strange room with tubes in his arm.',
+    });
+    expect(notesReader(input, {})({ notes: {}, summary: 'The narrator wakes.' })?.items.failed).toMatchObject([{ field: 'summary' }]);
   });
 
   it.each([
@@ -301,6 +412,24 @@ describe('dense readers', () => {
     });
   });
 
+  it("checks an unnamed narrator's gender against the fact's own cited sentences", () => {
+    const narrator = entity(NARRATOR_ID, 'character', [1, 2], { name: 'Narrator' });
+    const told = book(['I hung my fins by the door.', 'I am a man who spent thirty years under the reef.']);
+    const chunk = unitOf([1, 2]);
+    const narrated = {
+      chunk,
+      slots: new PassCast([narrator]).slots(chunk),
+      sentences: told,
+      mode: 'fiction' as const,
+      names: namesAt([narrator], 2),
+    };
+    const rejected: Rejections = {};
+    const read = factsReader(narrated, rejected)({ identity: [{ id: NARRATOR_ID, fact: 'He is a retired diver.', n: [2] }] });
+    expect(read?.items.facts.map((fact) => fact.text)).toEqual(['He is a retired diver.']);
+    const guessed = factsReader(narrated, {})({ identity: [{ id: NARRATOR_ID, fact: 'He is a retired diver.', n: [1] }] });
+    expect(guessed?.items.facts).toEqual([]);
+  });
+
   it('drops a fact with no cite inside the chunk', () => {
     const rejected: Rejections = {};
     const read = factsReader(input, rejected)({ identity: [{ id: 'e1', fact: 'Viv is a captain.', n: [77] }] });
@@ -362,6 +491,137 @@ describe('dense readers', () => {
     });
   });
 
+  describe('borrowed scene ids', () => {
+    const scene = (lines: string[], entities: XrayEntity[]) => {
+      const sentences = book(lines);
+      const chunk = unitOf(sentences.slice(1).map(({ ordinal }) => ordinal));
+      const cast = new PassCast(entities);
+      const slots = cast.slots(
+        chunk,
+        sentences.map(({ ordinal }) => ordinal),
+      );
+      const mentions = new Map(slots.map((slot) => [slot.id, new Set(cast.mentionsOf(slot, chunk, chunk.ordinals))]));
+      return { chunk, slots, sentences, mode: 'fiction' as const, names: namesAt(entities, sentences.length), mentions };
+    };
+
+    const emericScene = () =>
+      scene(
+        ['Emeric left the city.', 'Viv spoke with Damien.', 'Fraise arrived.', 'The gate closed.'],
+        [
+          entity('viv', 'character', [2], { name: 'Viv' }),
+          entity('emeric', 'character', [1], { name: 'Emeric' }),
+          entity('damien', 'character', [2], { name: 'Damien' }),
+          entity('fraise', 'character', [3], { name: 'Fraise' }),
+        ],
+      );
+    const emericAnswer = {
+      pov: 'emeric',
+      same: [{ id: 'viv', same_as: 'emeric', n: [2] }],
+      relations: [
+        { a: 'emeric', type: 'related', b: 'damien', sentence: 'Emeric knows Damien.', n: [2] },
+        { a: 'emeric', type: 'parent_of', b: 'damien', sentence: 'Emeric is the parent of Damien.', n: [2] },
+        { a: 'emeric', type: 'related', b: 'fraise', sentence: 'Emeric knows Fraise.', n: [3] },
+      ],
+    };
+
+    it.each(['fiction', 'nonfiction'] as const)('rejects an unnamed point of view and its claims in %s', (mode) => {
+      const rejected: Rejections = {};
+      const read = sceneReader({ ...emericScene(), mode }, rejected)(emericAnswer);
+      expect(read?.items).toMatchObject({ pov: null, same: [], linkPairs: [], ties: [] });
+      expect(rejected).toEqual({ 'scene:pov-not-in-scene': 1, 'scene:same-borrowed': 1, 'ties:borrowed-id': 3 });
+    });
+
+    it('keeps relations to characters referred to by epithets and moves their citations to the chunk end', () => {
+      const input = scene(
+        ['Solfis and Arthur waited.', 'Viv felt her bond with the golem.', 'Viv picked up her dragonette.', 'The gate closed.'],
+        [
+          entity('viv', 'character', [2, 3], { name: 'Viv' }),
+          entity('solfis', 'character', [1], { name: 'Solfis' }),
+          entity('arthur', 'character', [1], { name: 'Arthur' }),
+        ],
+      );
+      const rejected: Rejections = {};
+      const read = sceneReader(
+        input,
+        rejected,
+      )({
+        pov: 'viv',
+        relations: [
+          { a: 'viv', type: 'bonded_to', b: 'solfis', sentence: 'Viv is bonded to Solfis.', n: [2] },
+          { a: 'viv', type: 'owns', b: 'arthur', sentence: 'Viv owns Arthur.', n: [3] },
+        ],
+      });
+      expect(read?.items.linkPairs.map(({ a, b, cite }) => [a.id, b.id, cite])).toEqual([
+        ['solfis', 'viv', 4],
+        ['viv', 'arthur', 4],
+      ]);
+      expect(rejected['ties:cite-moved']).toBe(2);
+      expect(rejected['ties:borrowed-id']).toBeUndefined();
+    });
+
+    it('rejects a relation to an unnamed id claimed to be the same as a different head', () => {
+      const input = scene(
+        ['The Sergeant left.', 'Viv met her friend Mouq.', 'The gate closed.'],
+        [
+          entity('viv', 'character', [2], { name: 'Viv' }),
+          entity('mouq', 'character', [2], { name: 'Mouq' }),
+          entity('sergeant', 'character', [1], { name: 'Sergeant' }),
+        ],
+      );
+      input.mentions.delete('sergeant');
+      const rejected: Rejections = {};
+      const read = sceneReader(
+        input,
+        rejected,
+      )({
+        pov: 'viv',
+        same: [{ id: 'mouq', same_as: 'sergeant', n: [2] }],
+        relations: [
+          { a: 'viv', type: 'works_for', b: 'sergeant', sentence: 'Viv works for the Sergeant.', n: [2] },
+          { a: 'viv', type: 'friend_of', b: 'mouq', sentence: 'Viv and Mouq are friends.', n: [2] },
+        ],
+      });
+      expect(read?.items).toMatchObject({
+        pov: 'viv',
+        same: [{ a: { id: 'mouq' }, b: { id: 'sergeant' } }],
+        linkPairs: [{ a: { id: 'mouq' }, b: { id: 'viv' }, cite: 2 }],
+        ties: [{ type: 'friend_of' }],
+      });
+      expect(rejected).toEqual({ 'ties:borrowed-id': 1 });
+    });
+
+    it('keeps a first-person point of view and its relation when the narrator has no mentions', () => {
+      const input = scene(
+        ['My name is Viv.', 'I walked with my friend Damien.', 'The gate closed.'],
+        [entity(NARRATOR_ID, 'character', [1], { name: 'Viv' }), entity('damien', 'character', [2], { name: 'Damien' })],
+      );
+      const rejected: Rejections = {};
+      const read = sceneReader(
+        { ...input, firstPerson: true },
+        rejected,
+      )({
+        pov: NARRATOR_ID,
+        relations: [{ a: NARRATOR_ID, type: 'friend_of', b: 'damien', sentence: 'Viv and Damien are friends.', n: [2] }],
+      });
+      expect(read?.items).toMatchObject({
+        pov: NARRATOR_ID,
+        linkPairs: [{ a: { id: 'damien' }, b: { id: NARRATOR_ID }, cite: 3 }],
+        ties: [{ type: 'friend_of', cite: 3 }],
+      });
+      expect(rejected).toEqual({ 'ties:cite-moved': 1 });
+    });
+
+    it('keeps the point of view, same claim and cited relations when no mention map was provided', () => {
+      const rejected: Rejections = {};
+      const read = sceneReader({ ...emericScene(), mentions: undefined }, rejected)(emericAnswer);
+      expect(read?.items.pov).toBe('emeric');
+      expect(read?.items.same).toHaveLength(1);
+      expect(read?.items.linkPairs.map(({ cite }) => cite)).toEqual([2, 2, 3]);
+      expect(read?.items.ties.map(({ cite }) => cite)).toEqual([2]);
+      expect(rejected).toEqual({ 'ties:related': 2 });
+    });
+  });
+
   it('counts an entry paired with itself apart from a pair the cast already joined', () => {
     const [own] = new PassCast([viv]).slots(unit);
     const member: PassSlot = { ...own, id: 'e9', member: entity('e9', 'character', [5], { name: 'the Captain' }), name: 'the Captain', aliases: [] };
@@ -380,7 +640,7 @@ describe('dense readers', () => {
     expect(rejected).toEqual({ 'scene:same-self': 1, 'scene:same-already': 1 });
   });
 
-  it('rests a relation given without a number on the first sentence naming both sides, and drops it when none does', () => {
+  it('links a relation given without a number at the first sentence naming both, shows its label at the stretch end, and drops it when none does', () => {
     const rejected: Rejections = {};
     const read = sceneReader(
       input,
@@ -393,7 +653,8 @@ describe('dense readers', () => {
         { a: 'e2', type: 'friend_of', b: 'e3', sentence: 'Solfis and the Red are friends.' },
       ],
     });
-    expect(read?.items.ties.map((tie) => [tie.a.id, tie.b.id, tie.cite])).toEqual([['e1', 'e2', 1]]);
+    expect(read?.items.ties.map((tie) => [tie.a.id, tie.b.id, tie.cite])).toEqual([['e1', 'e2', 5]]);
+    expect(read?.items.linkPairs.map((pair) => pair.cite)).toEqual([1]);
     expect(rejected['ties:cite-found']).toBe(1);
     expect(rejected['ties:no-cite']).toBe(1);
   });
@@ -526,6 +787,7 @@ describe('dense run', () => {
       units: [unitOf(sentences.map((sentence) => sentence.ordinal))],
       mode: 'fiction',
       ask,
+      askWrite: ask,
       askAbout: ask,
       ...steps,
       writesAbout: () => false,
@@ -586,6 +848,7 @@ describe('dense run', () => {
       ],
       mode: 'fiction',
       ask,
+      askWrite: ask,
       askAbout: ask,
       ...steps,
       writesAbout: () => false,
@@ -617,101 +880,109 @@ describe('limiter', () => {
   });
 });
 
-it('skips a facts merge across kinds while applying a same-kind merge', async () => {
-  const sentences = book(['Piper is the Cloak.', 'Piper is called Raven.']);
-  const cast = [
-    entity('e1', 'character', [1, 2], { name: 'Piper' }),
-    entity('e2', 'object', [1], { name: 'Cloak' }),
-    entity('e3', 'character', [2], { name: 'Raven' }),
-  ];
-  const logger = new Logger('test');
-  vi.spyOn(logger, 'log').mockImplementation(() => undefined);
-  vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
-  const privacy = new XrayPrivacy(sentences);
-  const step = (id: BookKnowledgeXrayStepId) => new XrayStepRun(id, 'fast', privacy, logger, 'runId=r');
-  const result = await runDense({
-    entities: cast,
-    sentences,
-    units: [unitOf([1, 2])],
-    mode: 'fiction',
-    ask:
-      ({ system, user }) =>
-      () =>
-        Promise.resolve({
-          text: JSON.stringify(
-            `${system}${user}`.includes('merges: {"a"')
-              ? {
-                  merges: [
-                    { a: 'e2', b: 'e1', n: [1] },
-                    { a: 'e3', b: 'e1', n: [2] },
-                  ],
-                }
-              : { pov: null, notes: {}, summary: null },
-          ),
-          usage: { input: 1, output: 1 },
-          finish: 'stop' as const,
-          model: 'm',
-        }),
-    askAbout: () => () => Promise.reject(new Error('unexpected about rewrite')),
-    notes: step('notes'),
-    facts: step('facts'),
-    ties: step('ties'),
-    alias: step('alias'),
-    describe: step('describe'),
-
-    now: step('now'),
-    about: step('about'),
-    writesAbout: () => false,
-  });
-  expect(result.cast.merges.map(({ member, head }) => [member.id, head.id])).toEqual([['e3', 'e1']]);
-  expect(result.cast.heads.map(({ id }) => id)).toEqual(['e1', 'e2']);
-});
-
-it('heads a model merge with the more-mentioned name, whichever order the model gave', async () => {
-  const sentences = book(['Tavia ran.', 'Tavia hid.', 'Tavia, called Princess Pip, laughed.']);
-  const cast = [entity('e1', 'character', [1, 2, 3], { name: 'Tavia' }), entity('e2', 'character', [3], { name: 'Pip' })];
-  const logger = new Logger('test');
-  vi.spyOn(logger, 'log').mockImplementation(() => undefined);
-  vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
-  const privacy = new XrayPrivacy(sentences);
-  const step = (id: BookKnowledgeXrayStepId) => new XrayStepRun(id, 'fast', privacy, logger, 'runId=r');
-  const result = await runDense({
-    entities: cast,
-    sentences,
-    units: [unitOf([1, 2, 3])],
-    mode: 'fiction',
-    ask:
-      ({ system, user }) =>
-      () =>
-        Promise.resolve({
-          text: JSON.stringify(
-            `${system}${user}`.includes('merges: {"a"') ? { merges: [{ a: 'e1', b: 'e2', n: [3] }] } : { pov: null, notes: {}, summary: null },
-          ),
-          usage: { input: 1, output: 1 },
-          finish: 'stop' as const,
-          model: 'm',
-        }),
-    askAbout: () => () => Promise.reject(new Error('unexpected about rewrite')),
-    notes: step('notes'),
-    facts: step('facts'),
-    ties: step('ties'),
-    alias: step('alias'),
-    describe: step('describe'),
-
-    now: step('now'),
-    about: step('about'),
-    writesAbout: () => false,
-  });
-  expect(result.cast.merges.map(({ member, head }) => [member.id, head.id])).toEqual([['e2', 'e1']]);
-});
-
-describe('dense now', () => {
-  it('feeds status facts to `now`, not `about`, and drops a now line that starts with the name', async () => {
-    const sentences = book(['Viv moved into the watchroom.', 'Viv now serves Fort Stone.', 'Viv is a witch.']);
-    const viv = entity('e1', 'character', [1, 2, 3], { name: 'Viv', names: [{ text: 'Viv', ordinal: 1 }] });
+describe('facts merges', () => {
+  const runWith = (sentences: Sentence[], cast: XrayEntity[], units: PassUnit[], merges: (user: string) => unknown[]) => {
     const logger = new Logger('test');
     vi.spyOn(logger, 'log').mockImplementation(() => undefined);
     vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    const privacy = new XrayPrivacy(sentences);
+    const step = (id: BookKnowledgeXrayStepId) => new XrayStepRun(id, 'fast', privacy, logger, 'runId=r');
+    const ask: Ask =
+      ({ system, user }) =>
+      () =>
+        Promise.resolve({
+          text: JSON.stringify(`${system}${user}`.includes('merges: {"a"') ? { merges: merges(user) } : { pov: null, notes: {}, summary: null }),
+          usage: { input: 1, output: 1 },
+          finish: 'stop' as const,
+          model: 'm',
+        });
+    return runDense({
+      entities: cast,
+      sentences,
+      units,
+      mode: 'fiction',
+      ask,
+      askWrite: ask,
+      askAbout: () => () => Promise.reject(new Error('unexpected about rewrite')),
+      notes: step('notes'),
+      facts: step('facts'),
+      ties: step('ties'),
+      alias: step('alias'),
+      describe: step('describe'),
+      now: step('now'),
+      about: step('about'),
+      writesAbout: () => false,
+    });
+  };
+  const twoUnits = (split: number, total: number): PassUnit[] => [
+    { ...unitOf(Array.from({ length: split }, (_, index) => index + 1)), sectionEnd: false },
+    { ...unitOf(Array.from({ length: total - split }, (_, index) => split + index + 1)), id: 'u2', index: 1 },
+  ];
+
+  it('skips a merge across kinds and joins a same-kind pair on its second chunk', async () => {
+    const sentences = book(['Piper is the Cloak.', 'Piper is called Raven.', 'Piper is the Cloak again.', 'Raven is Piper.']);
+    const cast = [
+      entity('e1', 'character', [1, 2, 3, 4], { name: 'Piper' }),
+      entity('e2', 'object', [1, 3], { name: 'Cloak' }),
+      entity('e3', 'character', [2, 4], { name: 'Raven' }),
+    ];
+    const result = await runWith(sentences, cast, twoUnits(2, 4), () => [
+      { a: 'e2', b: 'e1', n: [1, 3] },
+      { a: 'e3', b: 'e1', n: [2, 4] },
+    ]);
+    expect(result.cast.merges.map(({ member, head, ordinal }) => [member.id, head.id, ordinal])).toEqual([['e3', 'e1', 4]]);
+    expect(result.cast.heads.map(({ id }) => id)).toEqual(['e1', 'e2']);
+  });
+
+  it('never joins two names on one chunk of evidence', async () => {
+    const sentences = book(['Tavia ran.', 'Tavia was Orrin’s sister, and the clan knew it.']);
+    const cast = [entity('e1', 'character', [1, 2], { name: 'Tavia' }), entity('e2', 'character', [2], { name: 'Orrin' })];
+    const result = await runWith(sentences, cast, [unitOf([1, 2])], () => [{ a: 'e1', b: 'e2', n: [2] }]);
+    expect(result.cast.merges).toEqual([]);
+  });
+
+  it('heads a model merge with the more-mentioned name, whichever order the model gave', async () => {
+    const sentences = book(['Tavia ran.', 'Tavia hid.', 'Tavia, called Princess Pip, laughed.', 'Pip is Tavia.']);
+    const cast = [entity('e1', 'character', [1, 2, 3, 4], { name: 'Tavia' }), entity('e2', 'character', [3, 4], { name: 'Pip' })];
+    const result = await runWith(sentences, cast, twoUnits(3, 4), () => [{ a: 'e1', b: 'e2', n: [3, 4] }]);
+    expect(result.cast.merges.map(({ member, head }) => [member.id, head.id])).toEqual([['e2', 'e1']]);
+  });
+});
+
+describe('dense now', () => {
+  it.each([
+    { raw: { now: { e1: 'Serves the city.' } }, ids: ['e1', 'e2'] },
+    { raw: { e1: 'Serves the city.', e90: 'Unknown.' }, ids: ['e1', 'e2'] },
+    { raw: { now: 'Serves the city.' }, ids: ['e1'] },
+    { raw: 'Serves the city.', ids: ['e1'] },
+    { raw: { now: [{ id: 'e1', now: 'Serves the city.' }] }, ids: ['e1', 'e2'] },
+    { raw: [{ id: 'e1', line: 'Serves the city.' }], ids: ['e1', 'e2'] },
+  ])('reads $raw for $ids', ({ raw, ids }) => {
+    expect(readNow(raw, ids)).toEqual(new Map([['e1', 'Serves the city.']]));
+  });
+
+  it('skips unknown ids and values without a non-empty line', () => {
+    expect(readNow({ e1: '  ', e2: 7, e90: 'Unknown.' }, ['e1', 'e2'])).toBeNull();
+    expect(readNow({ now: 5 }, ['e1'])).toBeNull();
+    expect(readNow('Serves the city.', ['e1', 'e2'])).toBeNull();
+    expect(
+      readNow(
+        [
+          { id: 'e90', line: 'Unknown.' },
+          { id: 'e1', now: ' ' },
+          { id: 'e2', now: false },
+        ],
+        ['e1', 'e2'],
+      ),
+    ).toBeNull();
+  });
+
+  it('feeds status facts to `now`, not `about`, and drops a now line that starts with the name', async () => {
+    const sentences = book(['Zevrin moved into the watchroom.', 'Zevrin now serves the city.', 'Zevrin is a witch.']);
+    const zevrin = entity('e1', 'character', [1, 2, 3], { name: 'Zevrin', names: [{ text: 'Zevrin', ordinal: 1 }] });
+    const logger = new Logger('test');
+    const log = vi.spyOn(logger, 'log').mockImplementation(() => undefined);
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
     const privacy = new XrayPrivacy(sentences);
     const step = (id: BookKnowledgeXrayStepId) => new XrayStepRun(id, 'fast', privacy, logger, 'runId=r');
     const steps = {
@@ -726,36 +997,85 @@ describe('dense now', () => {
     };
     const reply = (value: unknown) => () =>
       Promise.resolve({ text: JSON.stringify(value), usage: { input: 1, output: 1 }, finish: 'stop' as const, model: 'm' });
-    const run = (now: string) =>
-      runDense({
-        entities: [viv],
+    const prompts: string[] = [];
+    const run = (...answers: unknown[]) => {
+      const ask: Ask = (request) => {
+        if (request.system.includes('now line'))
+          return () => {
+            prompts.push(request.user);
+            return reply(answers.shift())();
+          };
+        if (`${request.system}${request.user}`.includes('notes: an object keyed by id')) return reply({ notes: { e1: null }, summary: '' });
+        return reply({
+          identity: [
+            { id: 'e1', fact: 'Zevrin is a witch.', kind: 'identity', n: [3] },
+            { id: 'e1', fact: 'Zevrin serves the city.', kind: 'status', n: [2] },
+          ],
+        });
+      };
+      return runDense({
+        entities: [zevrin],
         sentences,
         units: [unitOf([1, 2, 3])],
         mode: 'fiction',
-        ask: (request) => {
-          if (request.system.includes('now line')) return reply({ now: { e1: now } });
-          if (`${request.system}${request.user}`.includes('notes: an object keyed by id')) return reply({ notes: { e1: null }, summary: '' });
-          return reply({
-            identity: [
-              { id: 'e1', fact: 'Viv is a witch.', kind: 'identity', n: [3] },
-              { id: 'e1', fact: 'Viv serves Fort Stone.', kind: 'status', n: [2] },
-            ],
-          });
-        },
-        askAbout: () => reply({ lines: { viv: 'A witch.' } }),
+        ask,
+        askWrite: ask,
+        askAbout: () => reply({ lines: { zevrin: 'A witch.' } }),
         ...steps,
         writesAbout: () => true,
       });
-    const good = await run('Serves Fort Stone from the watchroom.');
-    expect(good.state.currentNow('e1')).toBe('Serves Fort Stone from the watchroom.');
-    expect(good.state.factsOf('e1').map((fact) => fact.value.text)).toEqual(['Viv is a witch.']);
-    expect(good.state.statusOf('e1').map((fact) => fact.value.text)).toEqual(['Viv serves Fort Stone.']);
-    const bad = await run('Viv, a witch, serves Fort Stone.');
+    };
+    const good = await run({ now: 'Serves the city from the watchroom.' });
+    expect(good.state.currentNow('e1')).toBe('Serves the city from the watchroom.');
+    expect(good.state.factsOf('e1').map((fact) => fact.value.text)).toEqual(['Zevrin is a witch.']);
+    expect(good.state.statusOf('e1').map((fact) => fact.value.text)).toEqual(['Zevrin serves the city.']);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('step=now unit=nu1 attempt=1 sentences=0 characters=0 sections=0 - sending rows'));
+
+    prompts.length = 0;
+    const recovered = await run({ now: 5 }, { now: { e1: 'Serves the city.' } });
+    expect(recovered.state.currentNow('e1')).toBe('Serves the city.');
+    expect(prompts).toEqual([prompts[0], `${prompts[0]}\nAnswer with JSON only, exactly {"now": {"<id>": "<line>"}} with these ids: e1.`]);
+
+    warn.mockClear();
+    const unreadable = await run({ now: 5 }, { e96: 'Zevrin moved.', Molvessa: 'Molvessa waited.', now: [false] });
+    expect(unreadable.state.currentNow('e1')).toBeNull();
+    expect(warn.mock.calls.filter(([message]) => typeof message === 'string' && message.includes('step=now'))).toEqual([
+      [expect.stringContaining('errorClass=InvalidReply error="unreadable after retry rows=1 replyType=object keys=id,other,now nowType=array"')],
+    ]);
+
+    const bad = await run({ now: { e1: 'Zevrin, a witch, serves the city.' } });
     expect(bad.state.currentNow('e1')).toBeNull();
     expect(steps.now.record.rejected).toEqual({ 'now:starts-with-name': 1 });
-    const ungrounded = await run('Serves Fort Stone beside Shallan.');
+    const ungrounded = await run({ now: { e1: 'Serves the city beside Molvessa.' } });
     expect(ungrounded.state.currentNow('e1')).toBeNull();
     expect(steps.now.record.rejected).toEqual({ 'now:starts-with-name': 1, 'now:ungrounded': 1 });
+  });
+
+  it('keeps the current situation when a later Now is a stat change or a list', async () => {
+    const sentences = book(['Tavia guards the ferry during the flood.', 'Tavia moves to the sluice house.', 'Tavia patrols the river locks.']);
+    const tavia = entity('e1', 'character', [1, 2, 3], { name: 'Tavia', names: [{ text: 'Tavia', ordinal: 1 }] });
+    const units = sentences.map(({ ordinal }) => ({ ...unitOf([ordinal]), id: `u${ordinal}`, index: ordinal - 1 }));
+    const { run, steps } = denseHarness(sentences);
+    const current = 'She guards the ferry during the flood.';
+    const nowReplies = [current, 'Endurance +1.', 'At the locks, tired, cold, hungry, and alone.'];
+    const { state } = await run(
+      [tavia],
+      units,
+      (kind, user) => {
+        if (kind === 'facts') {
+          const cite = Number(user.match(/\[(\d+)\] Tavia/)?.[1]);
+          return { identity: [{ id: 'e1', fact: sentences[cite - 1].text, kind: 'status', n: [cite] }] };
+        }
+        if (user.includes('\nnow:')) return { now: { e1: nowReplies.shift() } };
+        return {};
+      },
+      undefined,
+      undefined,
+      undefined,
+      { writesAbout: () => true },
+    );
+    expect(state.now.get('e1')).toEqual([{ unit: units[0], value: current }]);
+    expect(steps.now.record.rejected).toEqual({ 'now:stat-numbers': 1, 'now:list': 1 });
   });
 });
 
@@ -878,6 +1198,20 @@ describe('alias step', () => {
       entity('harness', 'idea', [3, 4], { name: 'harness', count: 6 }),
     ]);
     expect(aliasCandidates(cast, text)).toEqual([]);
+  });
+
+  it('offers a name spelt with and without a doubled letter even when both are used alike', () => {
+    const text = book(['Tavia served Corran.', 'Corran paid well.', 'Coran lay east.', 'Tavia rode to Coran.']);
+    const cast = new PassCast([
+      entity('tavia', 'character', [1, 4], { name: 'Tavia', count: 9, importance: 1 }),
+      entity('corran', 'character', [1, 2], { name: 'Corran', count: 9 }),
+      entity('coran', 'place', [3, 4], { name: 'Coran', count: 11 }),
+    ]);
+    const found = aliasCandidates(cast, text).map((candidate) => [candidate.member.name, candidate.head.name, candidate.reason]);
+    expect(found).toContainEqual(['Corran', 'Coran', 'spelling']);
+    expect(doubledLetter('corran', 'coran')).toBe(true);
+    expect(doubledLetter('maranor', 'maradoc')).toBe(false);
+    expect(doubledLetter('anna', 'anne')).toBe(false);
   });
 
   it('offers a rare misspelling across kinds, and keeps a lead in every paragraph from drawing a lowercase word', () => {
@@ -1132,6 +1466,7 @@ describe('facts descriptions and scene cards', () => {
       sentences,
       mode: 'fiction',
       ask,
+      askWrite: ask,
       askAbout: ask,
       notes: step('notes'),
       facts: step('facts'),
@@ -1147,7 +1482,7 @@ describe('facts descriptions and scene cards', () => {
     expect(facts[0]).not.toMatch(/e3 [^\n]*needs is/);
     expect(result.state.currentAbout('e1')).toBe('A pathfinder.');
     expect(result.state.currentAbout('e2')).toBeNull();
-    expect(result.state.currentAbout('e3')).toBe('Concept: Reveals nearby sources of magic.');
+    expect(result.state.currentAbout('e3')).toBe('Reveals nearby sources of magic.');
     expect([...result.pov.values()]).toEqual(['e1', null]);
   });
 });
@@ -1164,6 +1499,7 @@ describe('describe step for entries left without a line', () => {
       facts?: (user: string) => unknown;
       notes?: (user: string) => unknown;
       describe?: (user: string) => unknown;
+      about?: (user: string) => unknown;
       writesAbout?: (slot: PassSlot) => boolean;
     },
   ) => {
@@ -1171,7 +1507,9 @@ describe('describe step for entries left without a line', () => {
     vi.spyOn(logger, 'log').mockImplementation(() => undefined);
     const step = (id: BookKnowledgeXrayStepId) => new XrayStepRun(id, 'fast', new XrayPrivacy(sentences), logger, 'runId=r');
     const describe = step('describe');
+    const facts = step('facts');
     const asked: string[] = [];
+    const aboutAsked: string[] = [];
     const ask: Ask =
       ({ system, user }) =>
       () => {
@@ -1179,7 +1517,10 @@ describe('describe step for entries left without a line', () => {
         if (system.includes(DESCRIBE_KEY)) {
           asked.push(user);
           answer = options.describe?.(user) ?? {};
-        } else if (user.includes('notes: an object keyed by id')) answer = options.notes?.(user) ?? { notes: {}, summary: 'Piper walks.' };
+        } else if (system.includes('keep short descriptions')) {
+          aboutAsked.push(user);
+          answer = options.about?.(user) ?? {};
+        } else if (user.includes('notes: an object keyed by id')) answer = options.notes?.(user) ?? { notes: {}, summary: 'The gate opened.' };
         else if (user.includes('"identity":')) answer = options.facts?.(user) ?? {};
         return Promise.resolve({ text: JSON.stringify(answer), usage: { input: 1, output: 1 }, finish: 'stop', model: 'm' });
       };
@@ -1189,9 +1530,10 @@ describe('describe step for entries left without a line', () => {
       sentences,
       mode: options.mode ?? 'fiction',
       ask,
+      askWrite: ask,
       askAbout: ask,
       notes: step('notes'),
-      facts: step('facts'),
+      facts,
       ties: step('ties'),
       alias: step('alias'),
       describe,
@@ -1199,8 +1541,187 @@ describe('describe step for entries left without a line', () => {
       about: step('about'),
       writesAbout: options.writesAbout ?? (() => false),
     });
-    return { result, asked, describe };
+    return { result, asked, describe, facts, aboutAsked };
   };
+
+  it('returns neighbouring context separately and excludes neighbours that are themselves mentions', () => {
+    const sentences = book(['The gate opened.', 'Tavia stepped in.', 'Tavia waved.', 'The gate shut.', 'Tavia left.']);
+    expect(descriptionEvidence([2, 3, 5], sentences)).toEqual({ mentions: [2, 3, 5], context: [1] });
+    expect(descriptionEvidence([2, 5], sentences)).toEqual({ mentions: [2, 5], context: [1, 4] });
+  });
+
+  it('drops a bare label only when another mention remains', () => {
+    const sentences = book(['[Ember ward]', 'The ember ward warms the gate.']);
+    expect(descriptionEvidence([1, 2], sentences, ['Ember ward'])).toEqual({ mentions: [2], context: [] });
+    expect(descriptionEvidence([1], sentences, ['Ember ward'])).toEqual({ mentions: [1], context: [] });
+  });
+
+  it('filters context with uncommon capitalised words outside the mention and own names', () => {
+    const mention = 'Tavia and Orrin would never find out.';
+    expect(contextNamesOthers('Mavro and Pell would feel guilty.', mention, ['Tavia'])).toBe(true);
+    expect(contextNamesOthers('They waited for Mavro.', mention, ['Tavia'])).toBe(true);
+    expect(contextNamesOthers('Engineering. What is that thing?', mention, ['Tavia'])).toBe(false);
+    expect(contextNamesOthers('Orrin and Tavia left.', mention, [])).toBe(false);
+    expect(contextNamesOthers('Mavro left.', mention, ['Mavro'])).toBe(false);
+  });
+
+  it.each([
+    ['A guard who met Fern.', 2, 'describe:ungrounded'],
+    ['A guard at the gate.', 1, 'describe:no-cite'],
+  ])('shows labelled context without accepting its names or citations (%s)', async (about, cite, reason) => {
+    const sentences = book(['Fern opened the gate.', 'Tavia raised a shield.', 'Mavro walked home.', 'Tavia put the shield down.']);
+    const { result, asked, describe } = await gapRun(sentences, [unitOf([1, 2, 3, 4])], [entity('e1', 'character', [2, 4], { name: 'Tavia' })], {
+      describe: () => ({ e1: { about, n: [cite] } }),
+    });
+    expect(asked[0]).toContain('  context [1] Fern opened the gate.\n  [2] Tavia raised a shield.');
+    expect(asked[0]).toContain('  [4] Tavia put the shield down.');
+    expect(asked[0]).not.toContain('Mavro');
+    expect(describe.record.rejected).toMatchObject({ [reason]: 1 });
+    expect(result.state.currentAbout('e1')).toBeNull();
+  });
+
+  it('finds shared lines after folding case and punctuation', () => {
+    expect(
+      sharedLines(
+        new Map([
+          ['e1', 'A gate guard.'],
+          ['e2', 'a GATE-guard!'],
+          ['e3', 'A trader.'],
+        ]),
+      ),
+    ).toEqual(new Set(['e1', 'e2']));
+  });
+
+  it.each([false, true])('keeps shared lines and retries them once on new mentions (shared retry: %s)', async (repeated) => {
+    const sentences = book([
+      'Tavia and Orrin guard the gate.',
+      'Tavia collects the toll while Orrin checks the carts.',
+      'The bell rang.',
+      'Tavia and Orrin went home.',
+    ]);
+    const units = sentences.map(({ ordinal }) => ({ ...unitOf([ordinal]), id: `u${ordinal}`, index: ordinal - 1 }));
+    const entities = ['Tavia', 'Orrin'].map((name, index) => entity(`e${index + 1}`, 'character', [1, 2, 4], { name, importance: 3 }));
+    const initial = { about: 'A sentry at the gate.', n: [1] };
+    const { result, asked, describe } = await gapRun(sentences, units, entities, {
+      describe: (user) =>
+        user.includes('[2]') && !repeated
+          ? { e1: { about: 'A sentry who collects the toll.', n: [2] }, e2: { about: 'A sentry who checks carts.', n: [2] } }
+          : { e1: initial, e2: initial },
+    });
+    expect(asked).toHaveLength(2);
+    expect(asked[1]).toContain('[2] Tavia collects');
+    expect(describe.record.counts['describe:shared']).toBe(repeated ? 4 : 2);
+    expect(describe.record.rejected['describe:deferred']).toBeUndefined();
+    for (const id of ['e1', 'e2']) {
+      expect(result.state.aboutAt(id, 1)).toBe(initial.about);
+      expect(result.state.about.get(id)?.map(({ unit }) => unit.id)).toEqual(repeated ? ['u1'] : ['u1', 'u2']);
+    }
+    expect(result.state.currentAbout('e1')).toBe(repeated ? initial.about : 'A sentry who collects the toll.');
+    expect(result.state.currentAbout('e2')).toBe(repeated ? initial.about : 'A sentry who checks carts.');
+  });
+
+  it('matches an own-name lead with or without an article and respects the word boundary', () => {
+    const own = ['ember ward'];
+    for (const line of ['Ember ward that warms the gate.', 'The ember ward warms the gate.', 'An ember ward, not a lamp.'])
+      expect(startsWithOwnName(line, own)).toBe(true);
+    for (const line of ['Ward of embers at the gate.', 'Ember warden at the gate.']) expect(startsWithOwnName(line, own)).toBe(false);
+  });
+
+  it('rejects an article followed by the own name in the facts and description passes', async () => {
+    const sentences = book(['Tavia lifted the Vellin flask.']);
+    const about = 'A Vellin flask, not made from glass.';
+    const { result, describe, facts } = await gapRun(sentences, [unitOf([1])], [entity('e1', 'item', [1], { name: 'Vellin flask' })], {
+      facts: () => ({ identity: [{ id: 'e1', is: { text: about, n: [1] } }] }),
+      describe: () => ({ e1: { about, n: [1] } }),
+    });
+    expect(facts.record.rejected).toMatchObject({ 'is:starts-with-name': 1 });
+    expect(describe.record.rejected).toMatchObject({ 'describe:starts-with-name': 1 });
+    expect(result.state.currentAbout('e1')).toBeNull();
+  });
+
+  it('drops a garbled quoted term from a fiction description', async () => {
+    const sentences = book(["Merged into the full skill: 'Deepward scholar'!"]);
+    const { result, describe } = await gapRun(sentences, [unitOf([1])], [entity('e1', 'idea', [1], { name: 'Deepward' })], {
+      describe: () => ({ e1: { about: 'A skill merging her studies into one scholarship.', n: [1] } }),
+    });
+    expect(describe.record.rejected).toMatchObject({ 'describe:garbled-term': 1 });
+    expect(result.state.currentAbout('e1')).toBeNull();
+  });
+
+  it.each(DESCRIPTION_TIERS)('labels context in both modes and asks for exact terms in fiction ($name)', (tier) => {
+    for (const mode of ['fiction', 'nonfiction'] as const) {
+      expect(describeSystem(mode, tier)).toContain('A line marked context only helps you read the line after it: never take a claim from it.');
+      expect(describeSystem(mode, tier)).toContain('When one sentence names several entries, give each only what is said of it.');
+    }
+    expect(describeSystem('fiction', tier)).toContain(
+      'Write the name of a skill, class, spell or item exactly as the sentences write it, in full; never reword or shorten it.',
+    );
+  });
+
+  it.each(DESCRIPTION_TIERS)('asks for lasting details appropriate to the kind ($name)', (tier) => {
+    const system = describeSystem('fiction', tier);
+    expect(system).toContain(LASTING_ONLY);
+    expect(system).toContain(KIND_CONTENT);
+    expect(system).toContain(DESCRIPTION_PROSE);
+  });
+
+  it('labels a stat in about and describe headers only once the unit confirms it', async () => {
+    const sentences = book([
+      'Mivren checked her Gleamforce.',
+      'Gleamforce +1',
+      'Gleamforce: 12',
+      'Gleamforce measures how much light Mivren can hold.',
+    ]);
+    const units = [unitOf([1]), { ...unitOf([2, 3, 4]), id: 'u2', index: 1 }];
+    const stat = entity('e1', 'idea', [1, 2, 3, 4], { name: 'Gleamforce', names: [{ text: 'Gleamforce', ordinal: 1 }] });
+    const { asked, aboutAsked } = await gapRun(sentences, units, [stat], {
+      writesAbout: () => true,
+      facts: (user) =>
+        user.includes('[4]') ? { identity: [{ id: 'e1', fact: 'Measures how much light Mivren can hold.', kind: 'identity', n: [4] }] } : {},
+    });
+    expect(asked[0]).toContain('e1 | Gleamforce | idea\n');
+    expect(asked[1]).toContain('e1 | Gleamforce | idea | stat\n');
+    expect(aboutAsked[0]).toContain('e1 | Gleamforce | idea | stat | current:');
+  });
+
+  it.each([
+    [6, 1],
+    [2, 1],
+    [6, 2],
+    [2, 2],
+  ])('refreshes a concept on sufficient new mentions without new facts (%i mentions, importance %i)', async (added, importance) => {
+    const sentences = book([
+      'Tavia found a Vellin weave.',
+      'Tavia carried the Vellin weave.',
+      'Tavia stored the Vellin weave.',
+      'Tavia used the Vellin weave to keep frost off the gate.',
+      ...Array<string>(added - 1).fill('Tavia kept the Vellin weave in place.'),
+    ]);
+    const mentions = sentences.map(({ ordinal }) => ordinal);
+    const units = [unitOf([1, 2, 3]), { ...unitOf(mentions.slice(3)), id: 'u2', index: 1 }];
+    const { result, aboutAsked } = await gapRun(
+      sentences,
+      units,
+      [entity('e1', 'idea', mentions, { name: 'Vellin weave', importance }), entity('e2', 'character', mentions, { name: 'Tavia', importance: 3 })],
+      {
+        writesAbout: (slot) => slot.member === null && slot.head.importance <= 2,
+        notes: (user) => ({
+          notes: user.includes('keep frost off') ? { e1: { note: 'Tavia uses the weave to keep frost off the gate.', n: [4] } } : { e1: null },
+          summary: 'Tavia worked by the gate.',
+        }),
+        describe: () => ({ e1: { about: 'A weave that Tavia found.', n: [1] } }),
+        about: () => ({ e1: { about: 'A weave that keeps frost off the gate.', n: [4] } }),
+      },
+    );
+    expect(result.state.aboutAt('e1', 3)).toBe('A weave that Tavia found.');
+    expect(result.state.factsOf('e1')).toEqual([]);
+    expect(result.state.timeline.get('e1')?.at(-1)?.value.note).toBe('Tavia uses the weave to keep frost off the gate.');
+    expect(aboutAsked).toHaveLength(added === 6 ? 1 : 0);
+    if (added === 6) {
+      expect(aboutAsked[0]).toContain('new: Tavia uses the weave to keep frost off the gate.');
+      expect(result.state.about.get('e1')?.at(-1)).toEqual({ unit: units[1], value: 'A weave that keeps frost off the gate.' });
+    }
+  });
 
   it('describes only the entries with no accepted is, gloss or line, a rejected is included', async () => {
     const sentences = book(['Piper and Fern examine Mana Sight.', '[Mana Sight: Reveals nearby sources of magic.]', 'Fern is a merchant of Hollow.']);
@@ -1225,7 +1746,7 @@ describe('describe step for entries left without a line', () => {
     expect(asked[0]).not.toMatch(/^e3 /m);
     expect(result.state.currentAbout('e1')).toBe('A pathfinder.');
     expect(result.state.currentAbout('e2')).toBe('A merchant of Hollow.');
-    expect(result.state.currentAbout('e3')).toBe('Concept: Reveals nearby sources of magic.');
+    expect(result.state.currentAbout('e3')).toBe('Reveals nearby sources of magic.');
     expect(describe.record.counts).toEqual({ 'describe:gap': 1 });
   });
 
@@ -1376,10 +1897,81 @@ function denseHarness(sentences: Sentence[]) {
           ),
         );
       };
-    return runDense({ entities, units, sentences, mode: 'fiction', ask, askAbout: ask, ...steps, writesAbout: () => false, ...options });
+    return runDense({
+      entities,
+      units,
+      sentences,
+      mode: 'fiction',
+      ask,
+      askWrite: ask,
+      askAbout: ask,
+      ...steps,
+      writesAbout: () => false,
+      ...options,
+    });
   };
   return { steps, run };
 }
+
+describe('repeated status facts', () => {
+  it('asks for a now line once when later units repeat the same status fact', async () => {
+    const sentences = book(['Viv lives at the old mill.', 'Viv lives at the old mill still.']);
+    const viv = entity('v', 'character', [1, 2], { name: 'Viv', names: [{ text: 'Viv', ordinal: 1 }] });
+    const seen: { kind: string; user: string; maxOutputTokens: number }[] = [];
+    const units = [unitOf([1]), { ...unitOf([2]), id: 'u2', index: 1 }];
+    await denseHarness(sentences).run(
+      [viv],
+      units,
+      (kind, user) => {
+        if (kind === 'facts')
+          return { identity: [{ id: 'v', fact: 'Lives at the old mill.', kind: 'status', n: [Number(/\[(\d+)\]/.exec(user)?.[1])] }] };
+        if (kind === 'notes') return { notes: {}, summary: 'Viv is at the mill.' };
+        if (kind === 'scene') return { pov: null };
+        return user.includes('\nnow: ') ? { now: { v: 'Based at the old mill.' } } : {};
+      },
+      undefined,
+      seen,
+      [],
+      { writesAbout: (slot) => slot.id === 'v' },
+    );
+    expect(seen.filter(({ user }) => user.includes('\nnow: '))).toHaveLength(1);
+  });
+});
+
+describe('notes on a thing in a run', () => {
+  const sentences = book(['Tavia found the ember key.', 'The ember key was warm.', 'Tavia kept the ember key.', 'Tavia slept.']);
+  const entities = () => [
+    entity('e1', 'character', [1, 3, 4], { name: 'Tavia', importance: 3 }),
+    entity('e2', 'object', [1, 2, 3], { name: 'ember key', importance: 3 }),
+  ];
+  const first = {
+    notes: { e1: { note: 'Tavia finds a key.', n: [1] }, e2: { note: 'The ember key is warm.', n: [2] } },
+    summary: 'Tavia finds a key.',
+  };
+
+  it.each([
+    ['drops it when the rewrite still names no one', 'The ember key stays warm.', null],
+    ['keeps the rewrite that names who acts', 'Tavia keeps the ember key.', 'Tavia keeps the ember key.'],
+  ])('asks a note on an object naming no one once more and %s', async (_, rewrite, kept) => {
+    const { run, steps } = denseHarness(sentences);
+    const seen: { kind: string; user: string; maxOutputTokens: number }[] = [];
+    const result = await run(
+      entities(),
+      [unitOf([1, 2, 3, 4])],
+      (kind, user) => (kind !== 'notes' ? {} : user.includes('Answer only') ? { notes: { e2: { note: rewrite, n: [3] } } } : first),
+      () => 0,
+      seen,
+    );
+    const asks = seen.filter((call) => call.kind === 'notes');
+    expect(asks).toHaveLength(2);
+    expect(asks[0].user).toMatch(/Required: e1$/);
+    expect(asks[1].user).toContain(`- e2: "The ember key is warm." (${NO_ACTOR})`);
+    expect(result.state.timeline.get('e1')?.[0].value.note).toBe('Tavia finds a key.');
+    expect(result.state.timeline.get('e2')?.[0]?.value.note ?? null).toBe(kept);
+    expect(steps.notes.record.firstTry).toMatchObject({ 'notes:no-actor': 1 });
+    if (!kept) expect(steps.notes.record.rejected).toMatchObject({ 'notes:rewrite-failed': 1 });
+  });
+});
 
 describe('front matter and first-person narration', () => {
   const noFacts = { identity: [], abilities: [], merges: [] };
@@ -1413,6 +2005,14 @@ describe('front matter and first-person narration', () => {
     expect(detector.mentions(unitOf([2]), continued)).toEqual([]);
     const first = book(['I opened my book.', 'The lock clicked.', '“I did too.”', 'I saw myself in the glass.']);
     expect(new NarrationDetector().mentions(unitOf([1, 2, 3, 4]), first)).toEqual([1, 2, 4]);
+  });
+
+  it('never counts the "I" of an inset letter as narration', () => {
+    const letter = book(['I opened the envelope.', 'I write to you from the lighthouse.', 'I miss the harbour.', 'I folded it away.']);
+    letter[1].inset = true;
+    letter[2].inset = true;
+    expect(new NarrationDetector().mentions(unitOf([1, 2, 3, 4]), letter)).toEqual([1, 4]);
+    expect(new NarrationDetector().mentions(unitOf([2, 3]), letter)).toEqual([]);
   });
 
   it('credits the anonymous narrator in each first-person chunk and keeps that entry when nobody is named', async () => {
@@ -1459,55 +2059,85 @@ describe('front matter and first-person narration', () => {
     expect(readDescription).not.toHaveBeenCalled();
   });
 
-  it.each([false, true])('joins the anonymous entry only after earlier first-person votes (blurb hint: %s)', async (hinted) => {
-    const sentences = book(
-      Array.from({ length: 301 }, (_, index) =>
-        index === 0 ? 'I, Viv, turned the key.' : index === 1 ? 'My sister calls me Vee.' : 'I waited by my window.',
-      ),
-    );
-    const viv = entity('v', 'character', [1, 2], {
-      name: 'Viv',
-      names: [
-        { text: 'Viv', ordinal: 1 },
-        { text: 'Vee', ordinal: 2 },
-      ],
-    });
-    const ordinals = sentences.map(({ ordinal }) => ordinal);
-    const units = [
-      { ...unitOf(ordinals.slice(0, 200)), sectionEnd: false },
-      { ...unitOf(ordinals.slice(200)), id: 'u2', index: 1 },
-    ];
+  const oneSentenceUnits = (sentences: Sentence[], section: (index: number) => number = () => 0) =>
+    sentences.map(({ ordinal }, index) => ({ ...unitOf([ordinal]), id: `u${ordinal}`, index, s: section(index) }));
+  const narratorLine = (user: string) => /quoted writing refers to (\S+)\./.exec(user)?.[1] ?? null;
+
+  it('never names the narrator on a vote or two, even when the blurb names them', async () => {
+    const sentences = book(['I, Viv, turned the key.', 'I waited by my window.', 'I waited again.']);
+    const viv = entity('v', 'character', [1], { name: 'Viv', names: [{ text: 'Viv', ordinal: 1 }] });
     const seen: { kind: string; user: string; maxOutputTokens: number }[] = [];
-    const readDescription = vi.fn(() => Promise.resolve(hinted ? '<p>Vee and UnseenBlurbName face the world.</p>' : null));
     const result = await denseHarness(sentences).run(
+      [viv],
+      oneSentenceUnits(sentences),
+      (kind) => (kind === 'scene' ? { pov: 'v' } : kind === 'notes' ? { notes: {}, summary: 'Someone waits.' } : noFacts),
+      undefined,
+      seen,
+      [],
+      { readDescription: () => Promise.resolve('<p>Viv faces the world.</p>') },
+    );
+    expect(result.cast.merges).toEqual([]);
+    expect(result.cast.heads.map(({ name }) => name)).toEqual(['Viv', 'Narrator']);
+    expect(seen.filter(({ kind }) => kind === 'notes').map(({ user }) => narratorLine(user))).toEqual(['narrator', 'narrator', 'narrator']);
+  });
+
+  it('joins the stand-in where six votes in short sections settle the narrator, and credits later chunks to them', async () => {
+    const sentences = book(Array.from({ length: 9 }, (_, index) => (index ? 'I waited by my window.' : 'I, Viv, turned the key.')));
+    const viv = entity('v', 'character', [1], { name: 'Viv', names: [{ text: 'Viv', ordinal: 1 }] });
+    const seen: { kind: string; user: string; maxOutputTokens: number }[] = [];
+    const result = await denseHarness(sentences).run(
+      [viv],
+      oneSentenceUnits(sentences, (index) => index),
+      (kind) => (kind === 'scene' ? { pov: 'v' } : kind === 'notes' ? { notes: {}, summary: 'Someone waits.' } : noFacts),
+      undefined,
+      seen,
+    );
+    expect(result.cast.merges).toEqual([expect.objectContaining({ rule: 'narrator', ordinal: NARRATOR_SETTLED_VOTES })]);
+    expect(result.cast.heads).toMatchObject([{ name: 'Viv', count: 9 }]);
+    // A unit launches once the unit two before it is done, so the sixth vote first reaches the eighth unit's prompt.
+    const owners = seen.filter(({ kind }) => kind === 'notes').map(({ user }) => narratorLine(user));
+    expect(owners).toEqual([...Array<string>(NARRATOR_SETTLED_VOTES + 1).fill('narrator'), 'v', 'v']);
+  });
+
+  it('credits a long section to its own narrator when two narrators take turns', async () => {
+    const sentences = book(Array.from({ length: 12 }, (_, index) => (index < 6 ? `I, Ana, kept watch ${index}.` : `I, Bo, kept watch ${index}.`)));
+    const ana = entity('a', 'character', [1, 2, 3, 4, 5, 6], { name: 'Ana', names: [{ text: 'Ana', ordinal: 1 }] });
+    const bo = entity('b', 'character', [7, 8, 9, 10, 11, 12], { name: 'Bo', names: [{ text: 'Bo', ordinal: 7 }] });
+    const seen: { kind: string; user: string; maxOutputTokens: number }[] = [];
+    await denseHarness(sentences).run(
+      [ana, bo],
+      oneSentenceUnits(sentences, (index) => (index < 6 ? 0 : 1)),
+      (kind, user) =>
+        kind === 'scene' ? { pov: user.includes('I, Ana') ? 'a' : 'b' } : kind === 'notes' ? { notes: {}, summary: 'Someone keeps watch.' } : noFacts,
+      undefined,
+      seen,
+    );
+    const owners = seen.filter(({ kind }) => kind === 'notes').map(({ user }) => narratorLine(user));
+    expect(owners.slice(4, 6)).toEqual(['a', 'a']);
+    expect(owners.slice(10)).toEqual(['b', 'b']);
+  });
+
+  it('reads first-person chunks side by side before the narrator is settled', async () => {
+    const sentences = book(Array.from({ length: 12 }, (_, index) => (index ? 'I waited by the window again.' : 'I am Viv and I wait.')));
+    const viv = entity('v', 'character', [1], { name: 'Viv', names: [{ text: 'Viv', ordinal: 1 }] });
+    const units = sentences.map(({ ordinal }, index) => ({ ...unitOf([ordinal]), id: `u${ordinal}`, index }));
+    let open = 0;
+    const overlap: number[] = [];
+    await denseHarness(sentences).run(
       [viv],
       units,
       (kind, user) => {
         const start = Number(user.match(/\[(\d+)\]/)?.[1]);
-        if (kind === 'scene') return { pov: 'v' };
         if (kind === 'notes') {
-          const id = start === 1 || (!hinted && start === 101) ? 'narrator' : 'v';
-          return { notes: { narrator: null, v: null, [id]: { note: 'Waits by the window.', n: [start] } }, summary: 'Someone waits.' };
+          overlap[start] = ++open;
+          setTimeout(() => open--, 5);
+          return { notes: {}, summary: 'Viv waits.' };
         }
-        return noFacts;
+        return kind === 'scene' ? { pov: 'v' } : noFacts;
       },
-      (kind) => (kind === 'scene' ? 3 : 0),
-      seen,
-      [],
-      { readDescription },
+      (kind) => (kind === 'notes' ? 5 : 1),
     );
-    const last = result.cast.heads[0];
-    expect(result.cast.heads).toEqual([last]);
-    expect(last).toMatchObject({ name: 'Viv', count: 301, ordinals });
-    expect(result.cast.merges).toEqual([expect.objectContaining({ rule: 'narrator', ordinal: hinted ? 100 : 200, head: last })]);
-    const notes = seen.filter(({ kind, user }) => kind === 'notes' && !user.includes('Answer only'));
-    expect(notes[0].user).toContain('outside dialogue refers to narrator.');
-    expect(notes[1].user).toContain(`outside dialogue refers to ${hinted ? 'v' : 'narrator'}.`);
-    expect(notes[2].user).toContain('outside dialogue refers to v.');
-    expect(notes[2].user).toContain('v | Viv | Vee | character | 101');
-    expect(result.state.timeline.get('v')?.at(-1)?.value).toMatchObject({ note: 'Waits by the window.', at: 201 });
-    expect(readDescription).toHaveBeenCalledTimes(1);
-    expect(seen.some(({ user }) => user.includes('UnseenBlurbName'))).toBe(false);
+    expect(Math.max(...overlap.slice(1, NARRATOR_SETTLED_VOTES + 1).filter(Boolean))).toBeGreaterThan(1);
   });
 
   it('also credits narration and accepts a named point of view in nonfiction', async () => {
@@ -1530,8 +2160,8 @@ describe('front matter and first-person narration', () => {
       [],
       { mode: 'nonfiction' },
     );
-    expect(result.cast.merges).toMatchObject([{ rule: 'narrator', ordinal: 2 }]);
-    expect(result.cast.heads).toMatchObject([{ name: 'Viv', count: 2 }]);
+    expect([...result.pov.values()]).toEqual(['v', 'v']);
+    expect(result.cast.heads.map(({ name }) => name)).toEqual(['Viv', 'Narrator']);
   });
 
   it('cannot name the narrator from a blurb or third-person POV alone', async () => {
@@ -1563,7 +2193,7 @@ describe('front matter and first-person narration', () => {
     expect(result.state.currentAbout('narrator')).toBe('The narrator keeps a diary.');
   });
 
-  it('allows the narrator phrase only in the anonymous entry description and about line', async () => {
+  it('allows the narrator phrase only in the anonymous entry description, about line and note', async () => {
     const names = { visible: [], later: [] };
     expect(descriptionProblem('The narrator keeps a diary.', names, ['Narrator'], 12, true)).toBeNull();
     expect(descriptionProblem('The narrator keeps a diary.', names, ['Viv'], 12)).toBe('narrator');
@@ -1594,7 +2224,7 @@ describe('front matter and first-person narration', () => {
     );
     expect(result.state.currentAbout('narrator')).toBe('The narrator keeps a diary.');
     expect(result.state.currentAbout('v')).toBeNull();
-    expect(result.state.timeline.get('narrator')?.[0].value.note).toBeNull();
+    expect(result.state.timeline.get('narrator')?.[0].value.note).toBe('The narrator writes.');
   });
 });
 
@@ -1602,11 +2232,12 @@ describe('dense run order and context', () => {
   it('carries a POV through a unit past a failed scene call, and never into the next unit', async () => {
     const texts = Array.from({ length: 301 }, () => 'Piper walked.');
     texts[0] = texts[100] = 'Piper and Fern meet Rowan.';
+    texts[200] = 'Piper and Fern walked.';
     const sentences = book(texts);
     const all = Array.from({ length: 301 }, (_, index) => index + 1);
     const entities = [
       entity('e1', 'character', all, { name: 'Piper', importance: 3 }),
-      entity('e2', 'character', [1, 101], { name: 'Fern', importance: 3 }),
+      entity('e2', 'character', [1, 101, 201], { name: 'Fern', importance: 3 }),
       entity('e3', 'character', [1, 101], { name: 'Rowan', importance: 3 }),
     ];
     const units = [
@@ -1848,53 +2479,291 @@ describe('scene same votes', () => {
 });
 
 describe('window links', () => {
-  it('carries windows across units of one section, keeps prior admission times, and uses final counts and scores', () => {
-    const cast = new PassCast([entity('a', 'character', [2, 5]), entity('b', 'character', [3, 6]), entity('c', 'place', [6])]);
-    const first = unitOf([1, 2, 3], false);
-    const second = { ...unitOf([4, 5, 6]), id: 'u2', index: 1 };
-    const third = { ...unitOf([7, 8, 9]), id: 'u3', index: 2, s: 1 };
-    expect(windowLinks(cast, [first])).toEqual([{ a: 'a', b: 'b', count: 2, score: 1, from: 3, until: null }]);
-    const links = windowLinks(cast, [first, second]);
-    expect(links).toEqual([
-      { a: 'a', b: 'b', count: 5, score: 0.833, from: 3, until: null },
-      { a: 'a', b: 'c', count: 5, score: 0.833, from: 6, until: null },
-      { a: 'b', b: 'c', count: 6, score: 1, from: 6, until: null },
-    ]);
-    expect(windowLinks(cast, [first, second, third])).toEqual(links);
+  const ordinals = (first: number, last: number) => Array.from({ length: last - first + 1 }, (_, index) => first + index);
+  const episodes = (first: number, count: number) => Array.from({ length: count }, (_, index) => first + index * 30);
+  const background = entity('background', 'idea', episodes(101, 42));
+  const throughBackground = background.ordinals.at(-1)!;
+
+  it('counts a single shared sentence as one episode and admits a relation even with low lift', () => {
+    const a = entity('a', 'character', [25]);
+    const b = entity('b', 'character', [25]);
+    const cast = new PassCast([a, b]);
+    const units = [unitOf(ordinals(1, 30))];
+    expect(windowLinks(cast, units)).toEqual([]);
+    expect(windowLinks(cast, units, [{ a, b, cite: 25 }])).toMatchObject([{ count: 1 }]);
   });
 
-  it('caps each ranking and admits a pair promoted by a later section only at that checkpoint', () => {
-    const entities = Array.from({ length: LINK_CAP + 2 }, (_, index) =>
-      entity(`e${index}`, 'character', index === 0 || index === 16 ? [index + 2, 30] : [index + 2]),
-    );
-    const first = unitOf(Array.from({ length: 26 }, (_, index) => index + 1));
-    const second = { ...unitOf([27, 28, 29, 30]), id: 'u2', s: 1 };
-    const cast = new PassCast(entities);
-    const before = windowLinks(cast, [first]);
-    const after = windowLinks(cast, [first, second]);
-    expect(before).toHaveLength((entities.length * (entities.length - 1)) / 2 - 1);
-    expect(before.some(({ a, b }) => a === 'e0' && b === 'e16')).toBe(false);
-    expect(after.at(-1)).toMatchObject({ a: 'e0', b: 'e16', from: 30, count: 6 });
-    const admission = ({ a, b, from }: (typeof before)[number]) => [a, b, from];
-    expect(after.filter(({ from }) => from < 27).map(admission)).toEqual(before.map(admission));
+  it('links entries named together once when later background episodes raise lift', () => {
+    const cast = new PassCast([entity('a', 'character', [1]), entity('b', 'character', [1]), background]);
+    const first = unitOf(ordinals(1, 100));
+    const second = { ...unitOf(ordinals(101, 110)), id: 'u2', index: 1 };
+    const third = { ...unitOf(ordinals(111, throughBackground)), id: 'u3', index: 2 };
+
+    expect(windowLinks(cast, [first])).toEqual([]);
+    expect(windowLinks(cast, [first, second])).toEqual([{ a: 'a', b: 'b', count: 1, score: 1, from: 110, until: null }]);
+    expect(windowLinks(cast, [first, second, third])).toMatchObject([{ count: 1, from: 110 }]);
   });
 
-  it('keeps a pair that busier hub partners push out of both raw rankings', () => {
-    const hubs = Array.from({ length: LINK_CAP + 1 }, (_, index) =>
-      entity(`h${index}`, 'idea', Array.from({ length: 20 }, (_, at) => at + 1).concat(Array.from({ length: 10 }, (_, at) => at + 21))),
+  it('does not link rare entries named in adjacent sentences once', () => {
+    const cast = new PassCast([entity('a', 'character', [1]), entity('b', 'character', [2]), background]);
+    expect(windowLinks(cast, [unitOf(ordinals(1, throughBackground))])).toEqual([]);
+  });
+
+  it('requires lift for an item named once in the same sentence as a hub with 40 episodes', () => {
+    const hub = entity('hub', 'character', episodes(1, 40));
+    const item = entity('item', 'object', [1]);
+    expect(windowLinks(new PassCast([hub, item]), [unitOf(ordinals(1, hub.ordinals.at(-1)!))])).toEqual([]);
+  });
+
+  it.each([
+    {
+      line: '[Mana manipulation: Beginner 8 improves focus',
+      expected: [{ a: 'beginner', b: 'mana', count: 0, score: 0, from: throughBackground, until: null }],
+    },
+    { line: 'Mana manipulation has reached Beginner 8', expected: [] },
+  ])('uses only same-line card evidence on quiet lines: $line', ({ line, expected }) => {
+    const sentences = book([line, 'The sword was sharp.']);
+    const cast = new PassCast([entity('mana', 'idea', [1, 20]), entity('beginner', 'idea', [1]), entity('sword', 'object', [2]), background]);
+    const text = (ordinal: number) => sentences[ordinal - 1]?.text ?? 'They walked on.';
+
+    expect(
+      windowLinks(
+        cast,
+        [unitOf(ordinals(1, throughBackground))],
+        [],
+        (ordinal) => systemLine(text(ordinal)),
+        (ordinal) => cardLine(text(ordinal)),
+      ),
+    ).toEqual(expected);
+  });
+
+  it('blocks a shared prose sentence when an entry is stat-heavy', () => {
+    const cast = new PassCast([entity('a', 'character', [1]), entity('stat', 'idea', ordinals(1, 10)), background]);
+    const units = [unitOf(ordinals(1, throughBackground))];
+    expect(windowLinks(cast, units, [], (ordinal) => ordinal >= 8 && ordinal <= 10)).toEqual([]);
+    expect(windowLinks(cast, units, [], (ordinal) => ordinal >= 9 && ordinal <= 10)).toMatchObject([{ a: 'a', b: 'stat', count: 1 }]);
+  });
+
+  it('caps single links by lift and breaks ties by earliest evidence', () => {
+    const shared = [1, 6, 11, 16, 21];
+    const hub = entity('hub', 'idea', shared);
+    const partners = shared.map((ordinal, index) => entity(`partner${index}`, 'idea', index % 2 === 0 ? [ordinal, 40 + index * 5] : [ordinal]));
+    const links = windowLinks(new PassCast([hub, ...partners, background]), [unitOf(ordinals(1, throughBackground))]);
+
+    expect(links).toHaveLength(SINGLE_LINK_CAP);
+    expect(links).toMatchObject([0, 1, 3].map((index) => ({ a: 'hub', b: `partner${index}`, count: 1 })));
+  });
+
+  it('fills the cap with repeated links before considering a higher-lift single link', () => {
+    const partners = Array.from({ length: LINK_CAP }, (_, index) => entity(`partner${index}`, 'idea', episodes(1 + index * 90, 3)));
+    const single = entity('single', 'idea', [1351]);
+    const hub = entity('hub', 'idea', [...partners.flatMap((partner) => partner.ordinals.slice(0, 2)), ...single.ordinals]);
+    const later = entity('later', 'idea', episodes(1500, 72));
+    const units = [unitOf(ordinals(1, later.ordinals.at(-1)!))];
+
+    expect(windowLinks(new PassCast([hub, single, ...partners.slice(1), later]), units)).toContainEqual(
+      expect.objectContaining({ a: 'hub', b: 'single', count: 1 }),
     );
+    expect(windowLinks(new PassCast([hub, single, ...partners, later]), units)).toMatchObject(
+      partners.map((partner) => ({ a: 'hub', b: partner.key, count: 2 })),
+    );
+  });
+
+  it('waits for the shared sentence before linking even when lift is already high', () => {
+    const cast = new PassCast([entity('a', 'character', [1400, 1402]), entity('b', 'character', [1401, 1402]), background]);
+    const first = unitOf(ordinals(1, 1401), false);
+    const second = { ...unitOf(ordinals(1402, 1410)), id: 'u2', index: 1 };
+
+    expect(windowLinks(cast, [first])).toEqual([]);
+    expect(windowLinks(cast, [first, second])).toMatchObject([{ a: 'a', b: 'b', count: 1, from: 1410 }]);
+  });
+
+  it('admits two separate episodes on lift when their share is below the threshold', () => {
     const a = entity(
-      'za',
-      'idea',
-      Array.from({ length: 10 }, (_, at) => at + 21),
+      'a',
+      'character',
+      Array.from({ length: 14 }, (_, index) => 1 + 25 * index),
     );
-    const b = entity('zb', 'idea', [26, 27, 28, 29, 30]);
-    const units = [
-      unitOf(Array.from({ length: 20 }, (_, at) => at + 1)),
-      { ...unitOf(Array.from({ length: 10 }, (_, at) => at + 21)), id: 'u2', s: 1 },
-    ];
-    const links = windowLinks(new PassCast([...hubs, a, b]), units);
-    expect(links.some((link) => link.a === 'za' && link.b === 'zb')).toBe(true);
+    const b = entity('b', 'character', [1, 26]);
+    const background = entity(
+      'background',
+      'idea',
+      Array.from({ length: 26 }, (_, index) => 400 + 25 * index),
+    );
+    const units = [unitOf(ordinals(1, 1025))];
+
+    expect(windowLinks(new PassCast([a, b]), units)).toEqual([]);
+    expect(windowLinks(new PassCast([a, b, background]), units)).toEqual([{ a: 'a', b: 'b', count: 2, score: 1, from: 1025, until: null }]);
+    expect(windowLinks(new PassCast([a, b, background]), units, [], (ordinal) => ordinal >= 400)).toEqual([]);
+  });
+
+  it('uses the smaller side to link a character hub after three shared episodes', () => {
+    const hubEpisodes = Array.from({ length: 24 }, (_, index) => 1 + 30 * index);
+    const viv = entity('viv', 'character', hubEpisodes);
+    const undead = entity('undead', 'idea', hubEpisodes.slice(-3));
+    const cast = new PassCast([viv, undead]);
+    const first = unitOf(ordinals(1, 685), false);
+    const second = { ...unitOf(ordinals(686, 700)), id: 'u2', index: 1 };
+
+    expect(windowLinks(cast, [first])).toEqual([]);
+    expect(windowLinks(cast, [first, second])).toMatchObject([{ a: 'undead', b: 'viv', count: 3, from: 700 }]);
+  });
+
+  it('links a single dense scene once both entries have three distinct sentence hits', () => {
+    const a = entity('a', 'character', [1, 2, 3]);
+    const b = entity('b', 'character', [4, 5, 6]);
+    const cast = new PassCast([a, b]);
+    const first = unitOf(ordinals(1, 5), false);
+    const second = { ...unitOf([6, 7]), id: 'u2', index: 1 };
+
+    expect(windowLinks(cast, [first])).toEqual([]);
+    expect(windowLinks(cast, [first, second])).toMatchObject([{ a: 'a', b: 'b', count: 1, from: 7 }]);
+  });
+
+  it('does not link an item named once to a place hub mentioned everywhere', () => {
+    const through = ordinals(1, 80);
+    const palace = entity('palace', 'place', through);
+    const item = entity('sword', 'idea', [35]);
+    expect(windowLinks(new PassCast([palace, item]), [unitOf(through)])).toEqual([]);
+  });
+
+  it.each([
+    {
+      path: 'smaller side',
+      hub: Array.from({ length: 24 }, (_, index) => 1 + index * 30),
+      prose: [1, 31, 61],
+      quietMentions: [10, 40, 70],
+      end: 700,
+      count: 3,
+    },
+    { path: 'dense scene', hub: [1, 2, 3], prose: [1, 2, 3, 10, 11, 12, 13], quietMentions: [14, 15, 16], end: 16, count: 1 },
+  ])('blocks the $path path for a stat-heavy entry', ({ hub, prose, quietMentions, end, count }) => {
+    const cast = new PassCast([
+      entity('a', 'character', hub),
+      entity(
+        'stat',
+        'idea',
+        [...prose, ...quietMentions].sort((a, b) => a - b),
+      ),
+    ]);
+    const units = [unitOf(ordinals(1, end))];
+    const quiet = (ordinal: number) => quietMentions.includes(ordinal);
+    const proseOnly = new PassCast([entity('a', 'character', hub), entity('stat', 'idea', prose)]);
+
+    expect(windowLinks(proseOnly, units, [], quiet)).toMatchObject([{ count }]);
+    expect(windowLinks(cast, units, [], quiet)).toEqual([]);
+  });
+
+  it('reevaluates the quiet share when prose mentions leave the episode counts unchanged', () => {
+    const a = entity('a', 'character', [1, 2, 3]);
+    const stat = entity('stat', 'idea', [1, 2, 3, 7, 8, 9, 10]);
+    const cast = new PassCast([a, stat]);
+    const quiet = (ordinal: number) => ordinal === 7 || ordinal === 8;
+    const first = unitOf(ordinals(1, 9), false);
+    const second = { ...unitOf([10, 11]), id: 'u2', index: 1 };
+
+    expect(windowLinks(cast, [first], [], quiet)).toEqual([]);
+    expect(windowLinks(cast, [first, second], [], quiet)).toMatchObject([{ count: 1, from: 11 }]);
+  });
+
+  it('ignores co-mentions on status-screen lines', () => {
+    const sentences = book(ordinals(1, 60).map(() => 'They walked on.'));
+    sentences[0].text = 'Mara took the sword.';
+    sentences[25].text = 'MARA EQUIPPED THE SWORD!';
+    sentences[50].text = ' [Equipment: Mara, sword]';
+    const mara = entity('mara', 'character', [1, 26, 51]);
+    const sword = entity('sword', 'idea', [1, 26, 51]);
+    const cast = new PassCast([mara, sword]);
+    const units = [unitOf(ordinals(1, 60))];
+    const quiet = (ordinal: number) => systemLine(sentences[ordinal - 1].text);
+
+    expect(windowLinks(cast, units)).toMatchObject([{ count: 3 }]);
+    expect(windowLinks(cast, units, [], (ordinal) => ordinal === 51)).toMatchObject([{ count: 2 }]);
+    expect(windowLinks(cast, units, [], quiet)).toEqual([]);
+    expect(windowLinks(cast, units, [{ a: mara, b: sword, cite: 1 }], quiet)).toMatchObject([{ count: 1 }]);
+  });
+
+  it('uses a strict majority threshold above 60 percent of letters, including Unicode capitals', () => {
+    expect(systemLine('ÄÖÜab! 123')).toBe(false);
+    expect(systemLine('ÄÖÜAb! 123')).toBe(true);
+    expect(systemLine('123!')).toBe(false);
+  });
+
+  it('reads status-screen stat lines as system lines and leaves prose with a colon alone', () => {
+    expect(systemLine('Acuity +1')).toBe(true);
+    expect(systemLine('Intimidation reached Beginner 2')).toBe(true);
+    expect(systemLine('Exhaustion')).toBe(true);
+    expect(systemLine('[Power: your strength and defense.')).toBe(true);
+    expect(systemLine('Her plan was simple: run.')).toBe(false);
+    expect(systemLine('Viv thought: not again.')).toBe(false);
+    expect(systemLine('Run!')).toBe(false);
+  });
+
+  it.each([
+    ['Acuity +1', true, false],
+    ['Exhaustion', true, false],
+    ['Mana manipulation has reached Beginner 8', true, false],
+    ['Mana sense: Beginner 2', true, false],
+    ['[Necrarch ravager: an extremely dangerous undead creature', false, true],
+    ['//WHY NOT USE MY RAVAGER BLADE?', false, true],
+    ['Her plan was simple: run.', false, false],
+  ] as const)('classifies stat and card lines: %s', (line, stat, card) => {
+    expect(statLine(line)).toBe(stat);
+    expect(cardLine(line)).toBe(card);
+    expect(systemLine(line)).toBe(stat || card);
+  });
+
+  it('ranks by shared episode strength before lift and breaks ties by earliest evidence', () => {
+    const through = ordinals(1, (LINK_CAP + 2) * 60);
+    const hub = entity('hub', 'idea', through);
+    const dense = entity('dense', 'idea', [1, 2, 3]);
+    const leaves = Array.from({ length: LINK_CAP + 1 }, (_, index) => entity(`leaf${index}`, 'idea', [index * 60 + 61, index * 60 + 91]));
+    const links = windowLinks(new PassCast([hub, dense, ...leaves]), [unitOf(through)]);
+
+    expect(links).toHaveLength(LINK_CAP);
+    expect(links.map(({ b }) => b)).toEqual(leaves.slice(0, LINK_CAP).map(({ key }) => key));
+  });
+
+  it('leaves a slot open when the other endpoint is already full', () => {
+    let next = 1;
+    const scenes = (count: number) => {
+      const start = next;
+      next += count * 30;
+      return Array.from({ length: count }, (_, index) => start + index * 30);
+    };
+    const aLeaves = Array.from({ length: LINK_CAP }, (_, index) => entity(`leaf-a${index}`, 'idea', scenes(3)));
+    const bLeaves = Array.from({ length: LINK_CAP - 1 }, (_, index) => entity(`leaf-b${index}`, 'idea', scenes(3)));
+    const blocked = scenes(8);
+    const open = [next, next + 1, next + 2];
+    const a = entity('a', 'character', [...aLeaves.flatMap((leaf) => leaf.ordinals), ...blocked]);
+    const b = entity('b', 'character', [...bLeaves.flatMap((leaf) => leaf.ordinals), ...blocked, ...open]);
+    const c = entity('c', 'idea', open);
+    const links = windowLinks(new PassCast([a, b, c, ...aLeaves, ...bLeaves]), [unitOf(ordinals(1, next + 2))]);
+
+    expect(links.filter((link) => link.a === 'a')).toHaveLength(LINK_CAP);
+    expect(links.filter((link) => link.a === 'b')).toHaveLength(LINK_CAP);
+    expect(links).not.toContainEqual(expect.objectContaining({ a: 'a', b: 'b' }));
+    expect(links).toContainEqual(expect.objectContaining({ a: 'b', b: 'c' }));
+  });
+
+  it('uses the previous co-mention to separate episodes', () => {
+    const a = entity('a', 'character', [1, 25, 49, 74]);
+    const b = entity('b', 'character', [1, 25, 49, 74]);
+    expect(windowLinks(new PassCast([a, b]), [unitOf(ordinals(1, 74))])).toMatchObject([{ count: 2, from: 74 }]);
+  });
+
+  it('admits a link at the qualifying unit end, carrying the co-mention window across units in one section', () => {
+    const a = entity('a', 'character', [2, 27, 56]);
+    const b = entity('b', 'character', [5, 30, 59]);
+    const cast = new PassCast([a, b]);
+    const first = unitOf(ordinals(1, 2), false);
+    const second = { ...unitOf(ordinals(3, 27), false), id: 'u2', index: 1 };
+    const third = { ...unitOf(ordinals(28, 32), false), id: 'u3', index: 2 };
+    const fourth = { ...unitOf(ordinals(33, 60)), id: 'u4', index: 3 };
+
+    expect(windowLinks(cast, [first, second])).toEqual([]);
+    expect(windowLinks(cast, [first, second, third])).toEqual([{ a: 'a', b: 'b', count: 2, score: 1, from: 32, until: null }]);
+    expect(windowLinks(cast, [first, second, third, fourth])).toEqual([{ a: 'a', b: 'b', count: 3, score: 1, from: 32, until: null }]);
   });
 
   it('ties a nonfiction chapter title to its section headings, cited at each section heading', () => {
@@ -1927,17 +2796,22 @@ describe('window links', () => {
     ]);
   });
 
-  it('uses 25 body sentences, irrespective of the original ordinal gaps', () => {
-    const a = entity('a', 'character', [12]);
-    const b = entity('b', 'character', [58]);
-    const c = entity('c', 'character', [62]);
-    const unit = unitOf(Array.from({ length: 31 }, (_, index) => 2 * (index + 1)));
-    const links = windowLinks(new PassCast([a, b, c]), [unit]);
-    expect(links.find((link) => link.a === 'a' && link.b === 'b')).toMatchObject({ count: 2, from: 62 });
-    expect(links.some((link) => link.a === 'a' && link.b === 'c')).toBe(false);
+  it('measures distance in body sentences and clears the co-mention window at a section end', () => {
+    const a = entity('a', 'character', [2, 56]);
+    const b = entity('b', 'character', [8, 58]);
+    const first = unitOf(ordinals(1, 28).map((index) => 2 * index));
+    const second = { ...unitOf([58]), id: 'u2', index: 1, s: 1 };
+    const cast = new PassCast([a, b]);
+    expect(windowLinks(cast, [first, second], [{ a, b, cite: 8 }])).toMatchObject([{ count: 1 }]);
+    expect(
+      windowLinks(cast, [
+        { ...first, sectionEnd: false },
+        { ...second, s: 0 },
+      ]),
+    ).toMatchObject([{ count: 2, from: 58 }]);
   });
 
-  it('emits a cited relation with zero windows and never crosses a section or counts a member before its join', () => {
+  it('emits a cited relation without episodes or retroactive alias mentions', () => {
     const a = entity('a', 'character', [1]);
     const b = entity('b', 'character', [5]);
     const alias = entity('alias', 'character', [4]);

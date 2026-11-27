@@ -59,12 +59,21 @@ export function majorityKind(votes: Partial<Record<BookKnowledgeKind, number>>):
   return top && votes[top]! >= 2 && 5 * votes[top]! >= 2 * total ? top : null;
 }
 
-export function closeTopTwo(votes: Partial<Record<BookKnowledgeKind, number>>): boolean {
-  const counts = KINDS.map((kind) => votes[kind] ?? 0)
-    .filter(Boolean)
-    .sort((a, b) => b - a);
-  const total = counts.reduce((sum, count) => sum + count, 0);
-  return counts.length >= 2 && counts[0] - counts[1] <= 0.1 * total;
+export function closeTopTwo(votes: Partial<Record<BookKnowledgeKind, number>>, among?: BookKnowledgeKind): boolean {
+  const ordered = KINDS.filter((kind) => votes[kind]).sort((a, b) => votes[b]! - votes[a]!);
+  const [first, second] = ordered;
+  if (!second || (among && first !== among && second !== among)) return false;
+  const total = ordered.reduce((sum, kind) => sum + votes[kind]!, 0);
+  return votes[first]! - votes[second]! <= 0.1 * total;
+}
+
+/**
+ * The mentions that are the name itself, not part of a longer name around it: "Rell" inside "the Rell Engine" carries that
+ * name's kind label. A name met only inside longer ones keeps them all, the longest match being the only evidence there is.
+ */
+export function ownMentions<T extends Pick<Mention, 'nested'>>(mentions: readonly T[]): T[] {
+  const own = mentions.filter((mention) => !mention.nested);
+  return own.length ? own : [...mentions];
 }
 
 // Bench P0 (kinds_v5 decide, rules J1, J4, R5, R2, R3). Only votes whose window ended by the cut-off count.
@@ -74,9 +83,10 @@ export function decideKind(
   junkKeys: Set<string>,
 ): KindDecision {
   const displayLower = term.displayName === term.displayName.toLowerCase() && term.displayName !== term.displayName.toUpperCase();
-  const mentions: Mention[] = displayLower
+  const counted: Mention[] = displayLower
     ? term.mentions.filter((m) => m.ordinal <= cutoff)
     : term.mentions.filter((m) => m.ordinal <= cutoff && /^\p{Lu}/u.test(m.alias));
+  const mentions = ownMentions(counted);
   const n = mentions.length;
   const raw = new Map<number, number>();
   const votes: Partial<Record<BookKnowledgeKind, number>> = {};
@@ -100,8 +110,8 @@ export function decideKind(
   }
   const decision: KindDecision = { kind: null, subtype: null, rule: 'R5 none', votes, mentions: n };
   if (junkKeys.has(term.key)) return { ...decision, kind: 'junk', rule: 'J1 metadata' };
-  if (n && bracket >= 0.6 * n && term.key.split(/[\s-]+/).every((word) => !word || isCommon(word)))
-    return { ...decision, kind: 'junk', rule: 'J4 bracket label' };
+  // A bracketed label of plain words is a status-line fragment or a skill ("[Power Strike]"); the kind review tells them apart.
+  if (n && bracket >= 0.6 * n && term.key.split(/[\s-]+/).every((word) => !word || isCommon(word))) return { ...decision, rule: 'J4 bracket label' };
   let kind = majorityKind(votes);
   if (!kind) return decision;
   decision.kind = kind;

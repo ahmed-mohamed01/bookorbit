@@ -6,7 +6,14 @@ import { namedCharacter, NARRATOR_ID, type PassCast } from '../pass/pass-cast';
 import type { PassUnit } from '../pass/pass-units';
 
 export const FIRST_PERSON_PER_THOUSAND = 20;
-export const NARRATOR_MIN_VOTES = 2;
+/**
+ * Chunk votes, and a lead over every rival, after which the book's narrator is fixed and the stand-in joins them. The blurb
+ * counts toward the lead only, so it never names a narrator on fewer real votes.
+ */
+export const NARRATOR_SETTLED_VOTES = 6;
+export const NARRATOR_SETTLED_LEAD = 3;
+/** Votes a section needs, all for one name, before its own first-person chunks are credited to that name. */
+export const NARRATOR_SECTION_VOTES = 3;
 const FIRST_PERSON = /^(?:I(?:['’](?:m|ve|d|ll))?|me|my|mine|myself)$/i;
 const NARRATOR_KEY = 'xray:narrator';
 const WORD_OR_QUOTE = /\p{L}+(?:['’]\p{L}+)*|\p{N}+|["“”'‘’«»]/gu;
@@ -22,7 +29,7 @@ export class NarrationDetector {
     let firstPerson = 0;
     for (const ordinal of chunk.ordinals) {
       const sentence = sentences[ordinal - 1];
-      if (sentence.heading) continue;
+      if (sentence.heading || sentence.inset) continue;
       if (sentence.spineIndex !== this.spine) this.close = null;
       const newParagraph = sentence.spineIndex !== this.spine || sentence.paragraphIndex !== this.paragraph;
       this.spine = sentence.spineIndex;
@@ -52,8 +59,10 @@ const namedBy = (entity: XrayEntity, ordinal: number) =>
 
 export class NarratorVotes {
   private readonly votes = new Map<XrayEntity, number>();
+  private readonly sections = new Map<number, Map<XrayEntity, number>>();
   private readonly hints = new Map<string, boolean>();
   private description?: Promise<string>;
+  private fixed: XrayEntity | null = null;
 
   constructor(
     private readonly cast: PassCast,
@@ -82,12 +91,40 @@ export class NarratorVotes {
     return narrator;
   }
 
-  record(pov: string | null, ordinal: number): void {
+  record(pov: string | null, ordinal: number, section?: number): void {
     const entity = pov ? this.cast.entity(pov) : undefined;
-    if (entity && entity.id !== NARRATOR_ID && namedBy(entity, ordinal)) this.votes.set(entity, (this.votes.get(entity) ?? 0) + 1);
+    if (!entity || entity.id === NARRATOR_ID || !namedBy(entity, ordinal)) return;
+    this.votes.set(entity, (this.votes.get(entity) ?? 0) + 1);
+    if (section === undefined) return;
+    const own = this.sections.get(section) ?? new Map<XrayEntity, number>();
+    own.set(entity, (own.get(entity) ?? 0) + 1);
+    this.sections.set(section, own);
   }
 
-  async consensus(ordinal: number): Promise<XrayEntity | null> {
+  /** The narrator once the votes leave no doubt; null until then. */
+  get settled(): XrayEntity | null {
+    return this.fixed;
+  }
+
+  /**
+   * Who says "I" in a first-person chunk of `section` starting at `ordinal`, as the votes stand now: the section's own
+   * narrator when its votes all name one person, else the book's settled narrator; null leaves it to the stand-in. A book
+   * told by two narrators by turns never settles, so each long section is credited to its own.
+   */
+  ownerAt(section: number, ordinal: number): XrayEntity | null {
+    const tally = new Map<XrayEntity, number>();
+    for (const [entity, votes] of this.sections.get(section) ?? []) {
+      const head = this.cast.headOf(entity, ordinal);
+      tally.set(head, (tally.get(head) ?? 0) + votes);
+    }
+    const [only] = tally.size === 1 ? [...tally] : [];
+    if (only && only[1] >= NARRATOR_SECTION_VOTES) return only[0];
+    return this.fixed && this.cast.headOf(this.fixed, ordinal);
+  }
+
+  /** Fixes the book's narrator once one name has `NARRATOR_SETTLED_VOTES` votes and `NARRATOR_SETTLED_LEAD` times any rival's. */
+  async settle(ordinal: number): Promise<XrayEntity | null> {
+    if (this.fixed) return this.fixed;
     if (!this.votes.size) return null;
     this.description ??=
       this.readDescription?.().then((description) =>
@@ -103,8 +140,8 @@ export class NarratorVotes {
       const head = this.cast.headOf(entity, ordinal);
       if (namedBy(head, ordinal)) totals.set(head, (totals.get(head) ?? 0) + votes);
     }
-    let winner: XrayEntity | null = null;
-    let most = NARRATOR_MIN_VOTES - 1;
+    let winner: { entity: XrayEntity; votes: number; total: number } | null = null;
+    let rival = 0;
     for (const [entity, votes] of totals) {
       const names = new Set(
         [...entity.names, ...entity.joins.filter((join) => join.ordinal <= ordinal && join.key !== NARRATOR_KEY).flatMap((join) => join.names)]
@@ -118,8 +155,12 @@ export class NarratorVotes {
           return this.hints.get(name);
         });
       const total = votes + Number(hinted);
-      if (total > most) [winner, most] = [entity, total];
+      if (!winner || total > winner.total) {
+        rival = Math.max(rival, winner?.total ?? 0);
+        winner = { entity, votes, total };
+      } else rival = Math.max(rival, total);
     }
-    return winner;
+    if (winner && winner.votes >= NARRATOR_SETTLED_VOTES && winner.total >= rival * NARRATOR_SETTLED_LEAD) this.fixed = winner.entity;
+    return this.fixed;
   }
 }

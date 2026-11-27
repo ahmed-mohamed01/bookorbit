@@ -76,8 +76,16 @@ export function list(value: unknown): Record<string, unknown>[] {
     : [];
 }
 
+/** A model writing "no answer" as text instead of JSON null: "Null", "None", "N/A". */
+const NO_ANSWER = /^(?:null|none|nil|n\/a|undefined)\.?$/i;
+
+export const noAnswer = (value: string): boolean => NO_ANSWER.test(value.trim());
+
+/** A model's text field, flattened; a written-out null is no text. */
 export function text(value: unknown): string {
-  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+  if (typeof value !== 'string') return '';
+  const flat = value.replace(/\s+/g, ' ').trim();
+  return noAnswer(flat) ? '' : flat;
 }
 
 export const words = (value: string) => value.split(/\s+/).filter(Boolean).length;

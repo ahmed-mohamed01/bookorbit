@@ -7,12 +7,20 @@ describe('bkPromptVersion', () => {
     expect(bkPromptVersion([15, 1, 2, 5, 13, 5])).not.toBe(bkPromptVersion([16, 0, 2, 5, 13, 5]));
   });
 
-  it('pads each part to two digits', () => {
-    expect(bkPromptVersion([15, 1, 2])).toBe(150102);
+  it('tells apart parts that would run together as digits', () => {
+    expect(bkPromptVersion([1, 12])).not.toBe(bkPromptVersion([11, 2]));
   });
 
-  it('throws for a part that does not fit two digits', () => {
-    expect(() => bkPromptVersion([100, 1])).toThrow(RangeError);
+  it('is the same for the same parts', () => {
+    expect(bkPromptVersion([24, 3, 1])).toBe(bkPromptVersion([24, 3, 1]));
+  });
+
+  it('accepts a part past two digits', () => {
+    expect(Number.isSafeInteger(bkPromptVersion([100, 1]))).toBe(true);
+  });
+
+  it('throws for a part that is not a whole number', () => {
+    expect(() => bkPromptVersion([1.5])).toThrow(RangeError);
   });
 
   it('stays a safe positive integer', () => {

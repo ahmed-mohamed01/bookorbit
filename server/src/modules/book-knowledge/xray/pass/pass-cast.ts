@@ -1,6 +1,7 @@
 import { escapeRegExp, FAMILY_AND_ROLE_WORDS, NAME_PREFIX_WORDS, TITLES } from '../../../story-guides/pipeline/name-text';
 import type { Sentence } from '../../core/model';
 import type { XrayEntity, XrayName } from '../xray-entities';
+import { isJoinedPart } from '../xray-name-fold';
 import type { PassUnit } from './pass-units';
 
 export type PassMergeRule = 'full-name' | 'short-name' | 'title' | 'descriptor' | 'model' | 'alias' | 'narrator';
@@ -25,6 +26,11 @@ export const RANKS = new Set([
 ]);
 RANKS.delete('the');
 const DESCRIPTOR_SHARE = 0.5;
+/**
+ * A short form shares few paragraphs with its full name (the one where both are given); two people in one scene ("Rob" and
+ * his father "Robert") share many. Past this share of the short name's paragraphs, code leaves the pair to the alias ask.
+ */
+const SHORT_SHARE = 0.15;
 
 const isPerson = (entity: XrayEntity) => entity.kind === 'character';
 const isNameWord = (word: string) => /^\p{Lu}/u.test(word) && !RANKS.has(word.toLowerCase());
@@ -35,6 +41,10 @@ function only(pool: readonly XrayEntity[], name: string, except: XrayEntity): Xr
   const found = pool.filter((entity) => entity !== except && entity.name === name);
   return found.length === 1 ? found[0] : null;
 }
+
+const allNames = (entity: XrayEntity) => [entity.name, ...entity.joins.map((join) => join.name)];
+/** "Quill and Bram" is neither Quill nor Bram, so it never merges into one: that would chain the two together. */
+const joinsEither = (a: XrayEntity, b: XrayEntity) => allNames(a).some((x) => allNames(b).some((y) => isJoinedPart(x, y) || isJoinedPart(y, x)));
 
 /** A capitalised character ("Viv"), which a reader looks up by name. */
 export const namedCharacter = (entity: XrayEntity) => entity.kind === 'character' && /^\p{Lu}/u.test(entity.name);
@@ -130,11 +140,13 @@ export function patternMerges(entities: readonly XrayEntity[], sentences: readon
     if (longer.length !== 1) continue;
     const other = longer[0];
     const own = new Map(short.ordinals.map((ordinal) => [paragraphOf(sentences, ordinal), ordinal]));
+    const shared = new Set<string>();
     const both = other.ordinals.flatMap((ordinal) => {
       const mine = own.get(paragraphOf(sentences, ordinal));
+      if (mine !== undefined) shared.add(paragraphOf(sentences, ordinal));
       return mine === undefined ? [] : [Math.max(mine, ordinal)];
     });
-    if (both.length) add(short, other, Math.min(...both), 'short-name');
+    if (both.length && shared.size <= Math.max(1, Math.floor(SHORT_SHARE * own.size))) add(short, other, Math.min(...both), 'short-name');
   }
   for (const descriptor of entities) {
     if (descriptor.name !== descriptor.name.toLowerCase() || descriptor.names.some((name) => /s$/.test(name.text) && name.text !== descriptor.name))
@@ -240,16 +252,52 @@ export class PassCast {
     return this.joinOf.get(entity)?.ordinal ?? null;
   }
 
-  /** Joins `member` into `head` from `ordinal` on; false when they already share a head. */
+  /** Where `entity` belongs to `target`: the latest join on the chain between them, -Infinity for itself, Infinity when it never does. */
+  private reachAt(entity: XrayEntity, target: XrayEntity): number {
+    let at = -Infinity;
+    for (let current = entity; current !== target;) {
+      const join = this.joinOf.get(current);
+      if (!join) return Infinity;
+      at = Math.max(at, join.ordinal);
+      current = join.head;
+    }
+    return at;
+  }
+
+  /** Every entity that joins `entity` at some point, directly or through another member. */
+  private membersOf(entity: XrayEntity): XrayEntity[] {
+    return [...this.joinOf.keys()].filter((member) => this.reachAt(member, entity) !== Infinity);
+  }
+
+  /**
+   * From where sentence `ordinal` counts as naming `entity`: at once when it names `entity` itself or a member already
+   * joined, else from the member's join; Infinity when it names neither.
+   */
+  namedFrom(entity: XrayEntity, ordinal: number): number {
+    let best = Infinity;
+    for (const owner of [entity, ...this.membersOf(entity)]) {
+      const own = this.own.get(owner) ?? owner.ordinals;
+      if (own[firstAtOrAfter(own, ordinal)] !== ordinal) continue;
+      best = Math.min(best, Math.max(ordinal, this.reachAt(owner, entity)));
+    }
+    return best;
+  }
+
+  /**
+   * Joins `member` into `head`; false when they already share a head. The evidence ties the two names given, so their
+   * final heads join only once each name has reached its own: a merge at 2000 onto a name that joins its head at 9000
+   * takes effect at 9000, never earlier.
+   */
   merge(merge: PassMerge): boolean {
     const [member, head] = namedFirst(this.headOf(merge.member), this.headOf(merge.head), (member, head) => [member, head]);
-    if (head === member) return false;
-    this.joinOf.set(member, { head, ordinal: merge.ordinal });
+    if (head === member || joinsEither(member, head)) return false;
+    const ordinal = Math.max(merge.ordinal, this.reachAt(merge.member, this.headOf(merge.member)), this.reachAt(merge.head, this.headOf(merge.head)));
+    this.joinOf.set(member, { head, ordinal });
     const index = this.heads.indexOf(member);
     if (index >= 0) this.heads.splice(index, 1);
     head.joins.push(
-      { key: member.key, name: member.name, names: member.names, ordinal: merge.ordinal },
-      ...member.joins.map((join) => ({ ...join, ordinal: Math.max(join.ordinal, merge.ordinal) })),
+      { key: member.key, name: member.name, names: member.names, ordinal },
+      ...member.joins.map((join) => ({ ...join, ordinal: Math.max(join.ordinal, ordinal) })),
     );
     member.joins = [];
     head.ordinals = [...new Set([...head.ordinals, ...member.ordinals])].sort((a, b) => a - b);
@@ -258,7 +306,7 @@ export class PassCast {
       head.count += (this.narration.get(member) ?? []).filter((ordinal) => !already.has(ordinal)).length;
     } else head.count += member.count;
     head.first = Math.min(head.first, member.first);
-    this.merges.push({ ...merge, head, member });
+    this.merges.push({ ...merge, ordinal, head, member });
     return true;
   }
 
@@ -281,9 +329,9 @@ export class PassCast {
     const wanted = (ordinal: number) => (listed ? listed.has(ordinal) : ordinal <= end);
     const from = within?.[0] ?? 0;
     const to = (within?.at(-1) ?? end) + 1;
-    const owners = slot.member
-      ? [slot.member]
-      : [slot.head, ...[...this.joinOf].filter(([, join]) => this.headOf(join.head) === slot.head && join.ordinal <= end).map(([member]) => member)];
+    // A member belongs to whoever heads it at the unit's end, which for a member of a member may be that member.
+    const self = slot.member ?? slot.head;
+    const owners = [self, ...this.membersOf(self).filter((member) => this.headOf(member, end) === self)];
     return [
       ...new Set(
         owners.flatMap((owner) => [
@@ -314,28 +362,33 @@ export class PassCast {
     };
     const named = (entity: XrayEntity) => within(entity) > 0;
     const seen = (names: readonly XrayName[]) => names.filter((name) => name.ordinal <= end).map((name) => name.text);
+    const groups = new Map<XrayEntity, XrayEntity[]>();
+    for (const member of this.joinOf.keys()) {
+      const head = this.headOf(member);
+      groups.set(head, [...(groups.get(head) ?? []), member]);
+    }
     const slots: PassSlot[] = [];
     for (const head of this.heads) {
-      const members = [...this.joinOf].filter(([, join]) => this.headOf(join.head) === head).map(([member]) => member);
-      const joined = members.filter((member) => this.joinOf.get(member)!.ordinal <= end);
-      if (named(head) || joined.some(named)) {
+      const members = groups.get(head) ?? [];
+      // Who keeps each member at the unit's end: the head, a member it joined first, or itself while its join is ahead.
+      const keeper = new Map(members.map((member) => [member, this.headOf(member, end)]));
+      const under = (owner: XrayEntity) => members.filter((member) => member !== owner && keeper.get(member) === owner);
+      const slotOf = (owner: XrayEntity, member: XrayEntity | null): PassSlot | null => {
+        const joined = under(owner);
+        if (!named(owner) && !joined.some(named)) return null;
         const aliases = [
-          ...new Set([...seen(head.names), ...joined.filter((member) => member.id !== NARRATOR_ID).flatMap((member) => seen(member.names))]),
-        ].filter((name) => name !== head.name);
-        const mentions = within(head) + joined.reduce((sum, member) => sum + within(member), 0);
-        slots.push({ id: head.id, head, member: null, name: head.name, aliases, kind: head.kind, mentions });
+          ...new Set([...seen(owner.names), ...joined.filter((other) => other.id !== NARRATOR_ID).flatMap((other) => seen(other.names))]),
+        ].filter((name) => name !== owner.name);
+        const mentions = within(owner) + joined.reduce((sum, other) => sum + within(other), 0);
+        return { id: owner.id, head, member, name: owner.name, aliases, kind: owner.kind, mentions };
+      };
+      const own = slotOf(head, null);
+      if (own) slots.push(own);
+      for (const member of members) {
+        if (keeper.get(member) !== member) continue;
+        const slot = slotOf(member, member);
+        if (slot) slots.push(slot);
       }
-      for (const member of members)
-        if (this.joinOf.get(member)!.ordinal > end && named(member))
-          slots.push({
-            id: member.id,
-            head,
-            member,
-            name: member.name,
-            aliases: seen(member.names).filter((name) => name !== member.name),
-            kind: member.kind,
-            mentions: within(member),
-          });
     }
     return slots;
   }

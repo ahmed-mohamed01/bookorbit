@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { AiConnectionService } from '../../ai/ai-connection.service';
 import { AiSettingsService } from '../../ai/ai-settings.service';
+import { AiJobsService } from '../../ai-jobs/ai-jobs.service';
 import { AiStepRates } from '../../ai-jobs/ai-step-rates.service';
 import { STORY_GUIDE_PIPELINE } from '../../story-guides/pipeline/story-guide-pipeline';
 import { BookService } from '../../book/book.service';
@@ -25,6 +26,7 @@ describe('bkStoryGuidePipelineProviders', () => {
         stub(AiStepRates),
         stub(StoryTextService),
         stub(BkStoryGuideRunner),
+        stub(AiJobsService),
         stub(StoryGuidesRepository),
         stub(BookService),
         StoryGuideEstimator,

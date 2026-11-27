@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { extractTerms } from './term-extractor';
+import { extractAliasLinks, extractTerms } from './term-extractor';
+import { visibleTerm } from './artifact';
 import type { Sentence, Term } from './model';
 
 function sentence(ordinal: number, text: string): Sentence {
@@ -92,5 +93,124 @@ describe('candidate recall', () => {
     expect(mother?.features.map((feature) => [feature.alias, feature.person])).toEqual([["Viv's mother", true]]);
     expect(terms.find((term) => term.key === 'viv')?.features.every((feature) => !feature.nested)).toBe(true);
     expect(terms.some((term) => term.key === "the's mother" || term.key === "year's mother")).toBe(false);
+  });
+});
+
+describe('names the tagger misreads', () => {
+  const visible = (texts: string[], key: string) => {
+    const text = sentences(texts);
+    const terms = extractTerms(text);
+    const artifact = {
+      sentences: text,
+      terms,
+      aliasLinks: [],
+      seeds: [],
+      fingerprint: 'invented',
+      formatVersion: 1,
+      textVersion: 1,
+      termsVersion: 1,
+    };
+    return visibleTerm(artifact, key, Infinity);
+  };
+
+  it('keeps a name that is also a verb or an auxiliary when it is capitalised inside sentences', () => {
+    const drew = visible(
+      ['We met Drew at the gate.', 'Later, Drew smiled.', 'She drew a breath.', 'He drew the curtain.', 'They drew lots.'],
+      'drew',
+    );
+    expect(drew?.mentions.map(({ ordinal }) => ordinal)).toEqual([1, 2]);
+    expect(visible(['I never trusted Will.', 'Then Will nodded.', 'It will rain.', 'You will see.', 'We will go.'], 'will')?.count).toBe(2);
+  });
+
+  it('keeps a capitalised name whose last word reads as a verb', () => {
+    const terms = extractTerms(sentences(['They joined the Night Watch at dusk.', 'The Night Watch rode out.', 'He left the Night Watch.']));
+    expect(
+      mentionsThrough(
+        terms.find(({ key }) => key === 'night watch'),
+        Infinity,
+      ),
+    ).toHaveLength(3);
+  });
+
+  it('keeps every possessive of a name after one before punctuation', () => {
+    const terms = extractTerms(
+      sentences(['Tessaly’s hand shook.', 'The blade was Tessaly’s.', 'He took Tessaly’s blade.', 'Tessaly’s voice broke.']),
+    );
+    expect(
+      mentionsThrough(
+        terms.find(({ key }) => key === 'tessaly'),
+        Infinity,
+      ).map(({ ordinal }) => ordinal),
+    ).toEqual([1, 2, 3, 4]);
+    const star = extractTerms(sentences(['Vega Lyrae rose.', 'The glow was Vega Lyrae’s.', 'Vega Lyrae’s light faded.']));
+    expect(
+      mentionsThrough(
+        star.find(({ key }) => key === 'vega lyrae'),
+        Infinity,
+      ),
+    ).toHaveLength(3);
+    expect(
+      mentionsThrough(
+        star.find(({ key }) => key === 'vega'),
+        Infinity,
+      ).every(({ feature }) => feature.nested),
+    ).toBe(true);
+  });
+
+  it('makes no term of a verb before a name', () => {
+    const terms = extractTerms(sentences(Array<string>(4).fill('Then she asked Pellan about the road.')));
+    expect(terms.map(({ key }) => key)).not.toContain('asked pellan');
+    expect(
+      mentionsThrough(
+        terms.find(({ key }) => key === 'pellan'),
+        Infinity,
+      ),
+    ).toHaveLength(4);
+  });
+
+  it('does not nest a name inside a sentence-opening word', () => {
+    const terms = extractTerms(sentences(['And Corlan laughed.', 'But Corlan was gone.', '“When Corlan came back, he slept.”']));
+    expect(terms.map(({ key }) => key)).not.toEqual(expect.arrayContaining(['and corlan']));
+    expect(
+      mentionsThrough(
+        terms.find(({ key }) => key === 'corlan'),
+        Infinity,
+      ).map(({ feature }) => feature.nested),
+    ).toEqual([false, false, false]);
+  });
+
+  it('takes a name holding "of the" whole', () => {
+    const terms = extractTerms(sentences(['He joined the Order of the Black Lantern today.', 'The Order of the Black Lantern met at dusk.']));
+    expect(
+      mentionsThrough(
+        terms.find(({ key }) => key === 'order of the black lantern'),
+        Infinity,
+      ),
+    ).toHaveLength(2);
+  });
+
+  it('reads a speech verb before a name as a person cue only as a speaker tag', () => {
+    const terms = extractTerms(sentences(['“Go,” said Varnis.', 'She said Varnis Reach was too far.']));
+    expect(
+      mentionsThrough(
+        terms.find(({ key }) => key === 'varnis'),
+        Infinity,
+      )[0].feature.person,
+    ).toBe(true);
+    expect(
+      mentionsThrough(
+        terms.find(({ key }) => key === 'varnis reach'),
+        Infinity,
+      )[0].feature.person,
+    ).toBe(false);
+  });
+});
+
+describe('identity statements', () => {
+  it('renames only the subject of "was called"', () => {
+    const text = sentences(['Mirel smiled.', 'Tobrin waved.', 'The man beside Mirel was called Tobrin.', 'Mirel and Tobrin left.']);
+    expect(extractAliasLinks(text, extractTerms(text)).filter(({ left, right }) => [left, right].includes('mirel'))).toEqual([]);
+    const own = sentences(['Halder Voss smiled.', 'Corwen waved.', 'Halder Voss was also known as Corwen.']);
+    expect(extractAliasLinks(own, extractTerms(own))).toContainEqual(expect.objectContaining({ left: 'halder voss', right: 'corwen' }));
   });
 });

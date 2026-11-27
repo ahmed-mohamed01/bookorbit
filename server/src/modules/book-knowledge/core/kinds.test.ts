@@ -49,6 +49,13 @@ describe('kind vote rules', () => {
     expect(decideKind(term('Veyra', small), 99, none).subtype).toBeNull();
   });
 
+  it('takes no vote from a mention inside a longer name, unless the name is never met on its own', () => {
+    const inside = voted(5, 'concept or idea', 'Orlan', 1, { nested: true });
+    const own = voted(3, 'person or character', 'Orlan', 6);
+    expect(decideKind(term('Orlan', [...inside, ...own]), 99, none)).toMatchObject({ kind: 'person', mentions: 3 });
+    expect(decideKind(term('Orlan', inside), 99, none)).toMatchObject({ kind: 'idea', mentions: 5 });
+  });
+
   it('R3 turns class-like characters into groups, and "the" counts for nothing', () => {
     const order = voted(4, 'person or character', 'Wardens', 1, { cues: CUE.plural });
     expect(decideKind(term('Wardens', order, 'warden'), 99, none)).toMatchObject({ kind: 'group', rule: 'R3 class' });
@@ -71,9 +78,9 @@ describe('kind vote rules', () => {
     expect(decideKind(term('Mira', voted(3, 'person or character')), 99, keys).kind).toBe('person');
   });
 
-  it('J4 marks bracket labels made only of common words as junk', () => {
-    const bracketed = voted(3, 'person or character', 'Dead person', 1, { cues: CUE.bracket });
-    expect(decideKind(term('Dead person', bracketed, 'dead person'), 99, none)).toMatchObject({ kind: 'junk', rule: 'J4 bracket label' });
+  it('J4 leaves bracket labels made only of common words to the kind review instead of junking them', () => {
+    const bracketed = voted(3, 'person or character', 'Power Strike', 1, { cues: CUE.bracket });
+    expect(decideKind(term('Power Strike', bracketed, 'power strike'), 99, none)).toMatchObject({ kind: null, rule: 'J4 bracket label' });
     const rare = voted(3, 'person or character', 'Vexnor', 1, { cues: CUE.bracket });
     expect(decideKind(term('Vexnor', rare), 99, none).kind).toBe('person');
     const once = [...voted(1, 'person or character', 'Dead person', 1, { cues: CUE.bracket }), ...voted(2, 'person or character', 'Dead person', 2)];

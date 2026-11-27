@@ -1,8 +1,8 @@
 import { Logger } from '@nestjs/common';
-import { appendFile, mkdtemp, rm } from 'node:fs/promises';
+import { appendFile, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { gzipSync } from 'node:zlib';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import type { Sentence } from '../core/model';
 import { XrayPrivacy, XrayStepRun } from './xray-runner';
 import { replayable, requestHash, XrayUnitStore } from './xray-unit-store';
@@ -94,6 +94,48 @@ describe('stored X-Ray answers', () => {
     const kept = new XrayUnitStore(path, scope);
     expect(await kept.load()).toBe(1);
     expect(kept.answer('notes', 'u1c1', 'h1')).toEqual({ current: true });
+  });
+
+  it('reads the empty file a fresh build leaves as empty, not damaged', async () => {
+    await new XrayUnitStore(path, scope).reset();
+    const loaded = new XrayUnitStore(path, scope);
+    expect(await loaded.load()).toBe(0);
+    expect(loaded.damaged).toBe(false);
+  });
+
+  it('compacts to the answers a finished build replayed or stored, dropping an earlier generation', async () => {
+    const first = new XrayUnitStore(path, scope);
+    first.save('notes', 'u1c1', 'gen1-a', { generation: 1 }, {});
+    first.save('notes', 'u1c2', 'shared', { shared: true }, {});
+    await first.flush();
+    const second = new XrayUnitStore(path, scope);
+    expect(await second.load()).toBe(2);
+    expect(second.answer('notes', 'u1c2', 'shared')).toEqual({ shared: true });
+    second.save('notes', 'u1c1', 'gen2-a', { generation: 2 }, {});
+    expect(await second.compact()).toBe(1);
+    const reread = new XrayUnitStore(path, scope);
+    expect(await reread.load()).toBe(2);
+    expect(reread.answer('notes', 'u1c1', 'gen1-a')).toBeUndefined();
+    expect(reread.answer('notes', 'u1c1', 'gen2-a')).toEqual({ generation: 2 });
+    expect(reread.answer('notes', 'u1c2', 'shared')).toEqual({ shared: true });
+  });
+
+  it('writes each answer once when a rewrite and queued appends overlap', async () => {
+    const old = new XrayUnitStore(path, { ...scope, promptVersion: 8 });
+    old.save('notes', 'u1c1', 'h0', {}, {});
+    await old.flush();
+    const store = new XrayUnitStore(path, scope);
+    await store.load();
+    store.save('notes', 'u1', 'h1', {}, {});
+    store.save('notes', 'u2', 'h2', {}, {});
+    store.save('notes', 'u3', 'h3', {}, {});
+    await store.flush();
+    const units = gunzipSync(await readFile(path))
+      .toString('utf8')
+      .trim()
+      .split('\n')
+      .map((line) => (JSON.parse(line) as { unit: string }).unit);
+    expect(units.sort()).toEqual(['u1', 'u2', 'u3']);
   });
 
   it('keeps a multibyte character whole when it falls across two decoded chunks', async () => {

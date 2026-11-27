@@ -2,7 +2,7 @@ import type { BookKnowledgeXrayMode } from '@bookorbit/types';
 import { wordRarity } from './common-words';
 import { isGenericTerm } from './generic-terms';
 import { locateAlias } from './kind-cues';
-import { closeTopTwo, termKinds, type KindDecision } from './kinds';
+import { closeTopTwo, ownMentions, termKinds, type KindDecision } from './kinds';
 import type { Artifact, Sentence, VisibleTerm } from './model';
 import { termFragments } from './term-fragments';
 import { rankTerms, type RankedTerm } from './term-ranking';
@@ -20,11 +20,10 @@ const NAMED_TERM_MIN_MENTIONS = 3;
 /** A word this rare in English reads as the book's own coinage; tagger votes and definition marks fire on common words too. */
 const NAMED_TERM_RARITY = 0.5;
 const NAMED_TERM_LIMIT = 40;
-/**
- * The cast admits an untyped term at this many body sentences, so the review only adds terms below it: reviewing one
- * already in risks a junk answer that removes it. Mirrors `UNTYPED_MIN_SENTENCES` in the X-Ray entities.
- */
-const ADMITTED_UNTYPED = 5;
+/** Bracketed labels of plain words asked beyond the top-ranked terms; a LitRPG book brackets every skill it names. */
+const BRACKET_LABEL_LIMIT = 60;
+/** Minimum distinct body sentences for the cast to admit an untyped term. */
+export const ADMITTED_UNTYPED = 5;
 const NAME_CONNECTORS = new Set('of the and in on to a an'.split(' '));
 export const PLACE_NOUNS = new Set(
   'springs spring river lake sea mountains mountain hills forest woods gate gates palace camp city town village fort keep tower temple ruins road pass valley desert plains bay island isles'.split(
@@ -46,13 +45,13 @@ export const KIND_REVIEW_SYSTEM = [
   '- object',
   '- idea: a concept, skill, spell, force, system or ability',
   '- title: an honorific or rank used before or instead of a name',
-  "- junk: not a real entry (an exclamation, sound, curse, generic word, system message fragment, or the book's own title or author)",
+  `- junk: not a real entry (an exclamation, sound, curse, generic word, system message fragment, or the book's own title or author)`,
   'Reply with JSON only, one answer per id: {"<id>": "<answer>"}.',
 ].join('\n');
 
 export interface KindReviewEntry {
   key: string;
-  reason: 'no kind' | 'top two close' | 'proper name' | 'concept' | 'named term';
+  reason: 'no kind' | 'top two close' | 'proper name' | 'concept' | 'named term' | 'bracket label';
 }
 export interface KindReviewBatch {
   keys: string[];
@@ -174,9 +173,14 @@ export function selectForReview(
   for (const term of ranked.slice(0, KIND_REVIEW_LIMIT)) {
     const decision = decisions.get(term.key);
     if (!decision) continue;
-    if (decision.kind === null) selected.push({ key: term.key, reason: 'no kind' });
+    if (decision.kind === null) selected.push({ key: term.key, reason: decision.rule === 'J4 bracket label' ? 'bracket label' : 'no kind' });
     else if (isReviewCandidate(decision)) selected.push({ key: term.key, reason: 'top two close' });
   }
+  const labels = ranked
+    .slice(KIND_REVIEW_LIMIT)
+    .filter(({ key }) => decisions.get(key)?.rule === 'J4 bracket label')
+    .slice(0, BRACKET_LABEL_LIMIT);
+  for (const { key } of labels) selected.push({ key, reason: 'bracket label' });
   if (mode) {
     const seen = new Set(selected.map(({ key }) => key));
     const candidates = mode === 'fiction' ? properNameCandidates(ranked, decisions) : conceptCandidates(ranked, decisions, sentences);
@@ -185,8 +189,12 @@ export function selectForReview(
       if (!seen.has(key)) selected.push({ key, reason });
       seen.add(key);
     }
-    if (mode === 'fiction')
-      for (const { key } of namedTermCandidates(ranked, decisions)) if (!seen.has(key)) selected.push({ key, reason: 'named term' });
+    if (mode === 'fiction') {
+      for (const { key } of namedTermCandidates(ranked, decisions)) {
+        if (!seen.has(key)) selected.push({ key, reason: 'named term' });
+        seen.add(key);
+      }
+    }
   }
   return selected;
 }
@@ -196,7 +204,8 @@ export function planKindReview(artifact: Artifact, cutoff: number, mode: BookKno
   const ranked = rankTerms(artifact, cutoff, bodyOnly);
   const decisions = termKinds(artifact, ranked, cutoff);
   const entries = selectForReview(ranked, decisions, mode, artifact.sentences);
-  return reviewBatches(artifact, entries, new Map(ranked.map((term) => [term.key, term])), decisions, cutoff);
+  const terms = new Map(ranked.map((term) => [term.key, term]));
+  return reviewBatches(artifact, entries, terms, decisions, cutoff);
 }
 
 function random(seed: number): () => number {
@@ -237,28 +246,32 @@ export function trimPassage(text: string, start: number, end: number): string {
 }
 
 // Passages come only from the term's own mentions at or before the cut-off.
-export function reviewPassages(artifact: Artifact, term: Pick<VisibleTerm, 'key' | 'displayName' | 'mentions'>, cutoff: number): string[] {
-  return reviewHits(artifact, term, cutoff).map(([ordinal, alias]) => {
-    const text = artifact.sentences[ordinal - 1].text.replace(/[‘’]/g, "'");
-    const start = locateAlias(text, alias.replace(/[‘’]/g, "'"), 0);
-    return trimPassage(text, start, start + alias.length);
-  });
+type PassageTerm = Pick<VisibleTerm, 'key' | 'displayName' | 'mentions'>;
+
+export function reviewPassages(artifact: Artifact, term: PassageTerm, cutoff: number): string[] {
+  return reviewHits(artifact, term, cutoff, PASSAGES, true).map((hit) => passage(artifact, hit));
 }
 
-function reviewHits(artifact: Artifact, term: Pick<VisibleTerm, 'key' | 'displayName' | 'mentions'>, cutoff: number): [number, string][] {
-  const capitalised = !(term.displayName === term.displayName.toLowerCase() && term.displayName !== term.displayName.toUpperCase());
+function passage(artifact: Artifact, [ordinal, alias]: [number, string]): string {
+  const text = artifact.sentences[ordinal - 1].text.replace(/[‘’]/g, "'");
+  const start = locateAlias(text, alias.replace(/[‘’]/g, "'"), 0);
+  return trimPassage(text, start, start + alias.length);
+}
+
+function reviewHits(artifact: Artifact, term: PassageTerm, cutoff: number, passages: number, matchCase: boolean): [number, string][] {
+  const capitalised = matchCase && !(term.displayName === term.displayName.toLowerCase() && term.displayName !== term.displayName.toUpperCase());
   const firstHit = new Map<number, string>();
-  for (const mention of term.mentions) {
+  for (const mention of ownMentions(term.mentions)) {
     if (mention.ordinal > cutoff || (capitalised && !/^\p{Lu}/u.test(mention.alias))) continue;
     if (!firstHit.has(mention.ordinal)) firstHit.set(mention.ordinal, mention.alias);
   }
   const hits = [...firstHit].filter(([ordinal, alias]) => locateAlias(artifact.sentences[ordinal - 1]?.text ?? '', alias, 0) >= 0);
   const next = random(seedOf(term.key));
-  for (let index = 0; index < Math.min(PASSAGES, hits.length); index++) {
+  for (let index = 0; index < Math.min(passages, hits.length); index++) {
     const swap = index + Math.floor(next() * (hits.length - index));
     [hits[index], hits[swap]] = [hits[swap], hits[index]];
   }
-  return hits.slice(0, PASSAGES).sort((a, b) => a[0] - b[0]);
+  return hits.slice(0, passages).sort((a, b) => a[0] - b[0]);
 }
 
 export function reviewBatches(
@@ -268,21 +281,30 @@ export function reviewBatches(
   decisions: Map<string, KindDecision>,
   cutoff: number,
 ): KindReviewBatch[] {
+  return buildReviewBatches(artifact, entries, cutoff, { size: KIND_REVIEW_BATCH, passages: PASSAGES, matchCase: true }, ({ key }) => {
+    const term = terms.get(key)!;
+    return { term, fields: { name: term.displayName, aliases: term.aliases, mentions: decisions.get(key)?.mentions ?? 0 } };
+  });
+}
+
+export function buildReviewBatches<T extends { key: string }>(
+  artifact: Artifact,
+  entries: readonly T[],
+  cutoff: number,
+  options: { size: number; passages: number; matchCase: boolean },
+  prepare: (entry: T) => { term: PassageTerm; fields: object },
+): KindReviewBatch[] {
   const book = `Book: ${(artifact.metadata?.titles ?? []).join('; ')} by ${(artifact.metadata?.authors ?? []).join('; ')}`;
   const batches: KindReviewBatch[] = [];
-  for (let start = 0; start < entries.length; start += KIND_REVIEW_BATCH) {
-    const keys = entries.slice(start, start + KIND_REVIEW_BATCH).map((entry) => entry.key);
+  for (let start = 0; start < entries.length; start += options.size) {
+    const entriesInBatch = entries.slice(start, start + options.size);
+    const keys = entriesInBatch.map(({ key }) => key);
     const ordinals = new Set<number>();
-    const items = keys.map((key, index) => {
-      const term = terms.get(key)!;
-      for (const [ordinal] of reviewHits(artifact, term, cutoff)) ordinals.add(ordinal);
-      return {
-        id: `e${index + 1}`,
-        name: term.displayName,
-        aliases: term.aliases,
-        mentions: decisions.get(key)?.mentions ?? 0,
-        passages: reviewPassages(artifact, term, cutoff),
-      };
+    const items = entriesInBatch.map((entry, index) => {
+      const { term, fields } = prepare(entry);
+      const hits = reviewHits(artifact, term, cutoff, options.passages, options.matchCase);
+      for (const [ordinal] of hits) ordinals.add(ordinal);
+      return { id: `e${index + 1}`, ...fields, passages: hits.map((hit) => passage(artifact, hit)) };
     });
     batches.push({ keys, user: `${book}\nEntries:\n${JSON.stringify(items, null, 1)}`, ordinals: [...ordinals].sort((a, b) => a - b) });
   }
@@ -290,25 +312,43 @@ export function reviewBatches(
 }
 
 export function parseReviewAnswers(raw: string, keys: readonly string[]): Map<string, KindAnswer> | undefined {
+  return parseReviewChoices(parseReviewJson(raw), keys, KIND_ANSWERS);
+}
+
+export function parseReviewChoices<T extends string>(
+  data: Record<string, unknown> | undefined,
+  keys: readonly string[],
+  choices: readonly T[],
+): Map<string, T> | undefined {
+  if (!data) return undefined;
+  const answers = new Map<string, T>();
+  keys.forEach((key, index) => {
+    const value = data[`e${index + 1}`];
+    const answer = typeof value === 'string' ? value.trim().toLowerCase() : '';
+    const choice = choices.find((allowed) => allowed === answer);
+    if (choice !== undefined) answers.set(key, choice);
+  });
+  return answers;
+}
+
+export function parseReviewJson(raw: string, allowSurroundingText = true): Record<string, unknown> | undefined {
   const text = raw
     .trim()
     .replace(/^```(?:json)?\s*|\s*```$/g, '')
     .trim();
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start < 0 || end < start) return undefined;
+  let input = text;
+  if (allowSurroundingText) {
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    if (start < 0 || end < start) return undefined;
+    input = text.slice(start, end + 1);
+  }
   let data: unknown;
   try {
-    data = JSON.parse(text.slice(start, end + 1));
+    data = JSON.parse(input);
   } catch {
     return undefined;
   }
   if (!data || typeof data !== 'object' || Array.isArray(data)) return undefined;
-  const answers = new Map<string, KindAnswer>();
-  keys.forEach((key, index) => {
-    const value = (data as Record<string, unknown>)[`e${index + 1}`];
-    const answer = typeof value === 'string' ? value.trim().toLowerCase() : '';
-    if ((KIND_ANSWERS as readonly string[]).includes(answer)) answers.set(key, answer as KindAnswer);
-  });
-  return answers;
+  return data as Record<string, unknown>;
 }

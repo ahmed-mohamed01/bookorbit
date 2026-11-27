@@ -4,6 +4,8 @@ import { termKey } from './text-utils';
 const PAIR = /(?<![\p{L}\p{N}'’-])(?=(\p{Lu}[\p{L}'’-]*)(,?\s+the\s+|\s+)(\p{Lu}[\p{L}'’-]*)(?![\p{L}\p{N}'’-]))/gu;
 const TITLE = /^(?:house|lord|lady|captain|brightlord|highprince|king|queen|prince|princess|brightlady|sir|dame)$/;
 
+const PERSON_CUES = 3;
+
 interface PairEvidence {
   occurrences: number[];
   firstPlain?: number;
@@ -109,6 +111,8 @@ function qualifyingLink(epithet: Term, person: Term, occurrences: number[], fami
   let p = 0;
   let n = 0;
   let personMentions = 0;
+  let capitalEpithet = 0;
+  let lowerEpithet = 0;
   let nextX = epithet.deltas[0] ?? Infinity;
   let nextP = person.deltas[0] ?? Infinity;
   // Replay evidence by sentence so later mentions cannot change earlier links.
@@ -116,13 +120,19 @@ function qualifyingLink(epithet: Term, person: Term, occurrences: number[], fami
     const ordinal = Math.min(nextX, nextP, nextCandidate, occurrences[n] ?? Infinity);
     if (ordinal >= familyAt) return undefined;
     if (nextCandidate === ordinal) nextCandidate = Infinity;
-    while (nextX === ordinal) nextX += epithet.deltas[++x] ?? Infinity;
+    while (nextX === ordinal) {
+      if (epithet.features[x].capitalized) capitalEpithet++;
+      else if (epithet.features[x].lowercase) lowerEpithet++;
+      nextX += epithet.deltas[++x] ?? Infinity;
+    }
     while (nextP === ordinal) {
       if (person.features[p].person) personMentions++;
       nextP += person.deltas[++p] ?? Infinity;
     }
     while (occurrences[n] === ordinal) n++;
-    if (ordinal >= availableAt && n >= 3 && n * 10 >= x && p > 0 && personMentions * 10 >= p * 3) {
+    // "Kell Station" beside "the station": an epithet is a word the book mostly capitalises, and the first word is plainly someone.
+    const epithetNamed = capitalEpithet >= lowerEpithet;
+    if (ordinal >= availableAt && n >= 3 && n * 10 >= x && epithetNamed && personMentions >= PERSON_CUES && personMentions * 10 >= p * 3) {
       const link: AliasLink = { left: epithet.key, right: person.key, ordinal };
       if (Number.isFinite(familyAt)) link.untilOrdinal = familyAt;
       return link;

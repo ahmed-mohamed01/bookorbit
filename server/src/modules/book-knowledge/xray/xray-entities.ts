@@ -4,13 +4,15 @@ import type { BookKnowledgeKind, BookKnowledgeXrayMode, BookKnowledgeXraySub, St
 import { mentionsAt, visibleTerm } from '../core/artifact';
 import { termFragments } from '../core/term-fragments';
 import { words } from '../core/text-utils';
-import { isExclamationTerm, isGenericTerm } from '../core/generic-terms';
-import { PLACE_NOUNS, type KindAnswer } from '../core/kind-review';
+import { isDictionaryTerm, isExclamationTerm, isGenericTerm, isNationalityTerm, isUnitTerm } from '../core/generic-terms';
+import { ADMITTED_UNTYPED, PLACE_NOUNS, type KindAnswer } from '../core/kind-review';
 import { termKinds } from '../core/kinds';
 import type { Artifact, Sentence, VisibleTerm } from '../core/model';
 import { rankTerms, type RankedTerm } from '../core/term-ranking';
 import { bareLabel, glossOf } from './dense/dense-definition';
-import { descriptiveEntries, fictionNameCheck, isDictionaryTerm } from './xray-fiction-entries';
+import { descriptiveEntries, fictionNameCheck } from './xray-fiction-entries';
+import { foldSpellings, fusedEntries, joinedParts } from './xray-name-fold';
+import { STATUS_LABEL } from './dense/dense-links';
 
 /** The X-Ray spec caps a payload at 400 entities. */
 export const XRAY_ENTITY_LIMIT = 400;
@@ -19,8 +21,6 @@ export const XRAY_NONFICTION_ENTITY_LIMIT = 600;
 const NONFICTION_PHRASE_WEIGHT = 3;
 /** A cast member is named in at least this many body sentences up to the cut. */
 export const CAST_MIN_SENTENCES = 2;
-/** A term with no kind from the rules, GLiNER or the review needs this many to join the cast. */
-export const UNTYPED_MIN_SENTENCES = 5;
 const MAIN_CAST = 12;
 /** At or below this rarity (SCOWL level 35 and under) a lowercase non-character name is an everyday noun that never leads the cast. */
 const EVERYDAY_RARITY = 0.35;
@@ -30,8 +30,14 @@ const SUPPORTING_CAST_MIN_SCORE = 2;
 /** A title goes to one holder when that person is in this share of the sentences naming it, at least twice. */
 const TITLE_HOLDER_SHARE = 0.6;
 const TITLE_HOLDER_MIN = 2;
+/**
+ * The holder must be in the title's sentences this many times more often than in the book's: a viewpoint character is
+ * named beside every title the narration mentions ("Zoey saluted the Captain"), so share alone hands it the title.
+ */
+const TITLE_HOLDER_LIFT = 3;
 
 export { isGenericTerm } from '../core/generic-terms';
+export { ADMITTED_UNTYPED as UNTYPED_MIN_SENTENCES } from '../core/kind-review';
 
 export interface XrayName {
   text: string;
@@ -155,6 +161,11 @@ function containedIn(terms: readonly VisibleTerm[]): Map<string, Set<number>> {
   return inside;
 }
 
+function sharesWord(part: VisibleTerm, whole: VisibleTerm): boolean {
+  const own = new Set(words(whole.displayName));
+  return part.key !== whole.key && words(part.displayName).some((word) => own.has(word));
+}
+
 function firstNames(mentions: readonly { alias: string; ordinal: number }[]): XrayName[] {
   const names = new Map<string, XrayName>();
   for (const mention of mentions) {
@@ -192,30 +203,58 @@ function joinsByGroup(artifact: Artifact, groups: ReadonlyMap<string, VisibleTer
   return new Map([...joins].map(([key, members]) => [key, [...members.values()]]));
 }
 
-/** Each title's single holder, if it has one: the person in most of the sentences that name the title. */
-function titleHolders(titles: readonly XrayEntity[], people: readonly XrayEntity[]): Map<string, { holder: XrayEntity; ordinal: number }> {
+/** "Captain Zoey" or "Zoey, the Captain": a sentence that puts the title right against the holder's name. */
+function titleBeside(title: XrayEntity, holder: XrayEntity, sentences: readonly Sentence[]): boolean {
+  const alternatives = (entity: XrayEntity) => [...new Set(entity.names.map(({ text }) => escapeRegExp(text)))].join('|');
+  const titles = alternatives(title);
+  const names = alternatives(holder);
+  const beside = new RegExp(`${WORD_EDGE}(?:(?:${titles})\\s+(?:${names})|(?:${names}),\\s+(?:the\\s+)?(?:${titles}))${WORD_EDGE}`, 'u');
+  return title.ordinals.some((ordinal) => beside.test(sentences[ordinal - 1]?.text ?? ''));
+}
+
+/**
+ * Each title's single holder, if it has one: the person in most of the sentences that name the title, far more than in
+ * the rest of the book or named right beside it. The title becomes theirs at the sentence where that share is first reached.
+ */
+function titleHolders(
+  titles: readonly XrayEntity[],
+  people: readonly XrayEntity[],
+  sentences: readonly Sentence[],
+  through: number,
+): Map<string, { holder: XrayEntity; ordinal: number }> {
   const bySentence = new Map<number, XrayEntity[]>();
   for (const person of people) for (const ordinal of person.ordinals) bySentence.set(ordinal, [...(bySentence.get(ordinal) ?? []), person]);
   const holders = new Map<string, { holder: XrayEntity; ordinal: number }>();
+  if (!titles.length) return holders;
+  let body = 0;
+  for (const sentence of sentences) if (sentence.ordinal <= through && sentence.structure === 'body') body++;
   for (const title of titles) {
-    const counts = new Map<XrayEntity, { count: number; first: number }>();
+    const counts = new Map<XrayEntity, number>();
     for (const ordinal of title.ordinals)
-      for (const person of new Set(bySentence.get(ordinal) ?? [])) {
-        const seen = counts.get(person);
-        if (seen) seen.count++;
-        else counts.set(person, { count: 1, first: ordinal });
+      for (const person of new Set(bySentence.get(ordinal) ?? [])) counts.set(person, (counts.get(person) ?? 0) + 1);
+    const [best, second] = [...counts].sort((a, b) => b[1] - a[1]);
+    if (!best || best[1] < TITLE_HOLDER_MIN || best[1] < TITLE_HOLDER_SHARE * title.ordinals.length) continue;
+    if (second && second[1] === best[1]) continue;
+    const [holder, count] = best;
+    const lift = count / title.ordinals.length / (holder.ordinals.length / Math.max(body, 1));
+    if (lift < TITLE_HOLDER_LIFT && !titleBeside(title, holder, sentences)) continue;
+    let shared = 0;
+    let ordinal = title.ordinals.at(-1)!;
+    for (const [index, at] of title.ordinals.entries()) {
+      if (bySentence.get(at)?.includes(holder)) shared++;
+      if (shared >= TITLE_HOLDER_MIN && shared >= TITLE_HOLDER_SHARE * (index + 1)) {
+        ordinal = at;
+        break;
       }
-    const [best, second] = [...counts].sort((a, b) => b[1].count - a[1].count);
-    if (!best || best[1].count < TITLE_HOLDER_MIN || best[1].count < TITLE_HOLDER_SHARE * title.ordinals.length) continue;
-    if (second && second[1].count === best[1].count) continue;
-    holders.set(title.key, { holder: best[0], ordinal: best[1].first });
+    }
+    holders.set(title.key, { holder, ordinal });
   }
   return holders;
 }
 
 /** Whether a term with this many body sentences up to a cut is in the cast, given its kind (null when untyped). */
 export function inCast(sentences: number, typed: boolean): boolean {
-  return sentences >= (typed ? CAST_MIN_SENTENCES : UNTYPED_MIN_SENTENCES);
+  return sentences >= (typed ? CAST_MIN_SENTENCES : ADMITTED_UNTYPED);
 }
 
 /**
@@ -252,6 +291,8 @@ export function nameWords(ranked: readonly RankedTerm[], isPlace: (key: string) 
   return { single, shared };
 }
 
+const CAST_KINDS = new Set<BookKnowledgeKind | 'junk' | null>(['person', 'animal', 'group', 'place']);
+
 const HONORIFIC_SHARE = 0.5;
 
 /** "Grace" said mostly as "your Grace" or "her Grace" is a form of address, not someone's name. */
@@ -271,14 +312,25 @@ export function xrayEntities(
 ): XrayEntity[] {
   const ranked = rankTerms(artifact, through, true);
   const decided = termKinds(artifact, ranked, through);
-  const kindOf = (key: string): BookKnowledgeKind | 'junk' | null => answers.get(key) ?? decided.get(key)?.kind ?? null;
-  let eligible: { term: VisibleTerm; sentences: number }[] = [];
+  /** A name kept for its parts takes their kind when it has none of its own. */
+  const inherited = new Map<string, BookKnowledgeKind | 'junk' | null>();
+  const kindOf = (key: string): BookKnowledgeKind | 'junk' | null => answers.get(key) ?? decided.get(key)?.kind ?? inherited.get(key) ?? null;
+  /** `admits` re-applies the cast floor once the sentences a longer name owns are taken away. */
+  type Eligible = { term: VisibleTerm; sentences: number; rank: number; admits: (sentences: number) => boolean };
+  let eligible: Eligible[] = [];
+  const unreal: (Eligible & { failedName: boolean })[] = [];
   const realName = fictionNameCheck(artifact.sentences);
   const inNames = nameWords(ranked, (key) => kindOf(key) === 'place');
-  for (const rankedTerm of ranked) {
+  for (const [rank, rankedTerm] of ranked.entries()) {
     let term: VisibleTerm = rankedTerm;
     const kind = kindOf(term.key);
-    if (kind === 'junk' || isExclamationTerm(term.displayName, mode)) continue;
+    if (
+      kind === 'junk' ||
+      isExclamationTerm(term.displayName, mode) ||
+      isUnitTerm(term.displayName, mode) ||
+      isNationalityTerm(term.displayName, mode)
+    )
+      continue;
     if (
       mode === 'fiction' &&
       (kind === 'person' || kind === 'animal' || kind === 'place') &&
@@ -286,6 +338,11 @@ export function xrayEntities(
       term.mentions.every(({ alias }) => /^\p{Lu}/u.test(alias))
     )
       term = { ...term, displayName: term.mentions[0].alias };
+    // A capitalised everyday word (an inn called the Feather) is a name only where it is written that way; "feathers" is the word.
+    if (mode === 'fiction' && /^\p{Lu}/u.test(term.displayName) && isDictionaryTerm(term.displayName.toLowerCase())) {
+      const named = term.mentions.filter(({ alias }) => /^\p{Lu}/u.test(alias));
+      if (named.length && named.length < term.mentions.length) term = { ...term, mentions: named, count: named.length };
+    }
     const ordinals = bodyOrdinals(artifact, term);
     const sentences = ordinals.length;
     if (!sentences) continue;
@@ -294,15 +351,13 @@ export function xrayEntities(
       lowercase &&
       (weakDictionaryTerm(term.displayName, rankedTerm.score, inNames.single) ||
         inNames.shared.has(term.displayName) ||
-        ordinals.every((ordinal) => artifact.sentences[ordinal - 1].spineIndex === artifact.sentences[ordinals[0] - 1].spineIndex));
-    // In a novel neither the review's kind nor a sentence like "the city was a ruin" rescues an everyday word; only a gloss does.
+        // A prop seen in one chapter (orb) is scenery; someone or somewhere met there is cast from the start (Yoink, the revenants).
+        (!CAST_KINDS.has(kind) &&
+          ordinals.every((ordinal) => artifact.sentences[ordinal - 1].spineIndex === artifact.sentences[ordinals[0] - 1].spineIndex)));
     const generic = (mode === 'fiction' || !answers.has(term.key)) && isGenericTerm(term.displayName, mode);
     // Clutter and everyday words need an outright gloss; the extractor's definition flag fires on plain narration for them.
-    const explicit =
-      lowercase &&
-      (clutter || generic
-        ? glossOf(ordinals, artifact.sentences, [term.displayName, ...term.aliases]) !== null
-        : term.mentions.some((mention) => mention.explicitDefinition));
+    const glossAt = lowercase && (clutter || generic) ? glossOf(ordinals, artifact.sentences, [term.displayName, ...term.aliases]) : null;
+    const explicit = lowercase && (clutter || generic ? glossAt !== null : term.mentions.some((mention) => mention.explicitDefinition));
     if (!explicit && (clutter || generic)) {
       dropped.generic++;
       continue;
@@ -315,13 +370,49 @@ export function xrayEntities(
     // A nonfiction term the book defines outright, or defines under its own heading, is a concept whatever its kind.
     const defined =
       mode === 'nonfiction' && term.mentions.some((mention) => mention.explicitDefinition || (mention.definition && mention.structural));
-    if (!inCast(sentences, kind !== null || defined) && !explicit && !(named && kind !== null)) continue;
-    if (named && !realName(term)) {
-      dropped.generic++;
+    const admits = (count: number) => count > 0 && (inCast(count, kind !== null || defined) || explicit || (named && kind !== null));
+    if (!admits(sentences)) {
+      if (named) unreal.push({ term, sentences, rank, admits, failedName: false });
       continue;
     }
-    eligible.push({ term, sentences });
+    if (named && !realName(term)) {
+      unreal.push({ term, sentences, rank, admits, failedName: true });
+      continue;
+    }
+    // A stat a status screen defines ("[Power: your strength...") is that capitalised word; "a seat of power" in prose is not it.
+    // A coined word (mana) means the same in prose, so only dictionary words narrow.
+    const statAt =
+      lowercase && isDictionaryTerm(term.displayName)
+        ? (glossAt ?? glossOf(ordinals, artifact.sentences, [term.displayName, ...term.aliases]))
+        : null;
+    if (statAt !== null && STATUS_LABEL.test(artifact.sentences[statAt - 1].text)) {
+      const stat = term.mentions.filter((mention) => mention.capitalized);
+      const statSentences = bodyOrdinals(artifact, { ...term, mentions: stat }).length;
+      if (statSentences) {
+        eligible.push({ term: { ...term, mentions: stat, count: stat.length }, sentences: statSentences, rank, admits });
+        continue;
+      }
+    }
+    eligible.push({ term, sentences, rank, admits });
   }
+  // "Vega Lyrae!" only ever shouted, or named too few times, fails while "Vega" and "Lyrae" inside it pass: the whole is the name.
+  const revived: Eligible[] = [];
+  for (const entry of unreal) {
+    const parts = eligible.filter(({ term }) => sharesWord(term, entry.term));
+    const fragments = parts.length
+      ? termFragments(
+          parts.map(({ term }) => term),
+          [entry.term],
+        )
+      : new Set<string>();
+    const part = parts.find(({ term }) => fragments.has(term.key));
+    if (!part) continue;
+    if (kindOf(entry.term.key) === null) inherited.set(entry.term.key, kindOf(part.term.key));
+    revived.push({ term: entry.term, sentences: entry.sentences, rank: entry.rank, admits: (count) => count > 0 });
+  }
+  const revivedKeys = new Set(revived.map(({ term }) => term.key));
+  dropped.generic += unreal.filter(({ failedName, term }) => failedName && !revivedKeys.has(term.key)).length;
+  if (revived.length) eligible = [...eligible, ...revived].sort((a, b) => a.rank - b.rank);
   if (mode === 'fiction') {
     const descriptive = descriptiveEntries(eligible.map(({ term }) => term));
     dropped.fragment += descriptive.size;
@@ -337,10 +428,25 @@ export function xrayEntities(
       .slice(limit)
       .map(({ term }) => term.key),
   );
-  const chosen = eligible.filter(({ term }) => !cut.has(term.key)).map(({ term }) => term);
-  const fragments = termFragments(chosen, chosen);
-  dropped.fragment += fragments.size;
-  const complete = chosen.filter((term) => !fragments.has(term.key));
+  const chosenEntries = eligible.filter(({ term }) => !cut.has(term.key));
+  const chosen = chosenEntries.map(({ term }) => term);
+  const asEntry = (term: VisibleTerm) => {
+    const kind = kindOf(term.key);
+    return { key: term.key, names: [term.displayName, ...term.aliases], kind: storyKind(kind === 'junk' ? null : kind, term.type).kind };
+  };
+  // "Moe and Shemp" goes before the fragment test, so Shemp is not taken as part of it; a rarely named Shemp still owns his name.
+  const fused = fusedEntries(chosen.map(asEntry), ranked.filter(({ key }) => kindOf(key) !== 'junk').map(asEntry));
+  const unfused = chosen.filter(({ key }) => !fused.has(key));
+  const chosenKeys = new Set(chosen.map(({ key }) => key));
+  // Parts of a name that is no entry (junk, cut, or not a real name) go with it rather than standing alone; a joined
+  // name that is no entry is no evidence that Bram belongs to "Quill and Bram".
+  const fragments = termFragments(unfused, [
+    ...unfused,
+    ...ranked.filter(({ key, displayName }) => !chosenKeys.has(key) && !joinedParts(displayName).length),
+  ]);
+  dropped.fragment += fragments.size + fused.size;
+  const complete = chosen.filter((term) => !fused.has(term.key) && !fragments.has(term.key));
+  const admitsOf = new Map(chosenEntries.map((entry) => [entry.term.key, entry.admits]));
   const joinsOf = joinsByGroup(artifact, new Map(complete.map((term) => [term.key, term])), through);
   // "Empire" inside "Old Empire" is the longer name's mention; counting it would hand the short form the longer one's sentences.
   const inside = containedIn(complete);
@@ -351,6 +457,11 @@ export function xrayEntities(
     const kind = kindOf(term.key);
     const within = inside.get(term.key);
     const ordinals = bodyOrdinals(artifact, term, within);
+    // An entry admitted on sentences that belong to a longer name ("the Centauri run" beside Alpha Centauri) is not one.
+    if (within && !admitsOf.get(term.key)!(ordinals.length)) {
+      dropped.fragment++;
+      continue;
+    }
     const borrowed = within ? term.mentions.filter((mention) => mention.nested && within.has(mention.ordinal)).length : 0;
     const mapped = storyKind(kind === 'junk' ? null : kind, term.type);
     const joins = joinsOf.get(term.key) ?? [];
@@ -379,12 +490,15 @@ export function xrayEntities(
       joins,
     });
   }
-  const titles = kept.filter((entity) => entity.sub === 'title');
+  const spelled = foldSpellings(kept);
+  const titles = spelled.filter((entity) => entity.sub === 'title');
   const holders = titleHolders(
     titles,
-    kept.filter((entity) => entity.kind === 'character' && entity.sub !== 'title'),
+    spelled.filter((entity) => entity.kind === 'character' && entity.sub !== 'title'),
+    artifact.sentences,
+    through,
   );
-  const entities = kept.filter((entity) => {
+  const entities = spelled.filter((entity) => {
     const held = holders.get(entity.key);
     if (!held) return true;
     for (const name of entity.names)
@@ -400,4 +514,11 @@ export function xrayEntities(
     entity.names.sort((a, b) => a.ordinal - b.ordinal);
   });
   return entities;
+}
+
+export function withoutNoRole(entities: XrayEntity[], noRole: ReadonlySet<string>, sentences: readonly Sentence[]): XrayEntity[] {
+  if (!noRole.size) return entities;
+  const rest = entities.filter(({ key }) => !noRole.has(key));
+  rankImportance(rest, sentences);
+  return rest;
 }

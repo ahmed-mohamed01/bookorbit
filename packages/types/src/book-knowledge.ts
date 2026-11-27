@@ -96,6 +96,8 @@ export type BookKnowledgeXrayAnchor = StoryGuideAnchor & { n?: number };
 export type BookKnowledgeXraySub = "animal" | "god" | "spirit" | "title";
 export interface BookKnowledgeXrayEntity extends StoryGuideEntity {
   sub?: BookKnowledgeXraySub;
+  /** A game-system stat or skill, from status-screen lines. */
+  tag?: "stat" | "skill";
   /** 1 for the main cast, 2 for the supporting cast, 3 for the rest; ranked by mentions (by the term ranking in nonfiction). */
   importance: 1 | 2 | 3;
   count: number;
@@ -171,10 +173,15 @@ export interface BookKnowledgeXrayPayload extends Omit<StoryGuidePayloadV1, "ent
   entities: BookKnowledgeXrayEntity[];
   links: BookKnowledgeXrayLink[];
   chronicle?: StoryGuideChronicle;
+  /** Fiction or nonfiction, as the build ran; absent from guides built before it was recorded. */
+  mode?: BookKnowledgeXrayMode;
+  modeSource?: BookKnowledgeXrayModeSource;
 }
 export type BookKnowledgeXrayMode = "fiction" | "nonfiction";
+/** Where a build's mode came from: the run's override, the model's answer, or the EPUB's subjects when there was none. */
+export type BookKnowledgeXrayModeSource = "override" | "model" | "subjects";
 export type BookKnowledgeXrayStepId =
-  "kinds" | "ties" | "lines" | "profiles" | "summaries" | "pass" | "about" | "notes" | "facts" | "noteMerge" | "now" | "alias" | "describe";
+  "kinds" | "ties" | "lines" | "profiles" | "summaries" | "pass" | "about" | "notes" | "facts" | "noteMerge" | "now" | "alias" | "describe" | "mode";
 export interface BookKnowledgeXrayMerge {
   rule: string;
   member: string;
@@ -269,8 +276,9 @@ export interface BookKnowledgeXrayRun {
   /** Set by a dry run, which plans every call and sends none. */
   dryRun?: boolean;
   estimate?: BookKnowledgeXrayEstimate | null;
-  /** Fiction or nonfiction, from the EPUB's subjects unless the run overrides it. */
+  /** Fiction or nonfiction: the run's override, else the model's answer, else the EPUB's subjects. */
   mode?: BookKnowledgeXrayMode;
+  modeSource?: BookKnowledgeXrayModeSource;
   /** The ties step's passes over the same pairs, each tie as "a|type|b|cite", for stability checks. */
   tieVote?: { passes: string[][]; overlaps: number[]; agreed: number; single: number; kept: number } | null;
   /** The one-pass build's repeats over the same units, for stability checks: per repeat its items, and what each pair of repeats shares. */

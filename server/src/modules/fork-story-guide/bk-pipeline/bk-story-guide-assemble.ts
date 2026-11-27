@@ -9,7 +9,7 @@ import type {
   StoryGuidePayloadV1,
 } from '@bookorbit/types';
 
-export interface BkExtras {
+export interface BkExtras extends Pick<BookKnowledgeXrayPayload, 'mode' | 'modeSource'> {
   links: BookKnowledgeXrayLink[];
   chronicle?: StoryGuideChronicle;
 }

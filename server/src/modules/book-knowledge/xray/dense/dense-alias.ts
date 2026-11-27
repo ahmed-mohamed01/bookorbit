@@ -6,12 +6,13 @@ import type { Sentence } from '../../core/model';
 import type { Rejections } from '../xray-checks';
 import type { XrayEntity } from '../xray-entities';
 import type { XrayStepRun } from '../xray-runner';
-import { namedFirst, type PassCast } from '../pass/pass-cast';
+import { namedFirst, RANKS, type PassCast } from '../pass/pass-cast';
 import { record } from '../pass/pass-read';
 import type { Ask } from '../pass/pass-run';
 import { citesIn } from './dense-chunks';
 import { PLACE_NOUNS } from '../../core/kind-review';
 import { stopListed, type IdentityEvidence } from './dense-identity';
+import { isJoinedPart } from '../xray-name-fold';
 
 export type AliasReason = 'token' | 'spelling' | 'epithet' | 'dialogue' | 'evidence';
 
@@ -112,13 +113,15 @@ export function aliasCandidates(
   /** Offers `a` and `b` when one name sits inside the other, or one misspells the other; true when it offered. */
   const offerByName = (a: XrayEntity, b: XrayEntity, aName: string, bName: string): boolean => {
     const before = found.size;
+    if (isJoinedPart(aName, bName) || isJoinedPart(bName, aName)) return false;
     const [x, y] = [words(aName), words(bName)];
     const inside = (small: string[], big: string[]) => small.length < big.length && small.every((word) => big.includes(word) && word.length > 2);
     // "Mopti Airport" and "Cassian spring" are places at or named after the shorter name, not other names for it.
     const placeAt = (small: string[], big: string[]) => big.some((word) => !small.includes(word) && SITE_NOUNS.has(word));
     if ((capitalised(aName) || capitalised(bName)) && (inside(x, y) || inside(y, x))) {
       if (!placeAt(x.length < y.length ? x : y, x.length < y.length ? y : x)) offer(a, b, 'token');
-    } else if (
+    } else if (shortFor(a, b, aName, bName)) offer(a, b, 'token');
+    else if (
       capitalised(aName) &&
       capitalised(bName) &&
       aName.length >= 4 &&
@@ -128,7 +131,8 @@ export function aliasCandidates(
       // A misspelling is rare beside the name it misspells; two names a letter or two apart used alike are two people.
       editDistance(aName.toLowerCase(), bName.toLowerCase()) <= 2 &&
       (Math.min(a.count, b.count) * SPELLING_RATIO <= Math.max(a.count, b.count) ||
-        (Math.min(a.count, b.count) < SLIP_MENTIONS && slip(aName.toLowerCase(), bName.toLowerCase())))
+        (Math.min(a.count, b.count) < SLIP_MENTIONS && slip(aName.toLowerCase(), bName.toLowerCase())) ||
+        doubledLetter(aName.toLowerCase(), bName.toLowerCase()))
     )
       offer(a, b, 'spelling');
     return found.size > before;
@@ -136,9 +140,10 @@ export function aliasCandidates(
   // A name joined earlier still names its head: "Bob" is checked against Viv's "Princess Bob", "Bibiane" against her "Viviane".
   const namesOf = (entity: XrayEntity) => [entity.name, ...entity.joins.map((join) => join.name)];
   for (const [index, a] of heads.entries())
-    for (const b of heads.slice(index + 1)) namesOf(a).some((aName) => namesOf(b).some((bName) => offerByName(a, b, aName, bName)));
+    for (const b of heads.slice(index + 1))
+      if (!twoFullNames(a.name, b.name)) namesOf(a).some((aName) => namesOf(b).some((bName) => offerByName(a, b, aName, bName)));
   // Epithets and nicknames are a novel's; in nonfiction a capitalised hub ("AI") would draw every common word.
-  if (mode === 'nonfiction') return [...found.values()].sort((x, y) => y.member.count - x.member.count).slice(0, MAX_CANDIDATES);
+  if (mode === 'nonfiction') return capped(found);
   const named = heads.filter((entity) => capitalised(entity.name));
   for (const { epithet, matches } of epithetMatches(heads, paragraphs))
     if (!possessed(epithet, sentences)) offer(epithet, matches[0].name, 'epithet');
@@ -158,7 +163,33 @@ export function aliasCandidates(
       .slice(0, DIALOGUE_PARTNERS)
       .forEach((pair) => offer(nickname, pair.other, 'dialogue'));
   }
-  return [...found.values()].sort((x, y) => y.member.count - x.member.count).slice(0, MAX_CANDIDATES);
+  return capped(found);
+}
+
+/** The candidates within `MAX_CANDIDATES`: sentence evidence and misspellings first (rare by nature), then by member count. */
+function capped(found: ReadonlyMap<string, AliasCandidate>): AliasCandidate[] {
+  const first = (candidate: AliasCandidate) => (candidate.reason === 'evidence' || candidate.reason === 'spelling' ? 0 : 1);
+  return [...found.values()].sort((x, y) => first(x) - first(y) || y.member.count - x.member.count).slice(0, MAX_CANDIDATES);
+}
+
+/** "Rob" and "Robert": one-word character names, one starting the other, which pattern merges left apart as a scene pair. */
+function shortFor(a: XrayEntity, b: XrayEntity, aName: string, bName: string): boolean {
+  if (a.kind !== 'character' || b.kind !== 'character' || !capitalised(aName) || !capitalised(bName)) return false;
+  if (aName.includes(' ') || bName.includes(' ')) return false;
+  const [short, long] = aName.length < bName.length ? [aName, bName] : [bName, aName];
+  return short.length >= 3 && short !== long && long.startsWith(short);
+}
+
+/**
+ * "John Marsh" and "Tavia Marsh": two full names sharing a word, each with a name word the other lacks, are two people
+ * (a family), even once "Marsh" alone has joined one of them. A title word is no name word ("Lord Varn", "Varn Tallis").
+ */
+export function twoFullNames(a: string, b: string): boolean {
+  const [x, y] = [a.split(/\s+/), b.split(/\s+/)];
+  if (x.length < 2 || y.length < 2 || !x.some((word) => y.includes(word))) return false;
+  const own = (mine: string[], theirs: string[]) =>
+    mine.some((word) => capitalised(word) && !RANKS.has(word.toLowerCase()) && !theirs.includes(word));
+  return own(x, y) && own(y, x);
 }
 
 function paragraphsOf(heads: readonly XrayEntity[], sentences: readonly Sentence[]): Map<XrayEntity, Set<string>> {
@@ -188,19 +219,50 @@ function epithetMatches(heads: readonly XrayEntity[], paragraphs: ReadonlyMap<Xr
 
 /**
  * Epithets code can fold without asking: "the dragonette" when exactly one named entity of its kind passes the epithet test.
- * A stop-listed noun or a possession ("her cloak") stays apart; more than one match goes to the alias ask.
+ * A stop-listed noun or a possession ("her cloak") stays apart; more than one match goes to the alias ask. The fold takes
+ * effect at a sentence that says the two are one when there is one, else where sharing paragraphs with the name becomes
+ * the rule for good: an epithet that sits apart for chapters ("the assassin", unmasked later) folds after its last lone run.
  */
-export function epithetFolds(cast: PassCast, sentences: readonly Sentence[], mode: BookKnowledgeXrayMode = 'fiction'): AliasMerge[] {
+export function epithetFolds(
+  cast: PassCast,
+  sentences: readonly Sentence[],
+  mode: BookKnowledgeXrayMode = 'fiction',
+  evidence: readonly IdentityEvidence[] = [],
+): AliasMerge[] {
   if (mode === 'nonfiction') return [];
   const folds: AliasMerge[] = [];
-  for (const { epithet, matches } of epithetMatches(cast.heads, paragraphsOf(cast.heads, sentences))) {
+  const paragraphs = paragraphsOf(cast.heads, sentences);
+  for (const { epithet, matches } of epithetMatches(cast.heads, paragraphs)) {
     const same = matches.filter(({ name }) => name.kind === epithet.kind);
     if (same.length !== 1 || collective(epithet) || collective(same[0].name) || stopListed(epithet) || possessed(epithet, sentences)) continue;
     const head = same[0].name;
-    const first = epithet.ordinals.find((ordinal) => head.ordinals.includes(ordinal)) ?? epithet.first;
-    folds.push({ member: epithet, head, ordinal: Math.max(first, epithet.first), reason: 'epithet' });
+    const stated = evidence
+      .filter((item) => {
+        const pair = new Set([cast.headOf(item.a), cast.headOf(item.b)]);
+        return pair.size === 2 && pair.has(epithet) && pair.has(head);
+      })
+      .map((item) => item.ordinal);
+    const ordinal = stated.length ? Math.min(...stated) : settledShare(epithet, head, sentences);
+    folds.push({ member: epithet, head, ordinal: Math.max(ordinal, epithet.first), reason: 'epithet' });
   }
   return folds;
+}
+
+/** The sentence after which the epithet's running share of paragraphs with the name never again falls below `EPITHET_SHARE`. */
+function settledShare(epithet: XrayEntity, head: XrayEntity, sentences: readonly Sentence[]): number {
+  const paragraph = (ordinal: number) => `${sentences[ordinal - 1].spineIndex}:${sentences[ordinal - 1].paragraphIndex}`;
+  const named = new Map<string, number>();
+  for (const ordinal of head.ordinals) if (!named.has(paragraph(ordinal))) named.set(paragraph(ordinal), ordinal);
+  const firsts = new Map<string, number>();
+  for (const ordinal of epithet.ordinals) if (!firsts.has(paragraph(ordinal))) firsts.set(paragraph(ordinal), ordinal);
+  let shared = 0;
+  let from = Infinity;
+  [...firsts].forEach(([key, ordinal], index) => {
+    if (named.has(key)) shared++;
+    if (shared < EPITHET_SHARE * (index + 1)) from = Infinity;
+    else if (from === Infinity) from = Math.max(ordinal, named.get(key) ?? ordinal);
+  });
+  return from === Infinity ? epithet.ordinals.at(-1)! : from;
 }
 
 const ALIAS_SYSTEM: Record<BookKnowledgeXrayMode, string> = {
@@ -225,6 +287,8 @@ export interface AliasMerge {
   head: XrayEntity;
   ordinal: number;
   reason: AliasReason;
+  /** The sentences the model was shown and the one it cited, so the join can wait until each counts for its side. */
+  evidence?: { cite: number; shown: readonly number[] };
 }
 
 /**
@@ -312,7 +376,13 @@ export async function aliasMerges(
           // A cite naming only one side may rest on what the model knows of the book, so the join waits for the last sentence shown.
           const both = head.ordinals.includes(cite) && candidate.member.ordinals.includes(cite);
           const ordinal = both ? cite : Math.max(...allowed);
-          merges[index].push({ member: candidate.member, head, ordinal: Math.max(ordinal, candidate.member.first), reason: candidate.reason });
+          merges[index].push({
+            member: candidate.member,
+            head,
+            ordinal: Math.max(ordinal, candidate.member.first),
+            reason: candidate.reason,
+            evidence: { cite, shown: [...allowed] },
+          });
         }
       });
     }),
@@ -328,11 +398,37 @@ export async function aliasMerges(
 export function joinAlias(cast: PassCast, merge: AliasMerge): void {
   const [head, member] = [cast.headOf(merge.head), cast.headOf(merge.member)];
   if (collective(head) || collective(member)) return;
-  const [join, keep] = namedFirst(member, head, () => (member.count > head.count ? [head, member] : [member, head]));
-  cast.merge({ member: join, head: keep, ordinal: merge.ordinal, rule: 'alias', reason: merge.reason });
+  const [join] = namedFirst(member, head, () => (member.count > head.count ? [head, member] : [member, head]));
+  // The names the evidence ties, not their heads: the cast then waits for each name's own join before the heads join.
+  const [from, to] = join === member ? [merge.member, merge.head] : [merge.head, merge.member];
+  cast.merge({ member: from, head: to, ordinal: revealAt(cast, merge), rule: 'alias', reason: merge.reason });
+}
+
+/**
+ * Where an alias answer's evidence is plain to a reader: a head's merged sentences hold its members' from before their
+ * joins, so a cited or shown sentence counts for a side only from where the name it uses has joined that side.
+ */
+function revealAt(cast: PassCast, merge: AliasMerge): number {
+  if (!merge.evidence) return merge.ordinal;
+  const { cite, shown } = merge.evidence;
+  const both = Math.max(cast.namedFrom(merge.head, cite), cast.namedFrom(merge.member, cite));
+  if (both !== Infinity) return Math.max(both, merge.member.first);
+  const known = shown.map((ordinal) => {
+    const from = Math.min(cast.namedFrom(merge.head, ordinal), cast.namedFrom(merge.member, ordinal));
+    return from === Infinity ? ordinal : from;
+  });
+  return Math.max(merge.ordinal, ...known);
 }
 
 /** One letter changed, added or dropped, or two neighbours swapped: "Nyil" for "Niyl". */
+/** One name with a doubled letter written single (Barran, Baran): a spelling the book uses both ways, however often; the alias ask decides. */
+export function doubledLetter(a: string, b: string): boolean {
+  const [short, long] = a.length < b.length ? [a, b] : [b, a];
+  if (long.length !== short.length + 1) return false;
+  for (let i = 1; i < long.length; i++) if (long[i] === long[i - 1] && long.slice(0, i) + long.slice(i + 1) === short) return true;
+  return false;
+}
+
 function slip(a: string, b: string): boolean {
   if (editDistance(a, b) <= 1) return true;
   if (a.length !== b.length) return false;

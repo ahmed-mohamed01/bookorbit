@@ -1,5 +1,11 @@
 import type { BookKnowledgeXrayMode } from '@bookorbit/types';
 import { wordRarity } from './common-words';
+import { normalizeLast, words } from './text-utils';
+
+export function isDictionaryTerm(name: string): boolean {
+  const parts = words(name).flatMap((word) => word.split('-'));
+  return parts.length > 0 && parts.every((word) => wordRarity(word) < 1 || wordRarity(normalizeLast(word)) < 1);
+}
 
 /** Closed-class and all-purpose words the term ranking can surface in lowercase; never an entity of their own. */
 const GENERIC_WORDS = new Set(
@@ -17,8 +23,8 @@ const FICTION_EXCLAMATIONS = new Set(
   (
     'fuck fucking fucked fucker fuckers motherfucker motherfuckers shit shits shitty shithead shitheads bullshit damn damned goddamn ' +
     'goddamned crap hell bloody ugh huh hmm wow ass asses asshole assholes arse arsehole arseholes jackass dumbass bastard bastards ' +
-    'bitch bitches bitching dick dicks dickhead dickheads prick pricks piss pissed cunt cunts wanker wankers bollocks twat twats ballsack ' +
-    'alright okay yeah yep nope uh um erm dude bro'
+    'bitch bitches bitching dick dicks dickhead dickheads prick pricks piss pissed cunt cunts wanker wankers bollocks twat twats ' +
+    'alright okay yeah yep nope uh um erm dude bro dang darn heck whoa gosh geez jeez yikes oops phew'
   ).split(' '),
 );
 
@@ -54,4 +60,38 @@ export function isGenericTerm(name: string, mode: BookKnowledgeXrayMode): boolea
   if (mode === 'fiction') return name.split(/[\s-]+/).every((word) => GENERIC_WORDS.has(word) || wordRarity(word) <= FICTION_COMMON_RARITY);
   if (name.includes(' ')) return false;
   return GENERIC_WORDS.has(name) || wordRarity(name) === 0;
+}
+
+/** Units of measure: a novel's numbers, never its things. */
+const UNITS = new Set(
+  (
+    'millimeter centimeter meter kilometer millimetre centimetre metre kilometre inch foot feet yard mile gram milligram kilogram ' +
+    'tonne ton pound ounce liter litre milliliter millilitre gallon second minute hour day week month year decade century ' +
+    'millisecond microsecond nanosecond degree kelvin celsius fahrenheit percent newton joule watt kilowatt megawatt volt amp ampere ' +
+    'hertz kilohertz megahertz gigahertz calorie kilocalorie lightyear parsec'
+  ).split(' '),
+);
+
+/** Peoples and nationalities as a word ("Canadian", "the Russians"): a description of someone, never a cast entry of its own in a novel. */
+const NATIONALITIES = new Set(
+  (
+    'american canadian mexican brazilian argentinian chilean peruvian colombian cuban british english scottish welsh irish french ' +
+    'german dutch belgian swiss austrian italian spanish portuguese greek swedish norwegian danish finnish icelandic polish czech ' +
+    'hungarian romanian bulgarian serbian croatian ukrainian russian belarusian turkish israeli arab arabian egyptian iranian iraqi ' +
+    'saudi syrian lebanese afghan pakistani indian bangladeshi nepalese chinese japanese korean vietnamese thai filipino indonesian ' +
+    'malaysian australian african nigerian kenyan ethiopian ghanaian european asian soviet'
+  ).split(' '),
+);
+
+/** A lowercase unit of measure ("kilometers", "kilograms") in a novel. */
+export function isUnitTerm(name: string, mode: BookKnowledgeXrayMode): boolean {
+  if (mode !== 'fiction' || name !== name.toLowerCase() || /\s/.test(name)) return false;
+  return UNITS.has(name) || UNITS.has(name.replace(/e?s$/, '')) || UNITS.has(name.replace(/s$/, ''));
+}
+
+/** A one-word nationality or people ("Canadian", "Russians") in a novel. */
+export function isNationalityTerm(name: string, mode: BookKnowledgeXrayMode): boolean {
+  if (mode !== 'fiction' || /\s/.test(name)) return false;
+  const word = name.toLowerCase();
+  return NATIONALITIES.has(word) || NATIONALITIES.has(word.replace(/s$/, ''));
 }

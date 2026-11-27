@@ -39,6 +39,8 @@ export class BookKnowledgeService implements OnApplicationBootstrap, OnModuleDes
   private readonly logger = new Logger(BookKnowledgeService.name);
   private pumping = false;
   private activeBookId: number | null = null;
+  /** Books an X-Ray build is reading and writing; cleanup leaves their files alone until the build lets go. */
+  private readonly held = new Map<number, number>();
   private stopped = false;
   private timer?: ReturnType<typeof setInterval>;
   constructor(
@@ -95,23 +97,20 @@ export class BookKnowledgeService implements OnApplicationBootstrap, OnModuleDes
   xrayUnitsPath(bookId: number, fingerprint: string): string {
     return join(dirname(this.path(bookId, fingerprint)), 'xray-units.jsonl.gz');
   }
+  /** Keeps cleanup off the book's files until the returned release is called. */
+  hold(bookId: number): () => void {
+    this.held.set(bookId, (this.held.get(bookId) ?? 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const left = (this.held.get(bookId) ?? 1) - 1;
+      if (left) this.held.set(bookId, left);
+      else this.held.delete(bookId);
+    };
+  }
   private glinerOptions() {
     return { directory: join(this.storage.appDataPath, 'models', 'gliner_medium-v2.1'), threads: this.config.glinerThreads };
-  }
-  /** The ready, current artifact and its fingerprint, or null. Never queues a build, and checks no access: callers have. */
-  async peek(bookId: number): Promise<{ artifact: Artifact; fingerprint: string } | null> {
-    const source = await this.source(bookId).catch(() => null);
-    const row = source ? await this.repo.state(bookId) : null;
-    if (
-      !source ||
-      row?.status !== 'ready' ||
-      row.fingerprint !== source.fingerprint ||
-      row.textVersion !== TEXT_VERSION ||
-      row.termsVersion !== TERMS_VERSION
-    )
-      return null;
-    const artifact = await this.load(bookId, this.path(bookId, source.fingerprint));
-    return artifact ? { artifact, fingerprint: source.fingerprint } : null;
   }
   async context(bookId: number, user: RequestUser, scope: BookKnowledgeScope = 'position', required = true) {
     await this.books.verifyBookAccess(bookId, user);
@@ -288,7 +287,7 @@ export class BookKnowledgeService implements OnApplicationBootstrap, OnModuleDes
       let cleaned = 0;
       let failed = 0;
       for (const bookId of ids) {
-        if (this.activeBookId === bookId) continue;
+        if (this.activeBookId === bookId || this.held.has(bookId)) continue;
         const bookStarted = Date.now();
         try {
           await this.cleanBook(bookId);

@@ -3,7 +3,7 @@ import type { Sentence } from '../../core/model';
 import type { XrayEntity } from '../xray-entities';
 import { namedFirst, RANKS, type PassCast } from '../pass/pass-cast';
 
-export type IdentityRule = 'vocative' | 'apposition' | 'title' | 'naming' | 'screen';
+export type IdentityRule = 'vocative' | 'apposition' | 'title' | 'naming' | 'screen' | 'abbreviation';
 
 export interface IdentityEvidence {
   a: XrayEntity;
@@ -45,6 +45,8 @@ const ADDRESS = '(?:said|whispered|shouted|called|replied|answered|muttered|murm
 const NAMING =
   /,\s+or\s+(?:\S+\s+){0,4}$|\b(?:(?:(?:was|is|also)\s+called|called\s+(?:herself|himself|themselves|itself))|known as|real name(?:\s+(?:is|was))?)\s+(?:the\s+)?$/i;
 const SCREEN_NAME = /(?:^|[[\s|])Name\s*:\s*$/;
+/** A short form in capitals ("LN", "IRs"), as a book writes it in brackets after the name it shortens. */
+const ABBREVIATION = /^\p{Lu}[\p{Lu}\p{N}]{1,5}s?$/u;
 
 interface Spot {
   entity: XrayEntity;
@@ -125,6 +127,13 @@ export function identityEvidence(entities: readonly XrayEntity[], sentences: rea
         besideFound.push({ a: next.entity, b: spot.entity, rule: 'title', ordinal });
         beside.set(spot.entity, (beside.get(spot.entity) ?? new Set()).add(next.entity));
       }
+      // "the long name (LN)" or "LN (the long name)": a short form in brackets right after the name, or the reverse.
+      if (
+        /^\s*\($/.test(between) &&
+        /^\)/.test(text.slice(next.end)) &&
+        ABBREVIATION.test(text.slice(spot.start, spot.end)) !== ABBREVIATION.test(text.slice(next.start, next.end))
+      )
+        add(next.entity, spot.entity, 'abbreviation', ordinal);
       for (const later of found.slice(index + 1))
         if (NAMING.test(text.slice(spot.end, later.start)) && !/[.;:!?]/.test(text.slice(spot.end, later.start))) {
           add(spot.entity, later.entity, 'naming', ordinal);

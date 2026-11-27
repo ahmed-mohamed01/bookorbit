@@ -1,37 +1,35 @@
 import { escapeRegExp, WORD_EDGE } from '../../story-guides/pipeline/name-text';
-import { wordRarity } from '../core/common-words';
+import { isDictionaryTerm } from '../core/generic-terms';
 import type { Sentence, VisibleTerm } from '../core/model';
 import { createTokenizer } from '../core/term-extractor';
-import { normalizeLast, termKey, words } from '../core/text-utils';
+import { termKey, words } from '../core/text-utils';
 
-const isDictionaryWord = (word: string): boolean => wordRarity(word) < 1 || wordRarity(normalizeLast(word)) < 1;
-
-export function isDictionaryTerm(name: string): boolean {
-  const parts = words(name).flatMap((word) => word.split('-'));
-  return parts.length > 0 && parts.every(isDictionaryWord);
-}
+/** A lowercase compound over this share of its last word's uses is a thing of its own ("coma slurry"), not that word described. */
+const OWN_COMPOUND_SHARE = 1 / 3;
 
 export function descriptiveEntries(terms: readonly VisibleTerm[]): Set<string> {
-  const names = new Set<string>();
+  const names = new Map<string, number>();
   const folded = new Set<string>();
   const byLength = terms
-    .map(({ key, displayName }) => ({ key, displayName, parts: words(displayName) }))
+    .map(({ key, displayName, count }) => ({ key, displayName, count, parts: words(displayName) }))
     .sort((a, b) => a.parts.length - b.parts.length);
-  for (const { key, displayName, parts } of byLength) {
+  for (const { key, displayName, count, parts } of byLength) {
     if (displayName === displayName.toLowerCase()) {
       const heads = [parts];
       // A generic head can follow the name of the creature being described.
       if (/^creatures?$/.test(parts.at(-1) ?? '')) heads.push(parts.slice(0, -1));
-      if (
-        heads.some((head) =>
-          head.some((_, start) => start > 0 && head.slice(0, start).every(isDictionaryTerm) && names.has(termKey(head.slice(start).join(' ')))),
-        )
-      ) {
+      const described = (head: string[]) =>
+        head.some((_, start) => {
+          if (start === 0 || !head.slice(0, start).every(isDictionaryTerm)) return false;
+          const named = names.get(termKey(head.slice(start).join(' ')));
+          return named !== undefined && count <= named * OWN_COMPOUND_SHARE;
+        });
+      if (heads.some(described)) {
         folded.add(key);
         continue;
       }
     }
-    names.add(termKey(displayName));
+    names.set(termKey(displayName), count);
   }
   return folded;
 }

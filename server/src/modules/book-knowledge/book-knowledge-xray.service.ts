@@ -1,7 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import {
-  type BookKnowledgeXrayEstimate,
   type BookKnowledgeXrayMode,
   type BookKnowledgeXrayPayload,
   type BookKnowledgeXrayRun,
@@ -15,7 +14,7 @@ import { AiError, isAiError, type AiEffort, type AiResult, type AiSlotChoice as 
 import { AiJobFailure, AiJobPause } from '../ai-jobs/ai-feature';
 import { BookReadService } from '../book/book-read.service';
 import { readBookText } from '../story-guides/text/book-text-reader';
-import { BookKnowledgeModelService, CLASSIFY_TEMPERATURE } from './book-knowledge-model.service';
+import { BookKnowledgeModelService, bookKnowledgeTuning, CLASSIFY_TEMPERATURE } from './book-knowledge-model.service';
 import { BookKnowledgeService } from './book-knowledge.service';
 import { fractionToOrdinal } from './core/cutoff';
 import { readEpubMetadata } from './core/epub-metadata';
@@ -31,7 +30,7 @@ import {
 import type { Artifact } from './core/model';
 import { XrayAnchors } from './xray/xray-anchors';
 import { densePlannedCalls } from './xray/dense/dense-estimate';
-import { headingPairs, windowLinks } from './xray/dense/dense-links';
+import { cardLine, headingPairs, systemLine, windowLinks } from './xray/dense/dense-links';
 import { DENSE_PROMPT_VERSION } from './xray/dense/dense-prompt';
 import { runDense } from './xray/dense/dense-run';
 import type { PassSlot } from './xray/pass/pass-cast';
@@ -40,20 +39,52 @@ import type { Ask } from './xray/pass/pass-run';
 import { spoilerSweep, stateCounts } from './xray/pass/pass-state';
 import { passUnits } from './xray/pass/pass-units';
 import { bodySections, sectionCharacters } from './xray/xray-evidence';
-import { xrayEntities } from './xray/xray-entities';
+import { withoutNoRole, xrayEntities } from './xray/xray-entities';
 import { namesAt } from './xray/xray-lines';
 import { linkCheckpoints } from './xray/xray-links';
-import { modeFromSubjects } from './xray/xray-mode';
+import { modeOpening, modeUser, parseModeAnswer, resolveMode, XRAY_MODE_MAX_TOKENS, XRAY_MODE_SYSTEM } from './xray/xray-mode';
 import { xrayPayload } from './xray/xray-payload';
 import { estimate } from './xray/xray-plan';
-import { capped, inOrder, limiter, retryable, XrayPrivacy, XrayRunCalls, XrayStepRun } from './xray/xray-runner';
+import { capped, inOrder, limiter, refusedRequest, retryable, XrayPrivacy, XrayRunCalls, XrayStepRun } from './xray/xray-runner';
 import { replayable, XrayUnitStore } from './xray/xray-unit-store';
+import {
+  missingRoleVoteShare,
+  parseRoleAnswers,
+  parseRoleReply,
+  ROLE_ESCALATION_VOTES,
+  ROLE_MISSING_VOTES_FLOOR,
+  ROLE_REVIEW_TEMPERATURE,
+  ROLE_REVIEW_VOTES,
+  roleReviewBatches,
+  roleReviewCandidates,
+  roleReviewSystem,
+  roleReviewVersion,
+  tallyRoleVotes,
+  type RoleAnswer,
+} from './xray/xray-role-review';
 import { XraySlot } from './xray/xray-slot';
 
 const KEPT_RUNS = 4;
 const RUN_PREFIX = 'bk-xray-';
 const XRAY_EFFORT: AiEffort = 'low';
 const CANCELLED = 'cancelled';
+/** The steps that write the reader-facing entry text, on the careful slot when it names another model. */
+const WRITE_STEPS: ReadonlySet<BookKnowledgeXrayStepId> = new Set(['describe', 'now', 'about']);
+
+const sameModel = (a: AiModelChoice, b: AiModelChoice) => a.connectionId === b.connectionId && a.model === b.model;
+
+/**
+ * What a stored answer is keyed on beyond the prompt: the connection, since two can serve the same model name, and the
+ * effort that is actually sent once the slot's own setting and Book Knowledge's tuning have had their say.
+ */
+export function replayIdentity(use: AiModelChoice, effort: AiEffort | undefined, replayScope: string | undefined): Record<string, unknown> {
+  return {
+    model: use.model,
+    connectionId: use.connectionId,
+    sentEffort: use.effort ?? bookKnowledgeTuning(use.model, { effort }).effort ?? null,
+    ...(replayScope === undefined ? {} : { replayScope }),
+  };
+}
 
 interface StoredRun {
   run: BookKnowledgeXrayRun;
@@ -69,6 +100,8 @@ interface BuildInput {
   fingerprint: string;
   bookPath: string;
   fast: AiModelChoice;
+  /** Writes the entry text (describe, now, about); the fast choice when the careful slot is empty. */
+  careful: AiModelChoice;
   complete: XrayCompleter;
   dryRun: boolean;
   /** Ignore the stored answers of earlier builds, so a bench run measures every call. */
@@ -76,6 +109,8 @@ interface BuildInput {
   /** Part of every stored answer's key, so a new scope (a rebuilt job's generation) asks the model again. */
   replayScope?: string;
   onProgress?: XrayBuildProgress;
+  /** The book's genre subjects, which decide the mode when the model does not. */
+  subjects: readonly string[];
 }
 
 export type XrayBuildStage = 'kinds' | 'alias' | 'dense' | 'finish';
@@ -101,22 +136,35 @@ type AskWith = (
   maxOutputTokens: number,
   effort?: AiEffort,
   temperature?: number,
+  optionalReviewVersion?: number,
 ) => () => Promise<AiResult>;
 
 /** Hosted calls in flight at once in a dense run. */
 const DENSE_CONCURRENCY = 8;
+/** Removed role review names written to the end log line. */
+const ROLE_REVIEW_LOGGED_NAMES = 60;
 
 /** The steps whose skipped units lower a story guide build's coverage; an empty alias, now or about result is normal. */
 export const BK_COVERAGE_STEPS: readonly BookKnowledgeXrayStepId[] = ['kinds', 'notes', 'facts', 'describe', 'ties'];
-/** A step with fewer units is left out of coverage: one refused batch of a handful would fail an otherwise sound build. */
+/**
+ * A step with fewer units is left out of coverage, one refused batch of a handful would fail an otherwise sound build,
+ * unless less than `BK_SMALL_STEP_MIN_ANSWERED` of them answered: a short work whose units were all refused is not covered.
+ */
 export const BK_COVERAGE_MIN_UNITS = 10;
+export const BK_SMALL_STEP_MIN_ANSWERED = 0.5;
 
 /** The lowest share of units that returned a valid answer over the counted steps; 1 when none is counted. */
 export function storyGuideCoverage(steps: readonly BookKnowledgeXrayStep[]): number {
   let coverage = 1;
   for (const step of steps) {
-    if (!BK_COVERAGE_STEPS.includes(step.step) || step.units < BK_COVERAGE_MIN_UNITS) continue;
-    coverage = Math.min(coverage, (step.units - step.skipped) / step.units);
+    if (!BK_COVERAGE_STEPS.includes(step.step)) continue;
+    const roleUnits = step.step === 'kinds' ? (step.counts?.roleReviewUnits ?? 0) : 0;
+    const units = step.units - roleUnits;
+    if (units <= 0) continue;
+    const skippedRoleUnits = roleUnits ? (step.skippedUnits?.filter((id) => id.startsWith('r')).length ?? 0) : 0;
+    const answered = (units - step.skipped + skippedRoleUnits) / units;
+    if (units < BK_COVERAGE_MIN_UNITS && answered >= BK_SMALL_STEP_MIN_ANSWERED) continue;
+    coverage = Math.min(coverage, answered);
   }
   return coverage;
 }
@@ -145,11 +193,13 @@ export class BookKnowledgeXrayService {
       const abort = new AbortController();
       const fast = await this.model.choice('fast');
       if (!fast) throw new ServiceUnavailableException('Book Knowledge model is not configured');
+      const careful = (await this.model.choice('careful')) ?? fast;
       const { stored, input } = await this.prepare(bookId, user, {
         ...options,
         runId: `${RUN_PREFIX}${jobId}`,
         abort,
         fast,
+        careful,
         // The usage ledger joins AI jobs on a UUID, so it gets the ID without the bench prefix.
         complete: (request) => this.model.complete({ ...request, jobId, signal: abort.signal }),
       });
@@ -162,21 +212,6 @@ export class BookKnowledgeXrayService {
       release();
       throw error;
     }
-  }
-
-  async planEstimate(bookId: number, user: RequestUser): Promise<BookKnowledgeXrayEstimate> {
-    const fast = await this.model.choice('fast');
-    if (!fast) throw new ServiceUnavailableException('Book Knowledge model is not configured');
-    const { input } = await this.prepare(bookId, user, {
-      runId: `${RUN_PREFIX}${randomUUID()}`,
-      abort: new AbortController(),
-      fast,
-      complete: () => Promise.reject(new AiJobFailure('error', 'A dry run makes no model calls')),
-      dryRun: true,
-    });
-    await this.build(input);
-    if (!input.run.estimate) throw new AiJobFailure('error', 'X-Ray plan returned no estimate');
-    return input.run.estimate;
   }
 
   /** The payload's coverage is the lower of the book share read and the counted steps' answered share. */
@@ -215,6 +250,8 @@ export class BookKnowledgeXrayService {
         runId: `${RUN_PREFIX}${randomUUID()}`,
         abort,
         fast: use,
+        // The engine sends every request on the step's fast slot, so the job's entry text stays on fast too.
+        careful: use,
         // The job engine replaces use with its recorded model, so the cap rides on request.maxOutputTokens.
         complete,
         fileId,
@@ -249,9 +286,9 @@ export class BookKnowledgeXrayService {
     bookId: number,
     user: RequestUser,
     options: XrayRunOptions &
-      Pick<BuildInput, 'fast' | 'complete' | 'onProgress' | 'replayScope'> & { runId: string; abort: AbortController; fileId?: number },
+      Pick<BuildInput, 'fast' | 'careful' | 'complete' | 'onProgress' | 'replayScope'> & { runId: string; abort: AbortController; fileId?: number },
   ): Promise<{ stored: StoredRun; input: BuildInput }> {
-    const { runId, abort, fast, complete, through, dryRun = false } = options;
+    const { runId, abort, fast, careful, complete, through, dryRun = false } = options;
     // A job reads the file without a ready index too, so a switch to an unindexed file reports the switch.
     const { artifact, fingerprint, file } = await this.knowledge.context(bookId, user, 'full', options.fileId === undefined).catch((error) => {
       if (options.fileId !== undefined && error instanceof BadRequestException) throw new AiJobFailure('unreadable', error.message);
@@ -267,6 +304,8 @@ export class BookKnowledgeXrayService {
         ? (await readEpubMetadata(file.absolutePath).catch(() => undefined))?.subjects
         : (await this.read.findById(bookId))?.genreRows.map(({ name }) => name);
     const full = fractionToOrdinal(artifact.sentences, 1);
+    // The model's answer replaces this at the start of a build that sends calls; a dry run keeps it.
+    const initial = resolveMode(options.mode, null, subjects ?? []);
     const run: BookKnowledgeXrayRun = {
       runId,
       bookId,
@@ -280,7 +319,8 @@ export class BookKnowledgeXrayService {
       counts: null,
       dryRun,
       estimate: null,
-      mode: options.mode ?? modeFromSubjects(subjects ?? []),
+      mode: initial.mode,
+      modeSource: initial.source,
       tieVote: null,
       passRepeats: null,
     };
@@ -295,11 +335,13 @@ export class BookKnowledgeXrayService {
         fingerprint,
         bookPath: file.absolutePath,
         fast,
+        careful,
         complete,
         dryRun,
         fresh: options.fresh ?? false,
         replayScope: options.replayScope,
         onProgress: options.onProgress,
+        subjects: subjects ?? [],
       },
     };
   }
@@ -338,9 +380,10 @@ export class BookKnowledgeXrayService {
     const ids = `runId=${run.runId} bookId=${run.bookId}`;
     const started = Date.now();
     this.logger.log(
-      `[book_knowledge.xray] [start] ${ids} through=${run.through} dryRun=${run.dryRun} fast=${sanitizeLogValue(input.fast.model)} fresh=${input.fresh} - X-Ray build started`,
+      `[book_knowledge.xray] [start] ${ids} through=${run.through} dryRun=${run.dryRun} fast=${sanitizeLogValue(input.fast.model)} careful=${sanitizeLogValue(input.careful.model)} fresh=${input.fresh} - X-Ray build started`,
     );
     const calls = new XrayRunCalls(stored.abort);
+    const releaseFiles = this.knowledge.hold(run.bookId);
     const opened: { store: XrayUnitStore | null } = { store: null };
     const closeStore = () => opened.store?.close();
     calls.signal.addEventListener('abort', closeStore, { once: true });
@@ -377,6 +420,7 @@ export class BookKnowledgeXrayService {
       throw failure;
     } finally {
       calls.signal.removeEventListener('abort', closeStore);
+      releaseFiles();
     }
   }
 
@@ -386,7 +430,7 @@ export class BookKnowledgeXrayService {
     calls: XrayRunCalls,
     opened: { store: XrayUnitStore | null },
   ): Promise<BookKnowledgeXrayPayload | null> {
-    const { run, artifact, fingerprint, bookPath, fast, complete, dryRun, onProgress } = input;
+    const { run, artifact, fingerprint, bookPath, fast, careful, complete, dryRun, onProgress } = input;
     const through = run.through;
     const sentences = artifact.sentences;
     const text = await readBookText(bookPath);
@@ -404,21 +448,27 @@ export class BookKnowledgeXrayService {
       run.privacy.distinctSentences = privacy.sent.size;
       run.privacy.distinctCharacters = privacy.distinctCharacters();
     };
+    const writer = sameModel(fast, careful) ? fast : careful;
     const step = (id: BookKnowledgeXrayRun['steps'][number]['step']) => {
-      const current = new XrayStepRun(id, 'fast', privacy, this.logger, ids, store ?? undefined);
+      const slot = WRITE_STEPS.has(id) && writer !== fast ? 'careful' : 'fast';
+      const current = new XrayStepRun(id, slot, privacy, this.logger, ids, store ?? undefined);
       run.steps.push(current.record);
-      this.logger.log(`[book_knowledge.xray_step] [start] ${ids} step=${id} slot=fast - step started`);
+      this.logger.log(`[book_knowledge.xray_step] [start] ${ids} step=${id} slot=${slot} - step started`);
       return current;
     };
     const finish = (current: XrayStepRun) => {
       const record = current.finish();
       syncPrivacy();
+      const roleReviewCounts =
+        record.step === 'kinds'
+          ? ` roleReviewCalls=${record.counts?.roleReviewCalls ?? 0} roleReviewEscalated=${record.counts?.roleReviewEscalated ?? 0} roleReviewRemoved=${record.counts?.roleReviewRemoved ?? 0} roleReviewMinor=${record.counts?.roleReviewMinor ?? 0}`
+          : '';
       this.logger.log(
-        `[book_knowledge.xray_step] [end] ${ids} step=${record.step} durationMs=${Date.parse(record.end!) - Date.parse(record.start)} units=${record.units} calls=${record.calls} invalid=${record.invalid} skipped=${record.skipped} replayed=${record.counts?.replayed ?? 0} sentences=${record.privacy.sentences} characters=${record.privacy.characters} - step completed`,
+        `[book_knowledge.xray_step] [end] ${ids} step=${record.step} durationMs=${Date.parse(record.end!) - Date.parse(record.start)} units=${record.units} calls=${record.calls}${roleReviewCounts} invalid=${record.invalid} skipped=${record.skipped} replayed=${record.counts?.replayed ?? 0} sentences=${record.privacy.sentences} characters=${record.privacy.characters} - step completed`,
       );
     };
     const gate = limiter(DENSE_CONCURRENCY);
-    const ask: AskWith = (use, system, user, maxOutputTokens, effort = XRAY_EFFORT, temperature) => {
+    const ask: AskWith = (use, system, user, maxOutputTokens, effort = XRAY_EFFORT, temperature, optionalReviewVersion) => {
       const request = { system, user, maxOutputTokens, effort, ...(temperature === undefined ? {} : { temperature }) };
       const signal = calls.signal;
       return replayable(
@@ -431,6 +481,8 @@ export class BookKnowledgeXrayService {
                 signal.throwIfAborted();
                 return result;
               } catch (error) {
+                if (optionalReviewVersion !== undefined && !signal.aborted && refusedRequest(error))
+                  throw new AiError('invalid-json', 'Role review did not return an answer');
                 // Stop queued asks before the limiter hands this call's place to the next one.
                 if (!retryable(error)) input.stored.abort.abort(error === undefined ? new Error('X-Ray build failed') : error);
                 throw error;
@@ -439,18 +491,64 @@ export class BookKnowledgeXrayService {
           ),
         {
           ...request,
-          model: use.model,
-          ...(input.replayScope === undefined ? {} : { replayScope: input.replayScope }),
+          ...replayIdentity(use, effort, input.replayScope),
+          ...(optionalReviewVersion === undefined ? {} : { reviewVersion: optionalReviewVersion }),
         },
       );
     };
 
+    const modeAsk = run.modeSource === 'override' ? null : await this.modePrompt(input);
+    calls.signal.throwIfAborted();
+    if (modeAsk && !dryRun) {
+      const current = step('mode');
+      const answer = await this.askMode(input, current, modeAsk, ids, calls.signal);
+      finish(current);
+      const resolved = resolveMode(undefined, answer, input.subjects);
+      run.mode = resolved.mode;
+      run.modeSource = resolved.source;
+    }
     const mode = run.mode ?? 'fiction';
     const reviews = planKindReview(artifact, reviewCheckpoint(sentences, through), mode, true);
-    const answers = dryRun ? new Map<string, KindAnswer>() : await this.reviewKinds(reviews, step('kinds'), fast, ask, finish, onProgress);
+    const kinds = dryRun ? null : step('kinds');
+    const answers = kinds ? await this.reviewKinds(reviews, kinds, fast, ask, onProgress) : new Map<string, KindAnswer>();
 
     const dropped = { generic: 0, fragment: 0 };
-    const entities = xrayEntities(artifact, through, answers, mode, undefined, dropped);
+    let entities = xrayEntities(artifact, through, answers, mode, undefined, dropped);
+    const roleCandidates = roleReviewCandidates(entities);
+    const roleBatches = roleReviewBatches(artifact, roleCandidates.candidates, entities, through);
+    let roleRemoved = 0;
+    if (kinds) {
+      const started = Date.now();
+      this.logger.log(
+        `[book_knowledge.xray_role_review] [start] ${ids} mode=${mode} candidates=${roleCandidates.candidates.length} trimmed=${roleCandidates.trimmed} batches=${roleBatches.length} votes=${ROLE_REVIEW_VOTES} - role review started${roleCandidates.trimmed ? ', least mentioned entries trimmed' : ''}`,
+      );
+      const strict = new Set(roleCandidates.candidates.filter(({ kind }) => kind === 'character').map(({ key }) => key));
+      const rebatch = (keys: ReadonlySet<string>) =>
+        roleReviewBatches(
+          artifact,
+          roleCandidates.candidates.filter(({ key }) => keys.has(key)),
+          entities,
+          through,
+        );
+      const votes = await this.reviewRoles(roleBatches, rebatch, strict, kinds, fast, ask, reviews.length, mode, onProgress);
+      const kept = withoutNoRole(entities, votes.removed, sentences);
+      const removedNames = entities.filter(({ key }) => votes.removed.has(key)).map(({ name }) => name);
+      roleRemoved = entities.length - kept.length;
+      entities = kept;
+      kinds.tally('counts', {
+        roleReviewCalls: 0,
+        roleReviewUnits: 0,
+        roleReviewRemoved: roleRemoved,
+        roleReviewMinor: votes.minor.size,
+        roleReviewEscalated: votes.escalated,
+      });
+      const shown = removedNames.slice(0, ROLE_REVIEW_LOGGED_NAMES).join('; ');
+      const more = removedNames.length > ROLE_REVIEW_LOGGED_NAMES ? ` (+${removedNames.length - ROLE_REVIEW_LOGGED_NAMES} more)` : '';
+      this.logger.log(
+        `[book_knowledge.xray_role_review] [end] ${ids} durationMs=${Date.now() - started} calls=${kinds.record.counts?.roleReviewCalls ?? 0} escalated=${votes.escalated} removed=${roleRemoved} minor=${votes.minor.size} names="${sanitizeLogValue(shown + more, 2000)}" - role review completed`,
+      );
+      finish(kinds);
+    }
     const sections = bodySections(sentences, through);
     run.privacy.bookCharacters = sectionCharacters(sentences, sections);
     run.privacy.bookSentences = sections.reduce((sum, section) => sum + section.ordinals.length, 0);
@@ -463,10 +561,14 @@ export class BookKnowledgeXrayService {
       units: units.length,
       linkCheckpoints: linkCheckpoints(sections).length,
       genericDropped: dropped.generic,
+      roleRemoved,
       fragmentDropped: dropped.fragment,
     };
     if (dryRun) {
-      run.estimate = estimate(densePlannedCalls(reviews, units, entities, sentences, mode));
+      run.estimate = estimate([
+        ...(modeAsk ? [{ step: 'mode' as const, promptCharacters: XRAY_MODE_SYSTEM.length + modeAsk.user.length }] : []),
+        ...densePlannedCalls(reviews, roleBatches, units, entities, sentences, mode),
+      ]);
       run.counts = counts;
       return null;
     }
@@ -481,18 +583,22 @@ export class BookKnowledgeXrayService {
       about: step('about'),
     };
     // A capped ask lowers the slot's own output limit, so upstream's client has no room to double into, and asks for no more than that.
-    const dense: Ask = (request) => {
-      const limit = request.capped ? Math.min(fast.maxOutputTokens ?? Infinity, request.maxOutputTokens) : request.maxOutputTokens;
-      const send = ask(
-        request.capped ? { ...fast, maxOutputTokens: limit } : fast,
-        request.system,
-        request.user,
-        limit,
-        request.effort,
-        request.temperature,
-      );
-      return request.capped ? capped(send) : send;
-    };
+    const askOn =
+      (use: AiModelChoice): Ask =>
+      (request) => {
+        const limit = request.capped ? Math.min(use.maxOutputTokens ?? Infinity, request.maxOutputTokens) : request.maxOutputTokens;
+        const send = ask(
+          request.capped ? { ...use, maxOutputTokens: limit } : use,
+          request.system,
+          request.user,
+          limit,
+          request.effort,
+          request.temperature,
+        );
+        return request.capped ? capped(send) : send;
+      };
+    const dense = askOn(fast);
+    const write = writer === fast ? dense : askOn(writer);
     onProgress?.('alias', 0, 0);
     const result = await runDense({
       entities,
@@ -502,14 +608,26 @@ export class BookKnowledgeXrayService {
       ...steps,
       writesAbout: (slot: PassSlot) => slot.member === null && slot.head.importance <= 2,
       ask: dense,
-      askAbout: dense,
+      askWrite: write,
+      askAbout: write,
       readDescription: async () => (await this.read.findById(run.bookId))?.book.book_metadata?.description ?? null,
       onUnit: onProgress && ((done, total) => onProgress('dense', done, total)),
     });
     onProgress?.('finish', 0, 0);
     for (const current of Object.values(steps)) finish(current);
-    const links = windowLinks(result.cast, units, [...result.linkPairs, ...headingPairs(result.cast, sentences, units, mode)]);
-    await store?.flush();
+    const links = windowLinks(
+      result.cast,
+      units,
+      [...result.linkPairs, ...headingPairs(result.cast, sentences, units, mode)],
+      (ordinal) => systemLine(sentences[ordinal - 1].text),
+      (ordinal) => cardLine(sentences[ordinal - 1].text),
+    );
+    const compactStarted = Date.now();
+    const unused = (await store?.compact()) ?? 0;
+    if (unused)
+      this.logger.log(
+        `[book_knowledge.xray_units] [end] ${ids} durationMs=${Date.now() - compactStarted} dropped=${unused} - unused stored answers dropped`,
+      );
     if (store?.failedWrites)
       this.logger.warn(
         `[book_knowledge.xray_units] [fail] ${ids} durationMs=0 failedWrites=${store.failedWrites} errorClass=WriteError error="stored answers incomplete" - some answers were not stored`,
@@ -538,7 +656,7 @@ export class BookKnowledgeXrayService {
         fingerprint,
         builtAt: new Date().toISOString(),
         language: 'en',
-        models: { fast: fast.model },
+        models: { fast: fast.model, ...(writer === fast ? {} : { careful: writer.model }) },
         coverage: Math.min(1, through / Math.max(1, full)),
         // A partial build names no section past the last one it read: a chapter title can give the story away.
         sections: text.sections.map((section): StoryGuideSectionInfo => ({
@@ -556,8 +674,11 @@ export class BookKnowledgeXrayService {
         chronicle: parts.chronicle,
         // A build that stops before the book's end says where; a skipped unit does not shorten it.
         ...(through < full && units.length ? { covers: unitEnd(units.at(-1)!, (ordinal) => anchors.at(ordinal)) } : {}),
+        mode,
+        ...(run.modeSource ? { modeSource: run.modeSource } : {}),
       },
       (ordinal) => anchors.at(ordinal),
+      mode === 'fiction' ? { sentences, through } : undefined,
     );
     run.counts = {
       ...counts,
@@ -580,6 +701,78 @@ export class BookKnowledgeXrayService {
       anchorMisses: anchors.missed,
     };
     return payload;
+  }
+
+  /** What the mode call is sent: the book's title, authors, blurb and subjects, and the opening of its body text. */
+  private async modePrompt(input: BuildInput): Promise<{ user: string; ordinals: number[] }> {
+    const { artifact, run } = input;
+    // The blurb only sharpens the answer, so a failed read is sent without it.
+    const book = await Promise.resolve()
+      .then(() => this.read.findById(run.bookId))
+      .catch(() => null);
+    const title = artifact.metadata?.titles[0] ?? book?.book.book_metadata?.title ?? null;
+    const authors = artifact.metadata?.authors.length ? artifact.metadata.authors : (book?.authorRows.map(({ name }) => name) ?? []);
+    const opening = modeOpening(artifact.sentences);
+    const user = modeUser({ title, authors, description: book?.book.book_metadata?.description ?? null, subjects: input.subjects }, opening);
+    return { user, ordinals: opening.map(({ ordinal }) => ordinal) };
+  }
+
+  /** The model's fiction or nonfiction answer, replayed when stored; null when it is refused or stays unreadable, so the subjects decide. */
+  private async askMode(
+    input: BuildInput,
+    current: XrayStepRun,
+    prompt: { user: string; ordinals: number[] },
+    ids: string,
+    signal: AbortSignal,
+  ): Promise<BookKnowledgeXrayMode | null> {
+    const started = Date.now();
+    this.logger.log(
+      `[book_knowledge.xray_mode] [start] ${ids} subjects=${input.subjects.length} openingSentences=${prompt.ordinals.length} - deciding fiction or nonfiction`,
+    );
+    const request = {
+      system: XRAY_MODE_SYSTEM,
+      user: prompt.user,
+      maxOutputTokens: XRAY_MODE_MAX_TOKENS,
+      effort: XRAY_EFFORT,
+      temperature: CLASSIFY_TEMPERATURE,
+    };
+    const send = replayable(
+      async () => {
+        signal.throwIfAborted();
+        const result = await input.complete({ ...request, use: input.fast });
+        signal.throwIfAborted();
+        return result;
+      },
+      { ...request, ...replayIdentity(input.fast, request.effort, input.replayScope) },
+    );
+    const failed = (errorClass: string, error: string) =>
+      this.logger.warn(
+        `[book_knowledge.xray_mode] [fail] ${ids} durationMs=${Date.now() - started} errorClass=${errorClass} error="${sanitizeLogValue(error.slice(0, 200))}" - mode left to the subjects`,
+      );
+    try {
+      const answer = await current.unit({
+        id: 'm1',
+        ordinals: prompt.ordinals,
+        send,
+        read: (value) => {
+          const mode = parseModeAnswer(value);
+          return mode ? { items: mode, rejected: {} } : null;
+        },
+      });
+      if (answer) {
+        this.logger.log(
+          `[book_knowledge.xray_mode] [end] ${ids} durationMs=${Date.now() - started} mode=${answer} replayed=${current.record.counts?.replayed ?? 0} - mode decided by the model`,
+        );
+      } else {
+        failed('InvalidReply', 'unreadable after retry');
+      }
+      return answer;
+    } catch (error) {
+      // Only a refusal falls back to the subjects; a pause code (provider-down, budget) must pause the job instead.
+      if (signal.aborted || !refusedRequest(error)) throw error;
+      failed(error instanceof Error ? error.name : 'UnknownError', error instanceof Error ? error.message : 'mode call failed');
+      return null;
+    }
   }
 
   /** The book's stored answers for this model and prompt version; a fresh build starts the file over. */
@@ -605,17 +798,17 @@ export class BookKnowledgeXrayService {
     current: XrayStepRun,
     use: AiModelChoice,
     ask: AskWith,
-    finish: (current: XrayStepRun) => void,
     onProgress?: XrayBuildProgress,
   ): Promise<Map<string, KindAnswer>> {
     const answers = new Map<string, KindAnswer>();
     let done = 0;
     onProgress?.('kinds', 0, batches.length);
     const found = await inOrder([...batches.entries()], DENSE_CONCURRENCY, async ([index, batch]) => {
+      const send = ask(use, KIND_REVIEW_SYSTEM, batch.user, KIND_REVIEW_MAX_TOKENS, XRAY_EFFORT, CLASSIFY_TEMPERATURE);
       const answer = await current.unit({
         id: `k${index + 1}`,
         ordinals: batch.ordinals,
-        send: ask(use, KIND_REVIEW_SYSTEM, batch.user, KIND_REVIEW_MAX_TOKENS, XRAY_EFFORT, CLASSIFY_TEMPERATURE),
+        send,
         read: (value) => {
           const parsed = parseReviewAnswers(JSON.stringify(value), batch.keys);
           return parsed?.size ? { items: parsed, rejected: {} } : null;
@@ -625,7 +818,98 @@ export class BookKnowledgeXrayService {
       return answer;
     });
     for (const batch of found) for (const [key, answer] of batch ?? []) answers.set(key, answer);
-    finish(current);
     return answers;
+  }
+
+  /**
+   * Each batch is judged ROLE_REVIEW_VOTES times; an answer that leaves ids out is asked once more under its own unit. Entries
+   * the tally leaves on the edge are batched again and judged ROLE_ESCALATION_VOTES more times under `rx` units.
+   */
+  private async reviewRoles(
+    batches: readonly KindReviewBatch[],
+    rebatch: (keys: ReadonlySet<string>) => KindReviewBatch[],
+    strict: ReadonlySet<string>,
+    current: XrayStepRun,
+    use: AiModelChoice,
+    ask: AskWith,
+    kindBatches: number,
+    mode: BookKnowledgeXrayMode,
+    onProgress?: XrayBuildProgress,
+  ): Promise<{ removed: Set<string>; minor: Set<string>; escalated: number }> {
+    const system = roleReviewSystem(mode);
+    const version = roleReviewVersion(mode);
+    let total = kindBatches + batches.length * ROLE_REVIEW_VOTES;
+    let done = kindBatches;
+    const judge = (round: readonly KindReviewBatch[], votes: number, prefix: string) =>
+      inOrder(
+        round.flatMap((batch, index) => Array.from({ length: votes }, (_, vote) => ({ batch, unit: `${prefix}${index + 1}v${vote + 1}` }))),
+        DENSE_CONCURRENCY,
+        async ({ batch, unit }) => {
+          const send = ask(use, system, batch.user, KIND_REVIEW_MAX_TOKENS, XRAY_EFFORT, ROLE_REVIEW_TEMPERATURE, version);
+          const sample = (id: string) => {
+            current.tally('counts', { roleReviewUnits: 1 });
+            return current.unit({
+              id,
+              ordinals: batch.ordinals,
+              send: Object.assign(() => {
+                current.tally('counts', { roleReviewCalls: 1 });
+                return send();
+              }, send),
+              tries: 1,
+              parseReply: parseRoleReply,
+              read: (value) => {
+                const parsed = parseRoleAnswers(JSON.stringify(value), batch.keys);
+                return parsed ? { items: parsed, rejected: {} } : null;
+              },
+            });
+          };
+          const first = await sample(unit);
+          const answer =
+            first && first.size < batch.keys.length ? new Map<string, RoleAnswer>([...first, ...((await sample(`${unit}b`)) ?? [])]) : first;
+          onProgress?.('kinds', ++done, total);
+          return answer;
+        },
+      );
+    const answered = await judge(batches, ROLE_REVIEW_VOTES, 'r');
+    const rounds = batches.map((batch, index) => ({
+      keys: batch.keys,
+      samples: answered.slice(index * ROLE_REVIEW_VOTES, (index + 1) * ROLE_REVIEW_VOTES),
+    }));
+    this.checkRoleVotes(rounds);
+    const firstVotes = batches.map((batch, index) =>
+      tallyRoleVotes(batch.keys, answered.slice(index * ROLE_REVIEW_VOTES, (index + 1) * ROLE_REVIEW_VOTES), strict),
+    );
+    const edge = new Set(firstVotes.flatMap(({ escalate }) => [...escalate]));
+    const extra = new Map<string, (Map<string, RoleAnswer> | null)[]>();
+    if (edge.size) {
+      const again = rebatch(edge);
+      total += again.length * ROLE_ESCALATION_VOTES;
+      // "rx" never starts a first-round unit id ("r1v1"), so a stored answer of one round is never replayed into the other.
+      const more = await judge(again, ROLE_ESCALATION_VOTES, 'rx');
+      again.forEach((batch, index) => {
+        const samples = more.slice(index * ROLE_ESCALATION_VOTES, (index + 1) * ROLE_ESCALATION_VOTES);
+        for (const key of batch.keys) extra.set(key, samples);
+        rounds.push({ keys: batch.keys, samples });
+      });
+      this.checkRoleVotes(rounds);
+    }
+    const removed = new Set<string>();
+    const minor = new Set<string>();
+    batches.forEach((batch, index) => {
+      const votes = tallyRoleVotes(batch.keys, answered.slice(index * ROLE_REVIEW_VOTES, (index + 1) * ROLE_REVIEW_VOTES), strict, extra);
+      for (const key of votes.removed) removed.add(key);
+      for (const key of votes.minor) minor.add(key);
+    });
+    return { removed, minor, escalated: edge.size };
+  }
+
+  /**
+   * A missing vote counts as keep, so with too many missing the judge is off without a word. Pause codes already stop the
+   * build; what is left (refusals, unreadable replies) comes back the same on a resume, so this fails instead of pausing.
+   */
+  private checkRoleVotes(rounds: Parameters<typeof missingRoleVoteShare>[0]): void {
+    const missing = missingRoleVoteShare(rounds);
+    if (missing > ROLE_MISSING_VOTES_FLOOR)
+      throw new AiJobFailure('low-coverage', `The role review answered ${Math.round((1 - missing) * 100)}% of its votes`);
   }
 }

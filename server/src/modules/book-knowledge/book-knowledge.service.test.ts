@@ -305,24 +305,6 @@ describe('Book Knowledge access and cut-offs', () => {
     expect((await knowledge.status(3, user)).status).toBe('queued');
     expect(repo.queue).toHaveBeenCalledWith(3, fingerprint, TEXT_VERSION, TERMS_VERSION);
   });
-  describe('peek', () => {
-    it('returns the ready current artifact and queues nothing', async () => {
-      const peeked = await knowledge.peek(3);
-      expect(peeked?.fingerprint).toBe(fingerprint);
-      expect(peeked?.artifact).toBeDefined();
-      expect(repo.queue).not.toHaveBeenCalled();
-    });
-    it('returns null for a stale row without queueing it', async () => {
-      repo.state.mockResolvedValue({ fingerprint, textVersion: TEXT_VERSION - 1, termsVersion: TERMS_VERSION, status: 'ready', progress: 100 });
-      expect(await knowledge.peek(3)).toBeNull();
-      expect(repo.queue).not.toHaveBeenCalled();
-    });
-    it('returns null when there is no row', async () => {
-      repo.state.mockResolvedValue(undefined);
-      expect(await knowledge.peek(3)).toBeNull();
-      expect(repo.queue).not.toHaveBeenCalled();
-    });
-  });
   describe('source fingerprint', () => {
     const withFiles = (primaryFileId: number | null, ...formats: string[]) => {
       const fileRows = formats.map((format, index) => candidate(join(directory, 'book.epub'), { id: 5 + index, format, primaryFileId }));
@@ -465,6 +447,17 @@ describe('Book Knowledge access and cut-offs', () => {
     } finally {
       warn.mockRestore();
     }
+  });
+  it('leaves a book alone while an X-Ray build holds its files, and cleans it once released', async () => {
+    repo.cleanupIds.mockResolvedValue([5]);
+    repo.state.mockResolvedValue(undefined);
+    const release = knowledge.hold(5);
+    await knowledge['cleanup']();
+    expect(repo.cleanupDone).not.toHaveBeenCalled();
+    release();
+    release();
+    await knowledge['cleanup']();
+    expect(repo.cleanupDone).toHaveBeenCalledWith(5);
   });
   it('recovers persisted jobs on boot without loading a library', async () => {
     repo.next.mockResolvedValue(undefined);

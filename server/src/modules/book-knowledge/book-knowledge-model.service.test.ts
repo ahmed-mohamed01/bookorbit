@@ -251,5 +251,6 @@ describe('bookKnowledgeTuning', () => {
 
   it('turns reasoning off for a hybrid thinking model', () => {
     expect(bookKnowledgeTuning('Qwen/Qwen3-235B', { effort: 'low' })).toEqual({ temperature: 1, effort: 'none' });
+    expect(bookKnowledgeTuning('deepseek-ai/DeepSeek-V4-Flash', { temperature: 0 }).temperature).toBe(0);
   });
 });

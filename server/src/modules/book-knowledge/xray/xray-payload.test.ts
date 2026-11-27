@@ -58,6 +58,12 @@ describe('xrayPayload', () => {
   };
   const payload = xrayPayload(build, anchor);
 
+  it('carries the build mode and where it came from, and leaves both out when the build has none', () => {
+    expect(xrayPayload({ ...build, mode: 'nonfiction', modeSource: 'model' }, anchor)).toMatchObject({ mode: 'nonfiction', modeSource: 'model' });
+    expect(payload).not.toHaveProperty('mode');
+    expect(payload).not.toHaveProperty('modeSource');
+  });
+
   it('leaves out an entry with no line, note or tie when the build has a chronicle', () => {
     const toil = entity('toil', 'idea', [50], { name: 'Toil', importance: 3 });
     const note = { through: anchor(40), chapter: null, note: 'Sees the gate.', at: anchor(5) };

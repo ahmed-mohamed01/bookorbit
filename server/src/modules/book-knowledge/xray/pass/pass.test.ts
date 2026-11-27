@@ -1,14 +1,16 @@
-import { MAIN_TIER } from '../xray-tiers';
+import { DESCRIPTION_TIERS, MAIN_TIER } from '../xray-tiers';
 import { Logger } from '@nestjs/common';
 import type { Sentence } from '../../core/model';
 import { entity } from '../xray-fixtures.testing';
 import { namesAt } from '../xray-lines';
+import { DESCRIPTION_PROSE, KIND_CONTENT, LASTING_ONLY } from '../xray-description-context';
 import { xrayPayload } from '../xray-payload';
 import { XrayPrivacy, XrayStepRun } from '../xray-runner';
 import { PassCast, type PassSlot, patternMerges } from './pass-cast';
 import { passPayload } from './pass-payload';
-import { changesIdentity, writeAbout, type Ask } from './pass-run';
-import { factsAbout, PassState, spoilerSweep } from './pass-state';
+import { fictionAboutSystem } from './pass-about-prompt';
+import { changesIdentity, outgrown, writeAbout, type Ask } from './pass-run';
+import { aboutText, factsAbout, PassState, spoilerSweep } from './pass-state';
 import { passUnits, quoteOrdinal, type PassUnit } from './pass-units';
 
 function book(texts: string[], paragraphOf: (index: number) => number = (index) => index, spineOf: (index: number) => number = () => 0): Sentence[] {
@@ -23,6 +25,96 @@ function book(texts: string[], paragraphOf: (index: number) => number = (index) 
     emphasis: [],
   }));
 }
+
+describe('about refresh from mentions', () => {
+  const entities = [entity('e1', 'idea', [1, 2], { name: 'Deepward' })];
+  const names = namesAt(entities, 2);
+  const previous: PassUnit = { id: 'u1', index: 0, s: 0, ordinals: [1], sectionEnd: true };
+  const unit: PassUnit = { id: 'u2', index: 1, s: 1, ordinals: [2], sectionEnd: true };
+  const [slot] = new PassCast(entities).slots(unit);
+
+  function setup(...replies: Record<string, unknown>[]) {
+    const logger = new Logger('test');
+    vi.spyOn(logger, 'log').mockImplementation(() => undefined);
+    const step = new XrayStepRun('about', 'fast', new XrayPrivacy([]), logger, 'runId=r');
+    const ask = vi.fn<Ask>(
+      () => () => Promise.resolve({ text: JSON.stringify(replies.shift()), usage: { input: 1, output: 1 }, finish: 'stop', model: 'm' }),
+    );
+    const state = new PassState();
+    state.setAbout(slot.id, previous, 'A skill newly found.');
+    return { ask, state, step };
+  }
+
+  it.each([
+    [3, 5, true],
+    [3, 4, false],
+    [8, 6, false],
+    [0, 5, true],
+  ])('checks growth from %i old and %i new mentions', (before, after, result) => {
+    expect(outgrown(before, after)).toBe(result);
+  });
+
+  it.each([true, false])('uses growth without identity facts to decide whether to send a row (%s)', async (growth) => {
+    const { ask, state, step } = setup({ e1: 'A spell that warms the gate.' });
+    const grown = vi.fn(() => ({ outgrown: growth, notes: ['The spell warmed the gate.'] }));
+    await writeAbout([slot], unit, state, names, 'fiction', ask, step, undefined, undefined, grown);
+    expect(grown).toHaveBeenCalledWith(slot, 1);
+    if (growth) {
+      expect(ask.mock.calls[0][0].user).toContain('new: The spell warmed the gate.');
+      expect(state.about.get(slot.id)?.at(-1)).toEqual({ unit, value: 'A spell that warms the gate.' });
+    } else {
+      expect(ask).not.toHaveBeenCalled();
+      expect(step.record.counts).toEqual({ 'about:frozen': 1 });
+    }
+  });
+
+  it('rewrites a line that starts with its own name after an article', async () => {
+    const { ask, state, step } = setup({ e1: 'A Deepward who guards the gate.' }, { e1: 'A spirit that guards the gate.' });
+    await writeAbout([slot], unit, state, names, 'fiction', ask, step, undefined, undefined, () => ({ outgrown: true, notes: [] }));
+    expect(ask).toHaveBeenCalledTimes(2);
+    expect(ask.mock.calls[1][0].user).toContain('starts with its own name');
+    expect(state.currentAbout(slot.id)).toBe('A spirit that guards the gate.');
+  });
+
+  it('keeps growth notes off defined concept rows', async () => {
+    const { ask, state, step } = setup({ e1: 'unchanged' });
+    const evidence = () => [{ ordinal: 2, text: '[Deepward: A skill that warms the gate.]', definition: true as const }];
+    const grown = () => ({ outgrown: true, notes: ['The spell warmed the gate.'] });
+    await writeAbout([slot], unit, state, names, 'fiction', ask, step, evidence, undefined, grown);
+    expect(ask.mock.calls[0][0].user).toContain('facts: none');
+    expect(ask.mock.calls[0][0].user).toContain('definition [2]');
+  });
+
+  it('drops a garbled term without a rewrite', async () => {
+    const { ask, state, step } = setup({ e1: { about: 'A skill merging her studies into one scholarship.', n: [2] } });
+    const evidence = () => [{ ordinal: 2, text: "Merged into the full skill: 'Deepward scholar'!" }];
+    await writeAbout([slot], unit, state, names, 'fiction', ask, step, evidence, undefined, () => ({ outgrown: true, notes: [] }));
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(step.record.counts).toEqual({ 'about:garbled-term': 1 });
+    expect(state.currentAbout(slot.id)).toBe('A skill newly found.');
+  });
+
+  it.each(DESCRIPTION_TIERS)('asks for first-appearance refreshes and exact terms ($name)', (tier) => {
+    const system = fictionAboutSystem(tier);
+    expect(system).toContain('A current line that only tells how the entry first appeared is replaced once the sentences show what it is or does.');
+    expect(system).toContain(
+      'Write the name of a skill, class, spell or item exactly as the sentences write it, in full; never reword or shorten it.',
+    );
+  });
+
+  it.each(DESCRIPTION_TIERS)('asks for lasting details appropriate to the kind ($name)', (tier) => {
+    const system = fictionAboutSystem(tier);
+    expect(system).toContain(LASTING_ONLY);
+    expect(system).toContain(KIND_CONTENT);
+    expect(system).toContain(DESCRIPTION_PROSE);
+  });
+
+  it('tells the main cast writer to preserve their core facts', () => {
+    expect(fictionAboutSystem(MAIN_TIER)).toContain(
+      'Lines marked core say who they are in the story (where they come from, how they came to be here, their central bonds); never drop them to make room.',
+    );
+  });
+});
 
 describe('about rewrites', () => {
   const names = ['Solfis', 'Piper', 'Fern'];
@@ -67,7 +159,7 @@ describe('about rewrites', () => {
     expect(ask).toHaveBeenCalledTimes(1);
     expect(ask.mock.calls[0][0]).toMatchObject({
       system: expect.stringContaining('Answer with JSON only: {"e1": {"about": "...", "n": [1234]}, "e2": "unchanged"}.'),
-      user: 'e1 | Solfis | current: A war golem. | facts: A war golem.; new: Sworn to Piper.\n\ne2 | Piper | current: none | facts: none',
+      user: 'e1 | Solfis | character | current: A war golem. | facts: core: A war golem.; core: new: Sworn to Piper.\n\ne2 | Piper | character | current: none | facts: none',
     });
     expect(state.about.get(solfis.id)).toEqual([{ unit: previous, value: 'A war golem.' }]);
     expect(state.currentAbout(piper.id)).toBe('A captain.');
@@ -88,6 +180,7 @@ describe('about rewrites', () => {
     ],
     ['A war golem who is bound to serve in the royal guard or army.', 'hedges with "or"'],
     ['A war golem who is bound to serve in the royal guard of the narrator.', 'says "the narrator"'],
+    ['The unnamed protagonist, a war golem who wakes in a vault.', 'says "the protagonist" instead'],
   ])('retries a fiction line that fails a reader check (%s)', async (line, problem) => {
     const repaired = 'A war golem who has sworn to serve Piper as a member of the royal guard.';
     const { ask, state, step } = setup({ e1: line, e2: 'A captain.' }, { e1: repaired });
@@ -116,7 +209,7 @@ describe('about rewrites', () => {
     );
     await writeAbout([solfis, piper], unit, state, namesAt(entities, 2), 'fiction', ask, step, evidence);
     expect(ask.mock.calls[0][0].user).toContain(
-      'e1 | Solfis | current: A war golem. | facts: A war golem.; new: Sworn to Piper.\n  [1] Solfis was a war golem.',
+      'e1 | Solfis | character | current: A war golem. | facts: core: A war golem.; core: new: Sworn to Piper.\n  [1] Solfis was a war golem.',
     );
     expect(ask.mock.calls[1][0].user).toContain('(n must list the numbers of the given sentences the line rests on)');
     expect(state.currentAbout(solfis.id)).toBe('A war golem sworn to Piper.');
@@ -137,7 +230,7 @@ describe('about rewrites', () => {
       await writeAbout([concept], unit, state, namesAt([skill, ...entities], 2), 'fiction', ask, step, () => defined);
       expect(ask.mock.calls[0][0].system).toContain('When a sentence is labelled definition, the line must agree with it.');
       expect(ask.mock.calls[0][0].user).toBe(
-        `${concept.id} | Mana Sight | current: none | facts: none\n  definition [1] Mana Sight is a skill that shows mana.\n  [2] Viv used Mana Sight on Solfis.`,
+        `${concept.id} | Mana Sight | idea | current: none | facts: none\n  definition [1] Mana Sight is a skill that shows mana.\n  [2] Viv used Mana Sight on Solfis.`,
       );
       expect(state.currentAbout(concept.id)).toBe('A skill that shows mana.');
     });
@@ -147,8 +240,10 @@ describe('about rewrites', () => {
       state.facts.set(concept.id, [{ unit, value: { slot: concept, text: 'Used on Solfis.', cite: 2 } }]);
       const evidence = (slot: PassSlot) => (slot.id === concept.id ? [{ ...defined[1], ordinal: 2 }] : defined);
       await writeAbout([concept, solfis], unit, state, namesAt([skill, ...entities], 2), 'fiction', ask, step, evidence);
-      expect(ask.mock.calls[0][0].user).toContain(`${concept.id} | Mana Sight | current: none | facts: new: Used on Solfis.`);
-      expect(ask.mock.calls[0][0].user).toContain('e1 | Solfis | current: A war golem. | facts: A war golem.; new: Sworn to Piper.');
+      expect(ask.mock.calls[0][0].user).toContain(`${concept.id} | Mana Sight | idea | current: none | facts: core: new: Used on Solfis.`);
+      expect(ask.mock.calls[0][0].user).toContain(
+        'e1 | Solfis | character | current: A war golem. | facts: core: A war golem.; core: new: Sworn to Piper.',
+      );
     });
   });
 
@@ -223,6 +318,15 @@ describe('about rewrites', () => {
     await writeAbout([solfis], unit, state, namesAt(entities, 2), 'nonfiction', ask, step);
     expect(ask.mock.calls[0][0].user).toBe('- Solfis | current: A war golem. | notes: A war golem.; new: Sworn to Piper.');
     expect(state.currentAbout(solfis.id)).toBe('A fictional golem cited as an example.');
+  });
+});
+
+describe('about text', () => {
+  it('strips a copied item label and refuses shouted system text', () => {
+    expect(aboutText('Concept: enchanted): this heirloom answers only to its family.')).toBe('This heirloom answers only to its family.');
+    expect(aboutText('Concept: your coordination and speed.')).toBe('Your coordination and speed.');
+    expect(aboutText('THE CITIZEN WILL BIND WITH THE CORE.')).toBeNull();
+    expect(aboutText('A golem bound to Viv (her guardian): it obeys her.')).toBe('A golem bound to Viv (her guardian): it obeys her.');
   });
 });
 

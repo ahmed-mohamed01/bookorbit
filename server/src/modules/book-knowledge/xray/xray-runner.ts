@@ -44,8 +44,11 @@ export class XrayPrivacy {
 export interface XrayUnit<T> {
   id: string;
   ordinals: readonly number[];
-  send: () => Promise<AiResult>;
+  send: ReplayableSend;
+  retryUnreadable?: ReplayableSend;
+  unreadableShape?: (raw: unknown) => string;
   read: Read<T>;
+  parseReply?: (raw: string) => Record<string, unknown> | undefined;
   /** Sends before the unit is skipped; an unreadable or cut reply is sent again until then. */
   tries?: number;
 }
@@ -53,6 +56,14 @@ export interface XrayUnit<T> {
 /** A reply that can be retried: unreadable JSON or a cut-short reply. A refusal is not retried. */
 export function retryable(error: unknown): boolean {
   return isAiError(error) && (error.code === 'invalid-json' || error.code === 'too-long');
+}
+
+/**
+ * The provider turned the request itself down. An optional ask may treat it as a missing answer; any other error (a
+ * pause code such as provider-down or budget, a cancel, a bug) has to reach the job engine.
+ */
+export function refusedRequest(error: unknown): boolean {
+  return isAiError(error) && error.code === 'bad-request';
 }
 
 export class XrayStepRun {
@@ -84,9 +95,10 @@ export class XrayStepRun {
   /** Sends a unit, retrying an unreadable reply once; null when it is skipped. Other AI errors end the build. */
   async unit<T>(unit: XrayUnit<T>): Promise<T | null> {
     this.record.units++;
-    const request = (unit.send as ReplayableSend).replayRequest;
-    const stored = request && this.replay?.answer(this.record.step, unit.id, request);
-    if (stored !== undefined && stored !== '') {
+    for (const send of [unit.send, unit.retryUnreadable]) {
+      const request = send?.replayRequest;
+      const stored = request && this.replay?.answer(this.record.step, unit.id, request);
+      if (stored === undefined || stored === '') continue;
       const read = unit.read(stored);
       if (read) {
         this.tally('counts', { replayed: 1 });
@@ -94,6 +106,8 @@ export class XrayStepRun {
         return read.items;
       }
     }
+    let send = unit.send;
+    let shape: string | undefined;
     for (let attempt = 1; attempt <= (unit.tries ?? TRIES); attempt++) {
       const sent = this.privacy.record(unit.ordinals);
       for (const section of sent.sections) this.sections.add(section);
@@ -103,25 +117,38 @@ export class XrayStepRun {
       this.record.privacy.characters += sent.characters;
       this.record.privacy.sections = this.sections.size;
       this.logger.log(
-        `[book_knowledge.xray_call] [start] ${this.ids} step=${this.record.step} unit=${unit.id} attempt=${attempt} sentences=${sent.sentences} characters=${sent.characters} sections=${sent.sections.size} - sending sentences`,
+        `[book_knowledge.xray_call] [start] ${this.ids} step=${this.record.step} unit=${unit.id} attempt=${attempt} sentences=${sent.sentences} characters=${sent.characters} sections=${sent.sections.size} - sending ${sent.sentences ? 'sentences' : 'rows'}`,
       );
       let read: ReturnType<Read<T>> = null;
       let refused = false;
+      let unreadable = false;
       const sentAt = Date.now();
       try {
-        const reply = await unit.send();
+        const reply = await send();
         this.used(reply.usage, Date.now() - sentAt);
         refused = reply.finish === 'refused' || reply.finish === 'filtered';
-        const first = extractJson(reply.text);
-        const json = first.ok ? first : extractJson(repairJson(reply.text));
-        read = json.ok ? unit.read(json.value) : null;
-        if (read && json.ok && request) this.replay?.save(this.record.step, unit.id, request, json.value, read.rejected);
+        let value: unknown;
+        if (unit.parseReply) {
+          if (reply.finish === 'stop') value = unit.parseReply(reply.text);
+        } else {
+          const first = extractJson(reply.text);
+          const json = first.ok ? first : extractJson(repairJson(reply.text));
+          if (json.ok) value = json.value;
+        }
+        read = value === undefined ? null : unit.read(value);
+        unreadable = !read && !refused;
+        if (unreadable) shape = unit.unreadableShape?.(value ?? reply.text);
+        const request = send.replayRequest;
+        if (read && request) this.replay?.save(this.record.step, unit.id, request, value, read.rejected);
       } catch (error) {
         if (!retryable(error)) throw error;
-        if (isAiError(error) && error.code === 'too-long') {
+        if (isAiError(error) && error.code === 'invalid-json') {
+          unreadable = true;
+          shape = unit.unreadableShape?.(undefined);
+        } else {
           this.record.cut = (this.record.cut ?? 0) + 1;
           // The same prompt at the same hard cap is cut again.
-          if ((unit.send as ReplayableSend).capped) {
+          if (send.capped) {
             this.record.invalid++;
             break;
           }
@@ -134,11 +161,12 @@ export class XrayStepRun {
       this.record.invalid++;
       // The same prompt is refused again, so a second paid call buys nothing.
       if (refused) break;
+      if (unreadable && unit.retryUnreadable) send = unit.retryUnreadable;
     }
     this.record.skipped++;
     (this.record.skippedUnits ??= []).push(unit.id);
     this.logger.warn(
-      `[book_knowledge.xray_unit] [fail] ${this.ids} step=${this.record.step} unit=${sanitizeLogValue(unit.id)} durationMs=0 errorClass=InvalidReply error="unreadable after retry" - unit skipped`,
+      `[book_knowledge.xray_unit] [fail] ${this.ids} step=${this.record.step} unit=${sanitizeLogValue(unit.id)} durationMs=0 errorClass=InvalidReply error="${sanitizeLogValue(shape ? `unreadable after retry ${shape}` : 'unreadable after retry')}" - unit skipped`,
     );
     return null;
   }

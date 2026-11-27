@@ -55,9 +55,15 @@ interface KeptAnswer {
  */
 export class XrayUnitStore implements XrayReplay {
   private readonly kept = new Map<string, KeptAnswer>();
+  /** Answers this build replayed or stored; `compact` keeps only these. */
+  private readonly used = new Set<string>();
+  /** Saved answers whose line is not written yet; a rewrite writes them all, so their queued appends are skipped. */
+  private readonly pending = new Set<string>();
   private writing: Promise<void> = Promise.resolve();
   private started = false;
   private closed = false;
+  /** The file holds lines that are not in `kept` (other scopes, or a damaged tail), so the next write rewrites it. */
+  private dirty = false;
   stale = 0;
   /** The file stopped decoding before its end, so appending after it would leave every later line unreadable. */
   damaged = false;
@@ -88,8 +94,10 @@ export class XrayUnitStore implements XrayReplay {
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0;
-      this.damaged = true;
+      // `reset` leaves an empty file, which gunzip reports as cut short although nothing is lost.
+      if (source.bytesRead > 0) this.damaged = true;
     }
+    this.dirty = this.stale > 0 || this.damaged;
     return this.kept.size;
   }
 
@@ -109,18 +117,19 @@ export class XrayUnitStore implements XrayReplay {
   }
 
   answer(step: string, unit: string, request: string): unknown {
-    return this.kept.get(keyOf(step, unit, request))?.answer;
+    const key = keyOf(step, unit, request);
+    const kept = this.kept.get(key);
+    if (kept) this.used.add(key);
+    return kept?.answer;
   }
 
   save(step: string, unit: string, request: string, answer: unknown, rejected: Rejections): void {
     if (this.closed) return;
-    const entry: StoredXrayUnit = { ...this.scope, step, unit, request, answer, rejected };
-    this.kept.set(keyOf(step, unit, request), { answer, rejected });
-    this.writing = this.writing
-      .then(() => this.write(entry))
-      .catch(() => {
-        this.failedWrites++;
-      });
+    const key = keyOf(step, unit, request);
+    this.kept.set(key, { answer, rejected });
+    this.used.add(key);
+    this.pending.add(key);
+    this.queue(() => this.write(key));
   }
 
   /** Ends the build's writes: a call still in flight when the build stops stores nothing. */
@@ -133,22 +142,58 @@ export class XrayUnitStore implements XrayReplay {
     await this.writing;
   }
 
-  private async write(entry: StoredXrayUnit): Promise<void> {
-    const line = gzipSync(`${JSON.stringify(entry)}\n`);
-    if (this.started) return appendFile(this.path, line);
+  /**
+   * After a build that finished: rewrites the file with only the answers it used, so earlier generations, prompts and
+   * models do not pile up and get loaded by every later build. Returns how many answers were dropped.
+   */
+  async compact(): Promise<number> {
+    if (this.closed) return 0;
+    let dropped = 0;
+    this.queue(async () => {
+      const unused = [...this.kept.keys()].filter((key) => !this.used.has(key));
+      if (!unused.length && !this.dirty) return;
+      for (const key of unused) this.kept.delete(key);
+      dropped = unused.length;
+      this.started = true;
+      await mkdir(dirname(this.path), { recursive: true });
+      await this.rewrite();
+    });
+    await this.flush();
+    return dropped;
+  }
+
+  private queue(task: () => Promise<void>): void {
+    this.writing = this.writing.then(task).catch(() => {
+      this.failedWrites++;
+    });
+  }
+
+  private line(key: string, kept: KeptAnswer): Buffer {
+    const [step, unit, request] = key.split('\u0000');
+    const stored: StoredXrayUnit = { ...this.scope, step, unit, request, ...kept };
+    return gzipSync(`${JSON.stringify(stored)}\n`);
+  }
+
+  private async write(key: string): Promise<void> {
+    const kept = this.kept.get(key);
+    if (!this.pending.delete(key) || !kept) return;
+    if (this.started) return appendFile(this.path, this.line(key, kept));
     this.started = true;
     await mkdir(dirname(this.path), { recursive: true });
     // The first write of a build drops answers from older prompts or models, so the file does not grow with every version.
-    if (!this.stale && !this.damaged) return appendFile(this.path, line);
+    if (!this.dirty) return appendFile(this.path, this.line(key, kept));
+    await this.rewrite();
+  }
+
+  /** Replaces the file with every kept answer, the ones still queued included. */
+  private async rewrite(): Promise<void> {
+    const lines = [...this.kept].map(([key, kept]) => this.line(key, kept));
+    this.pending.clear();
     const temporary = `${this.path}.${randomUUID()}.tmp`;
     try {
-      const lines = [...this.kept].map(([key, kept]) => {
-        const [step, unit, request] = key.split('\u0000');
-        const stored: StoredXrayUnit = { ...this.scope, step, unit, request, ...kept };
-        return gzipSync(`${JSON.stringify(stored)}\n`);
-      });
       await writeFile(temporary, Buffer.concat(lines));
       await rename(temporary, this.path);
+      this.dirty = false;
     } finally {
       await rm(temporary, { force: true });
     }
@@ -157,8 +202,11 @@ export class XrayUnitStore implements XrayReplay {
   /** A fresh build ignores what is stored and starts the file over. */
   async reset(): Promise<void> {
     this.kept.clear();
+    this.used.clear();
+    this.pending.clear();
     this.stale = 0;
     this.damaged = false;
+    this.dirty = false;
     this.started = true;
     await mkdir(dirname(this.path), { recursive: true });
     await writeFile(this.path, Buffer.alloc(0));

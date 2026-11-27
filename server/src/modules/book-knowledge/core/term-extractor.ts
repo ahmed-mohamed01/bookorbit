@@ -19,6 +19,9 @@ const dialogueFiller = /\b(?:fuck|fucking|shit|damn|bloody|hell|yeah|okay|alrigh
 const forbidden = new Set(['ve', 'ver', 'vis']);
 /** Lowercase words a capitalised name may hold inside it: "House of Many Gates". */
 const NAME_CONNECTORS = new Set(['of', 'the', 'and']);
+/** Longest term in tokens; only a capitalised name holding connectors ("the Order of the Black Sun") is longer than four. */
+const MAX_TERM_TOKENS = 4;
+const MAX_NAME_TOKENS = 6;
 /** "Viv's mother": a relative named through someone, a person of their own. */
 export const KIN_WORDS = new Set(['mother', 'father', 'sister', 'brother', 'wife', 'husband', 'son', 'daughter']);
 /** A lowercase phrase this often in the book, ending in an uncommon word, is a term even when the tagger does not read it as a noun phrase. */
@@ -33,9 +36,24 @@ interface Token {
   pos: string;
   spaced: boolean;
 }
+/** Tags a sentence- or quote-opening word can carry that make it no part of a name there: "And Mara laughed". */
+const OPENING_FUNCTION_TAGS = ['ADP', 'CCONJ', 'SCONJ', 'ADV', 'AUX', 'DET', 'PRON', 'INTJ'];
+/** Whether no word comes before this token in its sentence or in the quote it opens. */
+function initialAt(tokens: readonly Token[], index: number): boolean {
+  for (let at = index - 1; at >= 0; at--) {
+    if (/[\p{L}\p{N}]/u.test(tokens[at].value)) return false;
+    if (/^[“‘"]$/u.test(tokens[at].value)) return true;
+  }
+  return true;
+}
+/** A capital inside a sentence marks a name whatever the tagger reads: "We met Drew", "I never trusted Will". */
+function midCapital(tokens: readonly Token[], index: number): boolean {
+  return capital(tokens[index]) && !initialAt(tokens, index);
+}
 function nominalUse(tokens: Token[], index: number): boolean {
   return (
     ['NOUN', 'PROPN'].includes(tokens[index].pos) ||
+    midCapital(tokens, index) ||
     (tokens[index - 1]?.pos === 'DET' && !['NOUN', 'PROPN', 'ADJ'].includes(tokens[index + 1]?.pos ?? ''))
   );
 }
@@ -79,6 +97,18 @@ function tokenize(nlp: ReturnType<typeof createWinkNlp>, text: string): Token[] 
       };
       i += 2;
     }
+    const possessive = /^([\p{L}][\p{L}\p{N}\-\u2013’']*?)([’']s)$/u.exec(token.value);
+    // wink keeps "Mara’s" whole once it has read "It was Mara’s.", so the name inside it would stop being a mention.
+    if (possessive && ['PROPN', 'NOUN'].includes(token.pos)) {
+      merged.push({
+        value: possessive[1],
+        normal: token.normal.replace(/[’']s$/u, ''),
+        pos: capital(token) ? 'PROPN' : 'NOUN',
+        spaced: token.spaced,
+      });
+      merged.push({ value: possessive[2], normal: `'s`, pos: 'PART', spaced: false });
+      continue;
+    }
     merged.push(token);
   }
   return merged;
@@ -93,6 +123,17 @@ function connectorAt(tokens: readonly Token[], index: number): boolean {
     NAME_CONNECTORS.has(tokens[index].value) &&
     tokens.every((token, at) => at === index || capital(token) || NAME_CONNECTORS.has(token.value))
   );
+}
+/** Every word capitalised, or a connector between capitalised words. */
+function nameRun(tokens: readonly Token[]): boolean {
+  return tokens.every((token, index) => capital(token) || connectorAt(tokens, index));
+}
+/**
+ * "the Night Watch" and "Red Run" end on a word the tagger reads as a verb, yet the capitalised run is a name. A run ending
+ * on an inflected verb ("Neravel Walked.") is a name and a verb, unless a determiner shows it is a noun phrase.
+ */
+function verbNamed(tokens: readonly Token[], start: number, phrase: readonly Token[]): boolean {
+  return nameRun(phrase) && (tokens[start - 1]?.pos === 'DET' || !/(?:ed|s)$/.test(phrase.at(-1)!.normal));
 }
 function valid(tokens: Token[]): boolean {
   const normals = tokens.map((t) => t.normal);
@@ -160,7 +201,7 @@ export function extractTerms(sentences: Sentence[]): Term[] {
   const candidates = new Map<string, Set<string>>();
   const gramCounts = new Map<string, number>();
   const add = (tokens: Token[], target = candidates): void => {
-    if (!tokens.length || tokens.length > 4 || !valid(tokens)) return;
+    if (!tokens.length || tokens.length > MAX_NAME_TOKENS || (tokens.length > MAX_TERM_TOKENS && !nameRun(tokens)) || !valid(tokens)) return;
     const alias = tokens.map((t) => t.value).join(' ');
     const key = termKey(alias);
     if (!key || (tokens.length === 1 && /^(?:mr|mrs|ms|dr|prof|sir)$/.test(key))) return;
@@ -176,19 +217,31 @@ export function extractTerms(sentences: Sentence[]): Term[] {
         for (let start = i; start >= Math.max(0, i - 3); start--) {
           if (!['ADJ', 'NOUN', 'PROPN'].includes(tokens[start].pos) && !(tokens[start].pos === 'VERB' && /(?:ed|ing)$/.test(tokens[start].normal)))
             break;
+          // "asked Mara" is a clause around a name; "the Burning Tower" keeps its capitalised participle.
+          if (start < i && tokens[start].pos === 'VERB' && capital(tokens[i]) && !capital(tokens[start])) break;
           add(tokens.slice(start, i + 1), target);
         }
       }
       if (/ing$/.test(token.normal) && tokens[i - 1]?.pos === 'NOUN') add(tokens.slice(i - 1, i + 1), target);
-      if (/^\p{Lu}/u.test(token.value)) {
-        for (let end = i + 1; end <= Math.min(tokens.length, i + 4); end++) {
+      if (/^\p{Lu}/u.test(token.value) && !(initialAt(tokens, i) && OPENING_FUNCTION_TAGS.includes(token.pos))) {
+        for (let end = i + 1; end <= Math.min(tokens.length, i + MAX_NAME_TOKENS); end++) {
           const last = tokens[end - 1];
           if (!capital(last)) {
-            // "House of Many Gates": a connector stays inside the span only when a capitalised word follows it.
-            if (NAME_CONNECTORS.has(last.value) && end < tokens.length && capital(tokens[end])) continue;
+            // "House of Many Gates", "Order of the Black Sun": connectors stay inside the span only when a capitalised word follows them.
+            const next = tokens[end];
+            if (
+              NAME_CONNECTORS.has(last.value) &&
+              next &&
+              (capital(next) ||
+                (NAME_CONNECTORS.has(next.value) &&
+                  !NAME_CONNECTORS.has(tokens[end - 2]?.value ?? '') &&
+                  tokens[end + 1] &&
+                  capital(tokens[end + 1])))
+            )
+              continue;
             break;
           }
-          if (end - i > 1 || i > 0) add(tokens.slice(i, end), target);
+          if (end - i > 1 || !initialAt(tokens, i)) add(tokens.slice(i, end), target);
         }
       }
     }
@@ -248,7 +301,7 @@ export function extractTerms(sentences: Sentence[]): Term[] {
     const matches: { key: string; start: number; end: number; kin?: boolean }[] = [];
     for (let start = 0; start < tokens.length; start++) {
       let node: Trie | undefined = trie;
-      for (let end = start; end < Math.min(tokens.length, start + 4); end++) {
+      for (let end = start; end < Math.min(tokens.length, start + MAX_NAME_TOKENS); end++) {
         // Normalize only the terminal word. Intermediate words must stay exact.
         const terminal: Trie | undefined = node.children.get(normalizeLast(tokens[end].normal));
         if (terminal?.key) matches.push({ key: terminal.key, start, end: end + 1 });
@@ -280,23 +333,14 @@ export function extractTerms(sentences: Sentence[]): Term[] {
         if (!candidateOrdinals.has(key)) candidateOrdinals.set(key, sentence.ordinal);
         matches.push({ key, start, end: start + 3, kin: true });
       }
-    const maxEnd = new Map<number, number>();
-    // A kin phrase leaves the name inside it a mention of that name.
-    for (const match of matches) if (!match.kin) maxEnd.set(match.start, Math.max(maxEnd.get(match.start) ?? 0, match.end));
-    for (const match of matches) {
-      let nested = false;
-      for (let start = Math.max(0, match.start - 3); start <= match.start; start++) {
-        const end = maxEnd.get(start) ?? 0;
-        if (end >= match.end && end - start > match.end - match.start) nested = true;
-      }
+    // A match the clause rule below discards never makes a shorter name inside it nested.
+    const kept = matches.flatMap((match) => {
       const alias = match.kin
         ? `${tokens[match.start].value}'s ${tokens[match.end - 1].value}`
         : tokens
             .slice(match.start, match.end)
             .map((t) => t.value)
             .join(' ');
-      const before = tokens[match.start - 1]?.normal ?? '';
-      const after = tokens[match.end]?.normal ?? '';
       const definition = definitionSignal(tokens, match.start, match.end, sentence, alias);
       const phrase = tokens.slice(match.start, match.end);
       if (
@@ -304,12 +348,29 @@ export function extractTerms(sentences: Sentence[]): Term[] {
         !definition.definition &&
         phrase.length > 1 &&
         (['ADP', 'DET', 'INTJ', 'CCONJ', 'SCONJ', 'ADV'].includes(phrase[0].pos) ||
-          (['VERB', 'AUX'].includes(phrase.at(-1)!.pos) && !(/ing$/.test(phrase.at(-1)!.normal) && phrase.at(-2)?.pos === 'NOUN')))
+          (['VERB', 'AUX'].includes(phrase.at(-1)!.pos) &&
+            !(/ing$/.test(phrase.at(-1)!.normal) && phrase.at(-2)?.pos === 'NOUN') &&
+            !verbNamed(tokens, match.start, phrase)))
       )
-        continue;
-      const named =
-        !phrase.some((t) => ['AUX', 'PRON', 'DET', 'ADP', 'CCONJ', 'SCONJ', 'ADV'].includes(t.pos)) &&
-        phrase.every((token) => /^\p{Lu}/u.test(token.value));
+        return [];
+      return [{ ...match, alias, definition, phrase }];
+    });
+    const maxEnd = new Map<number, number>();
+    // A kin phrase leaves the name inside it a mention of that name.
+    for (const match of kept) if (!match.kin) maxEnd.set(match.start, Math.max(maxEnd.get(match.start) ?? 0, match.end));
+    for (const { alias, definition, phrase, ...match } of kept) {
+      let nested = false;
+      for (let start = Math.max(0, match.start - (MAX_NAME_TOKENS - 1)); start <= match.start; start++) {
+        const end = maxEnd.get(start) ?? 0;
+        if (end >= match.end && end - start > match.end - match.start) nested = true;
+      }
+      const before = tokens[match.start - 1]?.normal ?? '';
+      const after = tokens[match.end]?.normal ?? '';
+      const named = phrase.every(
+        (token, index) =>
+          /^\p{Lu}/u.test(token.value) &&
+          (!['AUX', 'PRON', 'DET', 'ADP', 'CCONJ', 'SCONJ', 'ADV'].includes(token.pos) || midCapital(tokens, match.start + index)),
+      );
       const left = tokens
         .slice(Math.max(0, match.start - 4), match.start)
         .map((t) => t.normal)
@@ -328,7 +389,8 @@ export function extractTerms(sentences: Sentence[]): Term[] {
           /^(?:mr\.?|mrs\.?|ms\.?|dr\.?|prof\.?|professor|captain|capt\.?|sir|lady|lord|dame|king|queen|colonel|lieutenant|president|judge|saint|master|branchmaster)$/.test(
             before,
           ) ||
-          speech.test(before) ||
+          // "said Mara." is a speaker tag; "She said Alpha Centauri was too far" is not.
+          (speech.test(before) && (match.end === tokens.length || /^\p{P}/u.test(tokens[match.end].value))) ||
           speech.test(after) ||
           humanAction.test(after) ||
           ((after === 'ran' || after === 'stood') && match.start <= 1) ||
@@ -356,7 +418,7 @@ export function extractTerms(sentences: Sentence[]): Term[] {
       list.push({
         ordinal: sentence.ordinal,
         noun: nominalUse(tokens, match.start),
-        proper: tokens[match.start].pos === 'PROPN',
+        proper: tokens[match.start].pos === 'PROPN' || midCapital(tokens, match.start),
         functionWord: ['ADP', 'ADV', 'AUX', 'CCONJ', 'DET', 'INTJ', 'PART', 'PRON', 'SCONJ'].includes(phrase[0].pos),
         modifier: phrase[0].pos === 'ADJ' && ['ADJ', 'NOUN', 'PROPN'].includes(tokens[match.end]?.pos ?? ''),
         forgiven:
@@ -415,6 +477,7 @@ export function extractTerms(sentences: Sentence[]): Term[] {
     });
 }
 
+const SUBJECT_DETERMINERS = new Set(['the', 'a', 'an', 'this', 'that']);
 const WORD = /[\p{L}\p{N}]+(?:[-\u2013’'][\p{L}\p{N}]+)*/gu;
 // Fiction says "the tavern was called the First Spire" and "what is left is called to...": only a name or a
 // multi-word term with an uncommon word may stand on either side of an identity statement.
@@ -430,6 +493,13 @@ export function extractAliasLinks(sentences: Sentence[], terms: Term[]): import(
     const match = /\b(?:is|was|are|were)\s+(?:also\s+)?(?:called|known as)\s+/i.exec(sentence.text);
     if (!match) continue;
     const leftOriginal = sentence.text.slice(0, match.index).match(WORD) ?? [];
+    const clauseWords = (
+      sentence.text
+        .slice(0, match.index)
+        .split(/[.!?;:]/)
+        .at(-1)!
+        .match(WORD) ?? []
+    ).length;
     const rightOriginal = (
       sentence.text
         .slice(match.index + match[0].length)
@@ -442,7 +512,13 @@ export function extractAliasLinks(sentences: Sentence[], terms: Term[]): import(
       const original = leftOriginal.slice(-size);
       const key = termKey(original.join(' '));
       if (keys.has(key)) {
-        if (nameLike(original)) left = key;
+        // Only the subject is the one renamed: "The man beside Mara was called Tobin" says nothing about Mara.
+        if (
+          nameLike(original) &&
+          size <= clauseWords &&
+          leftOriginal.slice(leftOriginal.length - clauseWords, -size).every((word) => SUBJECT_DETERMINERS.has(word.toLowerCase()))
+        )
+          left = key;
         break;
       }
     }

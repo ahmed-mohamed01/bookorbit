@@ -18,12 +18,25 @@ export interface PassAbilityItem {
   since: number;
 }
 
+/** A copied item label ("Concept: enchanted): ...") opens some lines from a novel's status screens. */
+const COPIED_LABEL = /^(?:(?:concept|idea|item|object|skill|spell|trait|status|ability)\s*:\s*)?(?:[\p{L}-]+\)\s*:\s*)?/iu;
+
+/** The line without a copied label, capitalised, or null when it is shouted system text rather than prose. */
+export function aboutText(text: string): string | null {
+  const letters = text.match(/\p{L}/gu) ?? [];
+  if (letters.length && letters.filter((letter) => /\p{Lu}/u.test(letter)).length > letters.length / 2) return null;
+  const rest = text.replace(COPIED_LABEL, '').trim();
+  return rest ? rest[0].toUpperCase() + rest.slice(1) : null;
+}
+
 /** What the one pass has said so far, by cast-list id (an entity, or a member before its join). */
 export class PassState {
   readonly slots = new Map<string, PassSlot>();
   readonly timeline = new Map<string, Stamped<{ note: string | null; at: number | null }>[]>();
   readonly facts = new Map<string, Stamped<PassFact>[]>();
   readonly about = new Map<string, Stamped<string>[]>();
+  /** The last sentence each entry's `about` was asked about, kept or not, so a refused rewrite is not asked again every unit. */
+  readonly aboutAsked = new Map<string, number>();
   readonly now = new Map<string, Stamped<string>[]>();
   readonly abilities = new Map<string, Stamped<PassAbilityItem[]>[]>();
   readonly pairs = new Map<string, { a: PassSlot; b: PassSlot; versions: Stamped<string>[] }>();
@@ -54,6 +67,8 @@ export class PassState {
         });
       const list = [...current.values()];
       const versions = this.abilities.get(ability.slot.id) ?? [];
+      // A gain the list already holds (a prompt shows only the abilities its text names) changes nothing.
+      if (JSON.stringify(list) === JSON.stringify(versions.at(-1)?.value ?? [])) continue;
       if (versions.at(-1)?.unit === unit) versions[versions.length - 1] = { unit, value: list };
       else versions.push({ unit, value: list });
       this.abilities.set(ability.slot.id, versions);
@@ -109,17 +124,27 @@ export class PassState {
     return stampedBy(this.summaries, through)?.value ?? null;
   }
 
-  /** A new `about` version, kept only when its text changes. */
+  /** A new `about` version, kept only when its text changes; a status-screen line pasted in whole is no description. */
   setAbout(id: string, unit: PassUnit, text: string): void {
-    if (this.currentAbout(id) === text) return;
-    push(this.about, id, { unit, value: text });
+    const value = aboutText(text);
+    if (!value || this.currentAbout(id) === value) return;
+    push(this.about, id, { unit, value });
   }
 
-  /** The abilities list as the prompt shows it, as it stood by the end of sentence `through`. */
-  abilitiesText(id: string, through = Infinity): string | null {
+  /**
+   * The abilities list as the prompt shows it, as it stood by the end of sentence `through`. With `within`, the text a prompt
+   * reads, only the abilities it names are listed and the rest counted, so a long list does not ride along in every prompt.
+   */
+  abilitiesText(id: string, through = Infinity, within?: string): string | null {
     const items = stampedBy(this.abilities.get(id) ?? [], through)?.value;
     if (!items?.length) return null;
-    return items.map((item) => `${item.name} (${item.group}${item.detail ? `, ${item.detail}` : ''})`).join('; ');
+    const text = within?.toLowerCase();
+    const shown = text === undefined ? items : items.filter((item) => text.includes(item.name.toLowerCase()));
+    const rest = items.length - shown.length;
+    return [
+      ...shown.map((item) => `${item.name} (${item.group}${item.detail ? `, ${item.detail}` : ''})`),
+      ...(rest ? [`${rest} more not named here`] : []),
+    ].join('; ');
   }
 }
 

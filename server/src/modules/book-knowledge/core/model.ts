@@ -8,6 +8,8 @@ export interface Sentence {
   structure: Structure;
   heading: boolean;
   caption?: boolean;
+  /** Set off from the narration around it: a quoted letter, log or message the book reproduces. */
+  inset?: boolean;
   emphasis: string[];
 }
 export interface TextStage {

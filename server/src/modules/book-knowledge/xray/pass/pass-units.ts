@@ -29,7 +29,8 @@ export function passUnits(sentences: readonly Sentence[], sections: readonly Xra
     for (const ordinal of section.ordinals) {
       const sentence = sentences[ordinal - 1];
       const startsParagraph = current.length > 0 && sentences[current.at(-1)! - 1].paragraphIndex !== sentence.paragraphIndex;
-      if (startsParagraph && size >= target && parts.length + 1 < count) {
+      // Text with no paragraph breaks is cut between sentences at twice the target, so one unit never holds a whole section.
+      if ((startsParagraph ? size >= target : size >= 2 * target) && parts.length + 1 < count) {
         parts.push(current);
         current = [];
         size = 0;

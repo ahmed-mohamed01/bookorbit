@@ -150,7 +150,9 @@ export class BookKnowledgeKindsService {
         let answers: Map<string, KindAnswer> | undefined;
         for (let attempt = 0; attempt < 2 && !answers; attempt++) {
           calls++;
-          const raw = await this.model.chat(KIND_REVIEW_SYSTEM, batch.user, KIND_REVIEW_MAX_TOKENS, config, { temperature: CLASSIFY_TEMPERATURE });
+          const raw = await this.model.chat(KIND_REVIEW_SYSTEM, batch.user, KIND_REVIEW_MAX_TOKENS, config, {
+            temperature: CLASSIFY_TEMPERATURE,
+          });
           answers = parseReviewAnswers(raw, batch.keys);
         }
         if (!answers) continue;

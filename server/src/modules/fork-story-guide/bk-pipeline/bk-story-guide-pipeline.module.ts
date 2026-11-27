@@ -4,6 +4,7 @@ import { AiModule } from '../../ai/ai.module';
 import { BookKnowledgeModule } from '../../book-knowledge/book-knowledge.module';
 import { AiConnectionService } from '../../ai/ai-connection.service';
 import { AiSettingsService } from '../../ai/ai-settings.service';
+import { AiJobsService } from '../../ai-jobs/ai-jobs.service';
 import { AiStepRates } from '../../ai-jobs/ai-step-rates.service';
 import { STORY_GUIDE_PIPELINE, type StoryGuidePipeline } from '../../story-guides/pipeline/story-guide-pipeline';
 import { BookService } from '../../book/book.service';
@@ -36,8 +37,9 @@ export const bkStoryGuidePipelineProviders = [
       rates: AiStepRates,
       texts: StoryTextService,
       runner: BkStoryGuideRunner,
-    ) => new BkStoryGuideEstimator([settings, connections, rates], texts, runner),
-    inject: [AiSettingsService, AiConnectionService, AiStepRates, StoryTextService, BkStoryGuideRunner],
+      jobs: AiJobsService,
+    ) => new BkStoryGuideEstimator([settings, connections, rates], texts, runner, jobs),
+    inject: [AiSettingsService, AiConnectionService, AiStepRates, StoryTextService, BkStoryGuideRunner, AiJobsService],
   },
   { provide: STORY_GUIDE_PIPELINE, useFactory: createBkStoryGuidePipeline, inject: [BkStoryGuideRunner] },
   {

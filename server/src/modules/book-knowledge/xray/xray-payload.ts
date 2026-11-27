@@ -2,6 +2,8 @@ import {
   type BookKnowledgeXrayAnchor,
   type BookKnowledgeXrayEntity,
   type BookKnowledgeXrayLink,
+  type BookKnowledgeXrayMode,
+  type BookKnowledgeXrayModeSource,
   type BookKnowledgeXrayPayload,
   type StoryGuideChronicle,
   type StoryGuideChronicleEntity,
@@ -11,9 +13,12 @@ import {
   type StoryGuideTie,
 } from '@bookorbit/types';
 import type { CheckedFact, CheckedLine, CheckedTie } from './xray-checks';
+import type { Sentence } from '../core/model';
 import { anyTieType } from './xray-tie-types';
 import type { XrayEntity, XrayName } from './xray-entities';
 import type { XrayLinkSnapshot } from './xray-links';
+import { indexSystemLines } from './xray-system-tags';
+import { checkedSub, correctedKind, descriptorOf } from './xray-line-kind';
 
 export const XRAY_PIPELINE = 'bk-xray-1';
 const TIE_QUOTES = 3;
@@ -41,6 +46,8 @@ export interface XrayBuildResult {
   chronicle?: ChronicleDraft;
   /** Where a partial build's chronicle stops. */
   covers?: BookKnowledgeXrayAnchor;
+  mode?: BookKnowledgeXrayMode;
+  modeSource?: BookKnowledgeXrayModeSource;
 }
 
 /** An entity, or one of its joins by the member's term key, before payload keys exist. */
@@ -81,15 +88,36 @@ class Keys {
  * Book Knowledge output as upstream's `StoryGuidePayloadV1`, plus the fork-only `links`. Every item's
  * `at` (or `through`) comes from the sentence it cites, so one spoiler check serves every arm.
  */
-export function xrayPayload(build: XrayBuildResult, anchor: (ordinal: number) => BookKnowledgeXrayAnchor): BookKnowledgeXrayPayload {
+export function xrayPayload(
+  build: XrayBuildResult,
+  anchor: (ordinal: number) => BookKnowledgeXrayAnchor,
+  fiction?: { sentences: readonly Sentence[]; through: number },
+): BookKnowledgeXrayPayload {
   // With a chronicle, an entry with no line, no note and no tie is a bare name ("Toil", "Paddle"), nothing a reader can open.
   const speaks = new Set<XrayEntity>([...build.lines.map((line) => line.entity), ...build.ties.flatMap((tie) => [tie.a, tie.b])]);
   for (const { ref, value } of build.chronicle?.entities ?? [])
     if (ref.join === null && (value.about.length > 0 || value.timeline.some((entry) => entry.note))) speaks.add(ref.entity);
-  const shown = build.chronicle ? build.entities.filter((entity) => speaks.has(entity)) : build.entities;
+  const spoken = build.chronicle ? build.entities.filter((entity) => speaks.has(entity)) : build.entities;
+  const aboutOf = new Map<XrayEntity, string>();
+  for (const { ref, value } of build.chronicle?.entities ?? []) {
+    const text = value.about.at(-1)?.text;
+    if (ref.join === null && text) aboutOf.set(ref.entity, text);
+  }
+  // A word for another character ("Tavia is a skyling.") folds into that character instead of standing as an entry.
+  const folded = new Map<XrayEntity, XrayEntity>();
+  if (fiction) {
+    const characters = new Map(spoken.filter((entity) => entity.kind === 'character').map((entity) => [entity.name.toLowerCase(), entity]));
+    for (const entity of spoken) {
+      const named = descriptorOf(aboutOf.get(entity), [entity.name, ...entity.names.map(({ text }) => text)]);
+      const target = named ? characters.get(named.toLowerCase()) : undefined;
+      if (target && target !== entity) folded.set(entity, target);
+    }
+  }
+  const shown = spoken.filter((entity) => !folded.has(entity));
   const keys = new Keys();
   const keyOf = new Map<XrayEntity, string>();
   for (const entity of [...shown].sort((a, b) => a.first - b.first)) keyOf.set(entity, keys.take(entity.name));
+  for (const [entity, target] of folded) keyOf.set(entity, keyOf.get(target)!);
   const names = (list: readonly XrayName[]) => list.map((name) => ({ text: name.text, at: anchor(name.ordinal) }));
   const line = (ordinal: number, text: string): StoryGuideLine => ({ through: anchor(ordinal), text });
 
@@ -102,32 +130,47 @@ export function xrayPayload(build: XrayBuildResult, anchor: (ordinal: number) =>
   const linesOf = cited(build.lines.map((checked) => ({ entity: checked.entity, ordinal: checked.through, text: checked.text })));
 
   const joinKeys = new Map<string, string>();
-  const entities: BookKnowledgeXrayEntity[] = shown.map((entity) => ({
-    key: keyOf.get(entity)!,
-    name: entity.name,
-    kind: entity.kind,
-    ...(entity.sub ? { sub: entity.sub } : {}),
-    importance: entity.importance,
-    count: entity.count,
-    names: names(entity.names),
-    joins: entity.joins.map((join) => ({
-      key: joinKey(entity, join.key, keys.take(join.name)),
-      name: join.name,
-      names: names(join.names),
-      lines: [],
+  const tagFor = fiction && indexSystemLines(fiction.sentences, fiction.through);
+  const entities: BookKnowledgeXrayEntity[] = shown.map((entity) => {
+    const tag =
+      entity.kind !== 'character' &&
+      tagFor?.([
+        entity.name,
+        ...entity.names.map(({ text }) => text),
+        ...entity.joins.flatMap((join) => [join.name, ...join.names.map(({ text }) => text)]),
+      ]);
+    const about = aboutOf.get(entity);
+    const kind = fiction ? correctedKind(entity.kind, about) : entity.kind;
+    const sub = fiction ? checkedSub(entity.sub, kind, about) : entity.sub;
+    return {
+      key: keyOf.get(entity)!,
+      name: entity.name,
+      kind,
+      ...(tag ? { tag } : {}),
+      ...(sub ? { sub } : {}),
+      importance: entity.importance,
+      count: entity.count,
+      names: names(entity.names),
+      joins: entity.joins.map((join) => ({
+        key: joinKey(entity, join.key, keys.take(join.name)),
+        name: join.name,
+        names: names(join.names),
+        lines: [],
+        profiles: [],
+        at: anchor(join.ordinal),
+      })),
+      lines: linesOf.get(entity) ?? [],
+      // Facts are single clauses; a story guide viewer shows an entry's newest profile as its whole description.
       profiles: [],
-      at: anchor(join.ordinal),
-    })),
-    lines: linesOf.get(entity) ?? [],
-    // Facts are single clauses; a story guide viewer shows an entry's newest profile as its whole description.
-    profiles: [],
-    fixed: false,
-  }));
+      fixed: false,
+    };
+  });
 
   const ties = new Map<string, { a: string; type: string; b: string; cites: Set<number> }>();
   for (const tie of build.ties) {
     const a = keyOf.get(tie.a)!;
     const b = keyOf.get(tie.b)!;
+    if (a === b) continue;
     const key = `${a}|${tie.type}|${b}`;
     const existing = ties.get(key);
     if (existing) existing.cites.add(tie.cite);
@@ -157,7 +200,7 @@ export function xrayPayload(build: XrayBuildResult, anchor: (ordinal: number) =>
   if (build.chronicle) {
     chronicle = { version: 1, basis: build.builtAt, ...(build.covers ? { covers: build.covers } : {}), entities: {}, pairs: {} };
     for (const { ref, value } of build.chronicle.entities) {
-      const key = refKey(ref);
+      const key = ref.join === null && folded.has(ref.entity) ? undefined : refKey(ref);
       if (key) chronicle.entities[key] = value;
     }
     for (const pair of build.chronicle.pairs) {
@@ -166,12 +209,12 @@ export function xrayPayload(build: XrayBuildResult, anchor: (ordinal: number) =>
     }
   }
 
-  const byTerm = new Map(shown.map((entity) => [entity.key, keyOf.get(entity)!]));
+  const byTerm = new Map([...shown, ...folded.keys()].map((entity) => [entity.key, keyOf.get(entity)!]));
   // A snapshot ranks the cast as of its checkpoint; a pair outside the build's own cast has no entry to point at.
   const links: BookKnowledgeXrayLink[] = build.links.flatMap((link) => {
     const a = byTerm.get(link.a);
     const b = byTerm.get(link.b);
-    if (!a || !b) return [];
+    if (!a || !b || a === b) return [];
     return [
       {
         a,
@@ -199,5 +242,7 @@ export function xrayPayload(build: XrayBuildResult, anchor: (ordinal: number) =>
     summaries: build.summaries.map((summary) => line(summary.ordinal, summary.text)),
     links,
     ...(chronicle ? { chronicle } : {}),
+    ...(build.mode ? { mode: build.mode } : {}),
+    ...(build.modeSource ? { modeSource: build.modeSource } : {}),
   };
 }

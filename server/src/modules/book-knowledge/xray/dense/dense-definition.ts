@@ -102,8 +102,5 @@ export function definitionGloss(text: string, names: readonly string[], kind: Pa
   if (!opened) return null;
   const gloss = opened[1].replace(/[)\]"]+\s*[.!]?$/, '').trim();
   if (wordCount(gloss) < GLOSS_WORDS) return null;
-  const kindWord = kind === 'idea' ? 'concept' : kind;
-  return /^(?:a|an|the)\b/i.test(gloss) || new RegExp(`^${kindWord}\\b`, 'i').test(gloss)
-    ? gloss
-    : `${kindWord[0].toUpperCase()}${kindWord.slice(1)}: ${gloss}`;
+  return `${gloss[0].toUpperCase()}${gloss.slice(1)}`;
 }

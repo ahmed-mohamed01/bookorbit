@@ -27,10 +27,11 @@ export function descriptionTier(importance: number, mode: BookKnowledgeXrayMode)
 }
 
 /** The length ask every description prompt carries. */
-export function tierShape(tier: DescriptionTier): string {
+export function tierShape(tier: DescriptionTier, mode: BookKnowledgeXrayMode): string {
+  const sentences = mode === 'nonfiction' ? ` (${tier.sentences})` : '';
   return (
     'just enough for a reader to know who or what this is and why it matters so far: short and succinct, ' +
-    `usually about ${tier.aim} words (${tier.sentences}), never more than ${tier.limit}; no padding, no list of every event`
+    `usually about ${tier.aim} words${sentences}, never more than ${tier.limit}; no padding, no list of every event`
   );
 }
 

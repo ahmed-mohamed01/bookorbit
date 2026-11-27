@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   KIND_REVIEW_LIMIT,
+  KIND_REVIEW_SYSTEM,
   conceptCandidates,
   namedTermCandidates,
   parseReviewAnswers,
@@ -73,6 +74,18 @@ describe('kind review', () => {
     ]);
   });
 
+  it('sends bracketed labels of plain words to the review wherever they rank', () => {
+    const ranked = Array.from({ length: KIND_REVIEW_LIMIT + 2 }, (_, index) => visible(`t${index}`, 'Veyra', [mention(1, 'Veyra')]));
+    const decisions = new Map<string, KindDecision>(ranked.map(({ key }) => [key, decision('person', { person: 9 })]));
+    const label: KindDecision = { ...decision(null), rule: 'J4 bracket label' };
+    decisions.set('t3', label);
+    decisions.set(`t${KIND_REVIEW_LIMIT + 1}`, label);
+    expect(selectForReview(ranked, decisions)).toEqual([
+      { key: 't3', reason: 'bracket label' },
+      { key: `t${KIND_REVIEW_LIMIT + 1}`, reason: 'bracket label' },
+    ]);
+  });
+
   it('finds untyped proper names with suitable capitalization and independent mentions', () => {
     const term = (name: string, ordinals = [1], capitalized = false, named = false) => ({
       ...visible(
@@ -105,11 +118,11 @@ describe('kind review', () => {
       term('world of common words'),
       term('Lord', [1, 2], true),
       term('Lord Sera', [1]),
-      term('Solfis', [1], true),
+      term('Quenric', [1], true),
       term('brother Damien', [1]),
       term('engineer Irlefen', [1]),
     ];
-    const decisions = new Map(ranked.map(({ key }) => [key, decision(key === 'Solfis' ? 'person' : null)]));
+    const decisions = new Map(ranked.map(({ key }) => [key, decision(key === 'Quenric' ? 'person' : null)]));
     expect(properNameCandidates(ranked, decisions).map(({ key }) => key)).toEqual([
       'Damien',
       'Irlefen',
@@ -215,6 +228,20 @@ describe('kind review', () => {
     expect(trimPassage('Only Veyra here.', 5, 10)).toBe('Only Veyra here.');
   });
 
+  it('takes passages from the name on its own before the longer names that hold it', () => {
+    const sentences = [
+      sentence(1, 'The Orlan Engine hummed below deck.'),
+      sentence(2, 'Doctor Orlan checked the gauges.'),
+      sentence(3, 'Nobody trusted the Orlan Engine.'),
+    ];
+    const artifact = { sentences, metadata: { titles: ['The Hollow Lantern'], authors: ['Mira Quell'] } } as Artifact;
+    const nested = (ordinal: number) => ({ ...mention(ordinal, 'Orlan'), nested: true });
+    const term = visible('orlan', 'Orlan', [nested(1), mention(2, 'Orlan'), nested(3)]);
+    expect(reviewPassages(artifact, term, 3)).toEqual(['Doctor Orlan checked the gauges.']);
+    const only = visible('orlan', 'Orlan', [nested(1), nested(3)]);
+    expect(reviewPassages(artifact, only, 3)).toHaveLength(2);
+  });
+
   it('takes passages only from mentions at or before the cut-off', () => {
     const sentences = [
       sentence(1, 'Veyra lit the lamp.'),
@@ -270,5 +297,14 @@ describe('kind review', () => {
     const decisions = new Map(ranked.map(({ key }) => [key, decision(key === 'vexite' ? 'object' : null)]));
     expect(namedTermCandidates(ranked, decisions).map(({ key }) => key)).toEqual(['zorblat']);
     expect(selectForReview(ranked, decisions, 'fiction')).toContainEqual({ key: 'zorblat', reason: 'no kind' });
+  });
+
+  it('keeps the original object and junk choices in the kind prompt', () => {
+    expect(KIND_REVIEW_SYSTEM.split('\n').filter((line) => /^- (object|junk)/.test(line))).toMatchInlineSnapshot(`
+      [
+        "- object",
+        "- junk: not a real entry (an exclamation, sound, curse, generic word, system message fragment, or the book's own title or author)",
+      ]
+    `);
   });
 });

@@ -2,6 +2,7 @@ import type { BookKnowledgeXrayMode } from '@bookorbit/types';
 import { KIND_REVIEW_SYSTEM, type KindReviewBatch } from '../../core/kind-review';
 import type { Sentence } from '../../core/model';
 import type { XrayEntity } from '../xray-entities';
+import { ROLE_ESCALATION_SHARE, ROLE_ESCALATION_VOTES, ROLE_REVIEW_VOTES, roleReviewSystem } from '../xray-role-review';
 import type { PlannedCall } from '../xray-plan';
 import { cloned } from '../pass/pass-run';
 import { PassCast, patternMerges } from '../pass/pass-cast';
@@ -24,6 +25,7 @@ const SENTENCE_CHARS = 120;
 /** Every call a dense run would make, as prompt sizes, for the dry-run estimate. */
 export function densePlannedCalls(
   reviews: readonly Pick<KindReviewBatch, 'user'>[],
+  roleReviews: readonly Pick<KindReviewBatch, 'user'>[],
   units: readonly PassUnit[],
   entities: readonly XrayEntity[],
   sentences: readonly Sentence[],
@@ -32,7 +34,20 @@ export function densePlannedCalls(
   const copies = cloned(entities);
   const cast = new PassCast(copies);
   for (const merge of patternMerges(copies, sentences, { guard: true })) cast.merge(merge);
-  const calls: PlannedCall[] = reviews.map((batch) => ({ step: 'kinds', promptCharacters: KIND_REVIEW_SYSTEM.length + batch.user.length }));
+  const roleSystem = roleReviewSystem(mode);
+  const calls: PlannedCall[] = [
+    ...reviews.map((batch) => ({ step: 'kinds' as const, promptCharacters: KIND_REVIEW_SYSTEM.length + batch.user.length })),
+    ...roleReviews.flatMap((batch) =>
+      Array.from({ length: ROLE_REVIEW_VOTES }, () => ({
+        step: 'kinds' as const,
+        promptCharacters: roleSystem.length + batch.user.length,
+      })),
+    ),
+    ...Array.from({ length: Math.ceil(roleReviews.length * ROLE_ESCALATION_SHARE) * ROLE_ESCALATION_VOTES }, () => ({
+      step: 'kinds' as const,
+      promptCharacters: roleSystem.length + (roleReviews[0]?.user.length ?? 0),
+    })),
+  ];
   const empty = { about: new Map(), abilities: new Map(), previous: null };
   for (const unit of units)
     for (const chunk of denseChunks(sentences, unit)) {

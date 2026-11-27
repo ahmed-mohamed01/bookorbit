@@ -520,3 +520,18 @@ it('does not take a capital from a word that opens a quoted sentence as its card
   const a = artifact([...Array<string>(4).fill('“Glimmerwax,” she said.'), ...Array<string>(3).fill('She rubbed the glimmerwax on the blade.')]);
   expect(visibleTerm(a, 'glimmerwax', 7)?.displayName).toBe('glimmerwax');
 });
+
+it('links no epithet that is an everyday word the book writes in lowercase, or on a single person cue', () => {
+  const station = artifact([
+    ...Array<string>(4).fill('Kell said nothing at the gate.'),
+    ...Array<string>(4).fill('The station hummed below them.'),
+    'We reached Kell Station.',
+    'We left Kell Station.',
+    'We missed Kell Station.',
+  ]);
+  expect(extractAliasLinks(station.sentences, station.terms).some((link) => link.left === 'station')).toBe(false);
+  const thin = artifact(['Orsk smiled.', 'Orsk nodded.', 'We met Orsk Lyrae.', 'We met Orsk Lyrae.', 'We met Orsk Lyrae.']);
+  expect(extractAliasLinks(thin.sentences, thin.terms).some((link) => link.left === 'lyrae')).toBe(false);
+  const plain = artifact(['Orsk smiled.', 'Orsk nodded.', 'Orsk waved.', 'We met Orsk Lyrae.', 'We met Orsk Lyrae.', 'We met Orsk Lyrae.']);
+  expect(extractAliasLinks(plain.sentences, plain.terms).some((link) => link.left === 'lyrae')).toBe(true);
+});

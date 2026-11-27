@@ -82,9 +82,14 @@ function computeVisibleTerms(artifact: Artifact, cutoff: number, bodyOnly: boole
   for (const term of artifact.terms) {
     // The full-book trie can find a mention before the term has a candidate-forming use.
     if (term.candidateOrdinal !== undefined && term.candidateOrdinal > cutoff) continue;
-    const uses = mentionsAt(term, cutoff).filter(({ ordinal }) => !bodyOnly || artifact.sentences[ordinal - 1]?.structure === 'body');
+    let uses = mentionsAt(term, cutoff).filter(({ ordinal }) => !bodyOnly || artifact.sentences[ordinal - 1]?.structure === 'body');
     const hasDefinition = uses.some((mention) => mention.definition && !mention.nested);
-    if (term.wordCount === 1 && !hasDefinition && uses.filter((mention) => mention.noun === false).length > uses.length / 2) continue;
+    if (term.wordCount === 1 && !hasDefinition && uses.filter((mention) => mention.noun === false).length > uses.length / 2) {
+      // "she drew a breath" outnumbers "they met Drew": the capitalised uses inside sentences are a name of their own.
+      const named = uses.filter((mention) => /^\p{Lu}/u.test(mention.alias));
+      if (named.filter((mention) => mention.capitalized && mention.noun !== false && !mention.nested).length < 2) continue;
+      uses = named;
+    }
     const accepted = uses.filter((mention) => term.wordCount > 1 || hasDefinition || mention.noun !== false);
     const recurrence = new Map<string, number>();
     for (const mention of accepted) recurrence.set(mention.alias.toLowerCase(), (recurrence.get(mention.alias.toLowerCase()) ?? 0) + 1);
@@ -239,6 +244,12 @@ export class ArtifactTooLargeError extends Error {
     this.name = 'ArtifactTooLargeError';
   }
 }
+export class ArtifactReadLimitError extends Error {
+  constructor() {
+    super('Artifact exceeds read limit');
+    this.name = 'ArtifactReadLimitError';
+  }
+}
 /** Writes gzipped JSON atomically and returns the JSON size in bytes. */
 export async function writeGzipJsonAtomic(path: string, value: unknown, maxBytes = Infinity): Promise<number> {
   let json: string;
@@ -273,7 +284,7 @@ async function readGzipJsonSized<T>(path: string, maxBytes: number): Promise<{ v
     if (size > maxBytes) {
       source.destroy();
       stream.destroy();
-      throw new Error('Artifact exceeds read limit');
+      throw new ArtifactReadLimitError();
     }
     chunks.push(chunk);
   }

@@ -995,7 +995,9 @@ are excluded.
 | `metadata-fetch.module.ts` / `providers/goodreads/goodreads.provider.ts`                                 | 2 / 2             | monitored     | `GoodreadsProvider` exported, `fetchHtml` made public (was a copy)                                      |
 | `scanner/lib/classify.ts`                                                                                | 1                 | ABS           | `metadata.json` sidecar recognition (was 6)                                                             |
 | Book Knowledge: 17 files, `ReaderView.vue` 27 the largest (2026-11-24, uncommitted)                      | 91 total          | knowledge     | see the per-file table in its overlay section                                                           |
-| Book Knowledge fiction entry and description rules                                                       | 0 added           | knowledge     | implemented in the fork-owned module                                                                    |
+| Book Knowledge entry and description rules                                                               | 0 added           | knowledge     | fiction role review skips names, context filtering, shared-line retries and description refresh         |
+| Book Knowledge fiction line prompts                                                                      | 0 added           | knowledge     | lasting details by kind and stat or skill labels visible at the unit cutoff                             |
+| Book Knowledge About and Now prose                                                                       | 0 added           | knowledge     | core identity facts, situational Now lines, and fiction prose checks in fork-owned files                |
 | everything else                                                                                          | <= 6 each         | mixed         | enum members, `Record<Union>` exhaustiveness, trivial registrations                                     |
 | `client/src/locales/*.json`                                                                              | ~60 each          | all           | i18n keys, trivial conflicts                                                                            |
 
@@ -1738,11 +1740,59 @@ each chunk getting three low-effort asks at once: notes and summary, facts (abil
 separate pair or tie-type step. A unit launches once the unit `DENSE_UNIT_WINDOW` (2) places before
 it is processed, with at most 8 hosted calls in flight. Each entry's description follows its tier
 (main, supporting, minor) with one hard cap of 100 words (`xray/xray-tiers.ts`); descriptions and
-`now` lines that name someone their evidence never names are dropped. A run has a mode, fiction or
-nonfiction, from EPUB subjects or Kindle catalog genres unless the run's `mode` overrides it.
+`now` lines that name someone their evidence never names are dropped. The description pass labels
+preceding sentences as context and excludes them from grounding and citations. It retries shared
+descriptions once after more mentions. Fiction descriptions check quoted and bracketed term names
+for garbling. Entries eligible for `about` updates can refresh once at least five new mentions
+match or exceed the previous mention count, with up to three new timeline notes. Fiction About
+prompts preserve the first three identity facts for fact-based main and supporting rows alongside recent
+facts, with at most eleven distinct notes. About asks for flowing prose, and Now asks for one sentence
+about the current situation. Both reject comma lists and stat numbers, with one rewrite for About
+updates and retention of the previous line for rejected Now updates. A run has a mode, fiction or
+nonfiction: the run's `mode` override, else one `mode` step call (`xray/xray-mode.ts`, unit `m1`,
+stored and replayed like the other steps) on the fast slot that sends the title, authors, blurb,
+subjects and the first 2,500 body words, else EPUB subjects or Kindle catalog genres when the call
+fails or stays unreadable after one retry. The run records `modeSource` (`override`, `model` or
+`subjects`) and the payload carries `mode` and `modeSource`. A dry run plans the call and keeps the
+subject mode. `XRAY_MODE_VERSION` is a `BK_PROMPT_VERSION` part.
+**Junk judge** (`xray/xray-role-review.ts`). After kind review and cast selection, every admitted
+entry except the narrator, characters included, is labelled keep, minor or junk by the fast slot:
+batches of about 12 cut at stable hash points of the sorted term keys (so one changed entry re-asks
+only its batch), each with up to 5 passages and the cast names that overlap it, 3 votes at
+temperature 0.7. Fiction and nonfiction have their own prompts (`EVERYDAY_OBJECT_REVIEW_VERSION`,
+`NONFICTION_ROLE_REVIEW_VERSION`); story-system words (stats, skills, classes, ranks, spells) are
+keep, and nothing is judged by the words in its name. Tally: 3 of 3 junk removes, 2 of 3 asks 2 more
+votes and removes at 4 of 5; a character needs every vote junk (5 of 5 after escalation); 2 minor
+votes mark the entry minor. A missing vote counts as keep, but more than a third missing fails the
+build as `low-coverage`. Only `bad-request` refusals are downgraded to an unreadable answer; pause
+codes (`provider-down`, `budget` and the rest) reach the job engine, and so does the mode call's.
+Fused names (an entry that only joins other character or group entries) are dropped before fragment
+pruning, names that differ only by case, spacing or punctuation fold into the more mentioned
+spelling, and the merge step never joins a fused name to one of its parts. A whole name rejected
+by the name check is kept when a part would otherwise stand alone as its fragment. Mentions nested
+inside a longer name do not vote on the shorter name's kind.
+
+**Embedded text and the narrator.** `epub-text.ts` marks `inset` sentences: blockquotes and runs of
+3 or more `<p>` with a class other than the spine's most common one (letters, emails, logs). The
+narrator's detection, introductions and description evidence skip them, and the notes, facts,
+scene, describe and about prompts wrap them as written text whose "I" is its writer. The stand-in
+narrator joins a character only once settled (6 chunk votes and 3 times the runner-up; the blurb
+counts toward the lead only); a section whose own votes all name one person is credited to that
+person without a join. First-person chunks no longer wait on each other for the narrator.
+
+**Disclosure timing.** A join's ordinal is the latest link on its chain, so a member is filed
+under a head only from the point the reader can know it; prompts resolve members as of the unit's
+end. Alias joins wait until their cited sentences are reached, facts merges need a second vote
+through the scene guards, epithet folds anchor at an identity sentence or where the pairing
+holds, and a typed tie unlocks at its latest cite. Title holders need 3 times lift over the
+holder's share of body sentences, or an explicit "Captain Zoey" form.
 `dryRun: true` only plans and estimates. Finished answers are kept in `xray-units.jsonl.gz` beside
-the artifact, keyed by fingerprint, prompt version, model and request hash, and replayed by later
-runs. A cut or corrupt file is marked damaged and rewritten on the first save. Each run has one
+the artifact, keyed by fingerprint, prompt version, model and request hash (which carries the
+connection id and the effort sent), and replayed by later runs. A finished build compacts the file
+to the answers it replayed or stored. A cut or corrupt file is marked damaged and rewritten on the
+first save; an empty one is just empty. The text and terms stage files are read up to
+`ARTIFACT_MAX_BYTES`, and a corrupt one (bad gzip, bad JSON, over the limit) is rebuilt from the
+source instead of failing every retry. A build holds its book against `cleanup()`. Each run has one
 `AbortController`: on
 failure or cancel every launched call is aborted, the store is closed so no late answer lands, and
 the guard is released only after all calls settle. Bench payloads live in memory with their runs.
@@ -1759,6 +1809,11 @@ descriptive names into existing entry names, and requires a one-off capitalised 
 Comparisons and dialogue-only forms of address supply no cast evidence. Descriptions attribute
 hypotheticals to the character thinking them. The minor-character writer sees accepted timeline notes
 through the end of its own unit before the sampled sentences.
+
+Fiction About and Describe share guidance on lasting details by kind. Passing moments stay out of
+descriptions and identity facts. Major events can still define a place or creature. About and Describe
+headers use the payload's stat and skill detection with evidence through the current unit. The dense
+prompt version invalidates cached answers so the next build uses the updated rules.
 
 **Client.** `features/book-knowledge/` owns the panel and `KnowledgeReaderHost.vue`, which holds
 the panel state, the visit bar and the navigation handlers; `ReaderView.vue` only renders it and
@@ -1818,7 +1873,7 @@ The pipeline has one `bk` step on the `fast` slot and one unit per book. The run
 BK index and a shared build slot, honours job cancellation and reuses the BK unit cache within one
 job generation: the runner passes `String(ctx.job.generation)` as `buildForStoryGuide`'s `replayScope`,
 which joins every stored answer's request hash, so Continue, Retry and Update replay while Rebuild asks
-the model again (old-generation answers stay in the unit file; the bench passes no scope). Build
+the model again (a finished build compacts the unit file to its own generation; the bench passes no scope). Build
 calls go through `ctx.complete`, so the job's recorded model, cost tracking and story-guide budget
 apply. The admin bench runs independently of the job engine and shares the build code.
 
@@ -1851,9 +1906,11 @@ engine's own counter. The two BK hooks (`onUnit` in `xray/dense/dense-run.ts`, `
 **Coverage.** The engine sees one unit, so its 0.9 floor never fires; BK measures its own.
 `buildForStoryGuide` lowers the payload's `coverage` to the lowest share of units that returned a valid
 answer over `BK_COVERAGE_STEPS` (kinds, notes, facts, describe, ties; an empty alias, now or about result is
-normal), counting only steps with at least `BK_COVERAGE_MIN_UNITS` (10) units, both exported from
-`book-knowledge-xray.service.ts`. A refused or filtered unit is skipped after one try and counts against
-it. The runner fails the job as `low-coverage` below `AI_JOBS_MIN_COVERAGE`, so the stored guide is kept.
+normal), counting steps with at least `BK_COVERAGE_MIN_UNITS` (10) units, and a smaller step only when
+less than half of it answered, both exported from `book-knowledge-xray.service.ts`. A refused or filtered
+unit is skipped after one try and counts against it. Junk judge units are excluded from kind coverage;
+the judge has its own missing-vote floor. The runner fails the job as
+`low-coverage` below `AI_JOBS_MIN_COVERAGE`, so the stored guide is kept.
 Assembly uses the lower of the engine's and BK's coverage, falls back to engine coverage for missing or
 non-finite cached BK coverage, and clamps the payload coverage to [0, 1]. The engine writes
 `ai_artifacts.coverage`, which the status, the card's "whole book" label, the admin list and the
@@ -1892,8 +1949,9 @@ the three fork readers (Absorb content route, recap, BK reader) through `bkGuide
 hash and the fixes revision, so rewriting the body keeps conditional requests right. Upstream's own mobile
 route serves the fixed guide without the extras rewrite; it does not read the extras.
 
-**Versions.** `BK_PROMPT_VERSION` joins the six BK versions it depends on, each padded to two digits, so
-any bump changes it and two changes never cancel out. A part of 100 or more throws at load. Indexes for
+**Versions.** `BK_PROMPT_VERSION` is a 31-bit FNV-1a hash of the nine BK versions it depends on, in
+order (dense prompt, kind review, kind spans, text, terms, artifact, mode, fiction and nonfiction
+junk judge), so any bump changes it and it stays a safe integer however large a part grows. Indexes for
 MOBI, AZW3 and AZW mark as `body` only the sentences inside upstream's `storySections` (the rest is
 `front` before the first story section, `other` after); ordinals and spine bytes still cover every linear
 section. `TEXT_VERSION` was not bumped: Kindle indexes did not exist before this branch, and a bump would

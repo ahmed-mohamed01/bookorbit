@@ -2,9 +2,10 @@ import { STORY_GUIDE_TIE_TYPES, type BookKnowledgeXrayMode } from '@bookorbit/ty
 import { CONCEPT_TIE_TYPES } from '../xray-tie-types';
 import type { PassSlot } from '../pass/pass-cast';
 import { ABILITY_GROUPS, IDENTITY_FACTS, IDENTITY_LEAVE_OUT, NOTE_DISCIPLINE, SUMMARY_RULES } from '../pass/pass-prompt';
-import { THOUGHT_DESCRIPTION } from '../xray-description-context';
+import { THOUGHT_DESCRIPTION, WRITTEN_TEXT_RULE } from '../xray-description-context';
+import { hasWritten } from './dense-chunks';
 
-export const DENSE_PROMPT_VERSION = 15;
+export const DENSE_PROMPT_VERSION = 24;
 /** Hard caps: a reply cut here is not resent with more room (round 7). */
 export const NOTES_MAX_OUTPUT_TOKENS = 6000;
 /** A chunk note; the unit's joined note allows NOTE_WORDS. */
@@ -37,10 +38,14 @@ const NUMBERED = 'each sentence led by its number in brackets, such as [1234]';
 const CITE_RULE = 'n: the numbers of the one to three sentences of the stretch that show it, such as [1234].';
 const NOTE_STYLE =
   `Write the note as one or two complete, plain sentences in the present tense: as short as it can be while clear and concise, usually 20 to 30 words, never more than ${CHUNK_NOTE_WORDS}. ` +
-  'In the note write names, never ids: the first sentence has the id as its subject, called by the name its line gives; later ones may use ' +
-  'he, she, it or they. Name the people and places involved by name. Add one short identifying phrase, such as "Marta, the old ferrywoman,", ' +
+  'In the note write names, never ids. Name the people and places involved by name. Add one short identifying phrase, such as "Marta, the old ferrywoman,", ' +
   'only when the reader needs it to follow the event. No chains of verbs joined by commas, no notes-style fragments, no list of ' +
   'every action: the events that matter.';
+
+const ACTOR_RULE =
+  'A note for an id that is not a character or group (a place, object or idea) says who acts: lead with the character or group who does ' +
+  'something to, with or about it in this stretch, by name, such as "Tavia hides the ember key under the mill floor." When no one in the ' +
+  'cast acts on it in this stretch, answer null for that id.';
 
 const NOTES_SYSTEM: Record<BookKnowledgeXrayMode, string> = {
   fiction: [
@@ -50,6 +55,7 @@ const NOTES_SYSTEM: Record<BookKnowledgeXrayMode, string> = {
       'summary before it and the descriptions are context only: never retell them. Notes and the summary cover only the text between ' +
       '<chapter> tags. Refer to names only by their ids.',
     `notes: an object keyed by id. Every id on the Required line gets a key: {"note", "n"}, or null when nothing happens to it here. Other ids get a key only when something happens to them. note: what happens to the id in this stretch alone: events, not who it is. ${NOTE_STYLE} ${CITE_RULE} ${NOTE_DISCIPLINE}`,
+    ACTOR_RULE,
     `summary: ${SUMMARY_RULES}`,
     'Answer with JSON only: {"notes": {"e1": {"note": "...", "n": [1234]}, "e2": null}, "summary": "..."}.',
   ].join('\n\n'),
@@ -78,7 +84,7 @@ const FACTS_SYSTEM: Record<BookKnowledgeXrayMode, string> = {
       'and "abilities:" its current list when it has them. The descriptions are context only. Facts, abilities and merges come only ' +
       `from the text between <chapter> tags. Refer to names only by their ids. Every item gives ${CITE_RULE}`,
     `identity: {"id", "fact", "kind", "n"} for each lasting fact the stretch states about an id: who someone is in the story, ${IDENTITY_FACTS}; also a rank, a group, a bond, a lasting ability or status (alive, dead, missing). One fact an item, at most ${FACTS_PER_ID} an id; leave out what its "about" already says. ${IDENTITY_LEAVE_OUT}\n` +
-      'kind: "identity" for who the id is (role, family, origin, rank, group, bond); "status" for a standing that has just changed: where it lives now, who it serves now, what it is now (a new post, alive, dead, missing). A scene event is neither.',
+      'kind: "identity" for who the id is (role, family, origin, rank, group, bond); "status" for a standing that has just changed: where it lives now, who it serves now, what it is now (a new post, alive, dead, missing). A scene event is neither. Leave out one-off touches, gestures, looks, sensations and feelings about a single moment.',
     'abilities: only for ids whose stats, classes, levels, spells, skills or gear the stretch states as such (a status screen, a stated rank or ' +
       `level), the changes against the current list: {"id", "change": "gained", "changed" or "lost", "group": ${ABILITY_GROUPS.map((group) => `"${group}"`).join(', ')}, ` +
       '"name", "detail" (such as "Beginner 7", "+1", "rank 5", or null), "n"}. name: the ability\'s own name as the cited sentence writes it, ' +
@@ -142,7 +148,8 @@ const READ_SYSTEM: Record<BookKnowledgeXrayMode, string> = {
 
 export const readSystem = (mode: BookKnowledgeXrayMode) => READ_SYSTEM[mode];
 
-const read = (text: string, task: string) => `<chapter>\n${text}\n</chapter>\n\n<task>\n${task}\n</task>\n\n`;
+const read = (text: string, task: string) =>
+  `<chapter>\n${text}\n</chapter>\n\n<task>\n${hasWritten(text) ? `${WRITTEN_TEXT_RULE.trim()}\n\n` : ''}${task}\n</task>\n\n`;
 
 export function sceneUser(
   text: string,
@@ -172,7 +179,7 @@ export interface DenseContext {
 
 function narratorContext(slots: readonly PassSlot[], context: DenseContext): string {
   return slots.some((slot) => slot.id === context.narratorId)
-    ? `First-person narration outside dialogue refers to ${context.narratorId}. Treat those sentences as evidence for that entry.\n\n`
+    ? `First-person narration outside dialogue and quoted writing refers to ${context.narratorId}. Treat those sentences as evidence for that entry.\n\n`
     : '';
 }
 
@@ -191,13 +198,19 @@ function castLines(slots: readonly PassSlot[], context: DenseContext, abilities:
     .join('\n');
 }
 
-/** The ids a chunk's notes must answer: those named in `REQUIRED_MENTIONS` or more of its sentences. */
-export function requiredIds(slots: readonly PassSlot[]): string[] {
-  return slots.filter((slot) => slot.mentions >= REQUIRED_MENTIONS).map((slot) => slot.id);
+/** Kinds that act in a novel; a fiction note on any other kind leads with one of these. */
+export const ACTOR_KINDS: ReadonlySet<PassSlot['kind']> = new Set(['character', 'group']);
+
+/**
+ * The ids a chunk's notes must answer: those named in `REQUIRED_MENTIONS` or more of its sentences. In a novel only
+ * characters and groups: a place, object or idea gets a note only when someone acts on it.
+ */
+export function requiredIds(slots: readonly PassSlot[], mode: BookKnowledgeXrayMode): string[] {
+  return slots.filter((slot) => slot.mentions >= REQUIRED_MENTIONS && (mode === 'nonfiction' || ACTOR_KINDS.has(slot.kind))).map((slot) => slot.id);
 }
 
 export function notesUser(text: string, slots: readonly PassSlot[], context: DenseContext, mode: BookKnowledgeXrayMode): string {
-  const required = requiredIds(slots);
+  const required = requiredIds(slots, mode);
   return (
     `${read(text, NOTES_SYSTEM[mode])}${context.previous ? `<before>\n${context.previous}\n</before>\n\n` : ''}${narratorContext(slots, context)}Cast:\n${castLines(slots, context, false)}\n\n` +
     `Required: ${required.join(', ') || 'none'}`
@@ -243,19 +256,24 @@ export function retryUser(user: string, missing: readonly string[], failed: read
   return parts.join('\n');
 }
 
-/** A `now` line: what has changed since the intro. */
+/** A `now` line: the character's current situation. */
 export const NOW_WORDS = 30;
 export const NOW_MAX_OUTPUT_TOKENS = 3000;
+/** Posture and the passing moment: a now line holds over chapters, so these mark a scene, not a standing. */
+export const NOW_MOMENT =
+  /\b(?:stands?|sits?|sitting|kneels?|kneeling|waits?|waiting|remains? (?:silent|still|quiet)|silently|ruminat\w*|marvel\w*|gazes?|begins?|as (?:she|he|they|it) (?:begins?|starts?|speaks?))\b/i;
 
 export const NOW_SYSTEM =
   'Below are characters of a novel whose standing changed in the chapter just read. Each has its intro ("about"), its current "now" line ' +
   '("none" when it has none) and the status facts stated so far; facts from the chapter just read start with "new:".\n' +
-  `A now line says what has changed since the intro, in at most ${NOW_WORDS} words, starting from the change itself: where they live, ` +
-  'who they serve, what they are now. Never restate identity, age, origin or titles the intro already gives, never start with the word ' +
-  '"Now" or with their name, and leave out chapter events. Keep the current line exactly as it is unless the new facts change it. Use ' +
+  'A now line is one sentence of prose about their current standing: where they are based, what they are pursuing or facing, and who they are with. ' +
+  'It holds over the last chapters and will still be true next chapter (based at, serving, sworn to, hunted by, missing, dead), never a single moment or scene: ' +
+  'leave out posture and what they are doing right now (standing, sitting, waiting, staying silent, a thought or a feeling). Write in the third person. ' +
+  `Use at most ${NOW_WORDS} words. Never include stat or level changes, skill ranks or a list. ` +
+  'Never restate identity, age, origin or titles the intro already gives, and never start with the word "Now" or with their name. ' +
+  'Keep the current line exactly as it is unless the new facts change it; when they do, write the whole line again, never tack on a "now" or "still" clause. Use ' +
   'only the facts; never add, guess or hedge. Use the names exactly as given.\n' +
-  'Example of a bad line: "Viviane Saint-Lys, 24, former corporal medic and heir, now a mercenary witch of Fort Stone." A good line: "A ' +
-  'mercenary witch of Fort Stone, living in the watchroom with her dragon Arthur."\n' +
+  'Example of a bad line: "She stands quietly beside Orrin as the bridge floods." A good line: "Captain of the river watch since the flood, she is based at the old mill with Orrin and hunted by the clan elders."\n' +
   'Answer with JSON only: {"now": {"<id>": "<now line>"}}';
 
 export function nowUser(rows: readonly { id: string; name: string; about: string | null; now: string | null; facts: string[] }[]): string {
