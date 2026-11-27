@@ -3,7 +3,18 @@ import { buildConstellation, CONSTELLATION_MAX_LINKS } from './constellation'
 import type { EntityView, StoryGuideView } from './story-guide-view'
 
 function entity(index: number): EntityView {
-  return { key: `e${index}`, name: `E${index}`, kind: 'character', importance: 2, mentions: 1, firstSeen: 0, aliases: [], profiles: [], search: [] }
+  return {
+    key: `e${index}`,
+    name: `E${index}`,
+    kind: 'character',
+    importance: 2,
+    mentions: 1,
+    firstSeen: 0,
+    lastSeen: null,
+    aliases: [],
+    profiles: [],
+    search: [],
+  }
 }
 
 describe('buildConstellation', () => {

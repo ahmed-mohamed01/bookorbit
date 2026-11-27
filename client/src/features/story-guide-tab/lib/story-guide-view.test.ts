@@ -1,4 +1,4 @@
-import type { StoryGuideChronicle } from '@bookorbit/types'
+import type { StoryGuideChronicle, StoryGuideChronicleTimelineEntry } from '@bookorbit/types'
 import { describe, expect, it } from 'vitest'
 import { buildConstellation } from './constellation'
 import { end, fixtureCut, guideFixture, quote, rankFixture, timelineRow } from './story-guide.test-fixture'

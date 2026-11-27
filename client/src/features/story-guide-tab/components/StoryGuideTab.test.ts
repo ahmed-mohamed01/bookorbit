@@ -82,7 +82,7 @@ function button(tab: VueWrapper, label: string) {
 
 beforeEach(() => {
   localStorage.clear()
-  Element.prototype.scrollIntoView = vi.fn()
+  Element.prototype.scrollIntoView = vi.fn<() => void>()
   access.mayBuild = true
   status.value = built
   vi.mocked(fetchStoryGuide).mockResolvedValue(guideFixture)
