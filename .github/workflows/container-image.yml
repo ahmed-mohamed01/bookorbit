@@ -699,6 +699,7 @@ jobs:
           build-args: APP_VERSION=sha-${{ needs.prepare.outputs.source_sha_short }}
           platforms: linux/amd64
           cache-from: type=gha,scope=container-image-yml-read-aloud-worker-amd64
+          no-cache-filters: runtime
           cache-to: type=gha,mode=max,scope=container-image-yml-read-aloud-worker-amd64
 
       - name: Scan image with Trivy
@@ -753,6 +754,7 @@ jobs:
           build-args: APP_VERSION=sha-${{ needs.prepare.outputs.source_sha_short }}
           platforms: linux/arm64
           cache-from: type=gha,scope=container-image-yml-read-aloud-worker-arm64
+          no-cache-filters: runtime
           cache-to: type=gha,mode=max,scope=container-image-yml-read-aloud-worker-arm64
 
       - name: Scan image with Trivy
