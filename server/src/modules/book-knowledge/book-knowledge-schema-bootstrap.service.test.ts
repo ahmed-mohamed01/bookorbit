@@ -22,7 +22,7 @@ describe('Book Knowledge fork schema', () => {
     expect(repo.bootstrap).toHaveBeenNthCalledWith(2, statements);
     for (const statement of statements) {
       expect(
-        /^(CREATE (TABLE|INDEX|UNIQUE INDEX) IF NOT EXISTS|CREATE OR REPLACE (FUNCTION|TRIGGER)|DROP (TRIGGER|FUNCTION) IF EXISTS|DO \$\$|ALTER TABLE \w+ DROP COLUMN IF EXISTS)/.test(
+        /^(CREATE (TABLE|INDEX|UNIQUE INDEX) IF NOT EXISTS|CREATE OR REPLACE (FUNCTION|TRIGGER)|DROP (TRIGGER|FUNCTION|TABLE) IF EXISTS|DO \$\$|ALTER TABLE \w+ DROP COLUMN IF EXISTS)/.test(
           statement,
         ) || statement.includes('ON CONFLICT'),
         statement,

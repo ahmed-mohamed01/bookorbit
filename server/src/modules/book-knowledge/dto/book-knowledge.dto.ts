@@ -17,9 +17,6 @@ export class KnowledgeAskDto {
   @IsString() @MinLength(1) @MaxLength(2000) question!: string;
 }
 export class KnowledgeBuildDto {}
-export class KnowledgeSettingsDto {
-  @IsOptional() @IsBoolean() enabled?: boolean;
-}
 export class KnowledgeXrayRunDto {
   @Type(() => Number) @IsInt() @Min(1) bookId!: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) through?: number;

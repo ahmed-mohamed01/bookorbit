@@ -1,4 +1,4 @@
-import { pgTable, integer, text, boolean, jsonb, timestamp, serial, uniqueIndex, index } from 'drizzle-orm/pg-core';
+import { pgTable, integer, text, jsonb, timestamp, serial, uniqueIndex, index } from 'drizzle-orm/pg-core';
 import { books } from '../../../db/schema';
 import type { BookKnowledgeCard, BookKnowledgeChecks } from '@bookorbit/types';
 export const knowledgeIndex = pgTable(
@@ -57,8 +57,3 @@ export const knowledgeKindReviews = pgTable(
   },
   (t) => [uniqueIndex('book_knowledge_kind_reviews_cache_idx').on(t.bookId, t.fingerprint, t.requestHash)],
 );
-export const knowledgeSettings = pgTable('book_knowledge_settings', {
-  id: integer('id').primaryKey(),
-  enabled: boolean('enabled').notNull().default(false),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-});

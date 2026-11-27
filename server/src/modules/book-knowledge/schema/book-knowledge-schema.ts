@@ -50,14 +50,7 @@ END $$;
 --> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS book_knowledge_kind_reviews_cache_idx ON book_knowledge_kind_reviews(book_id,fingerprint,request_hash);
 --> statement-breakpoint
-CREATE TABLE IF NOT EXISTS book_knowledge_settings (
- id integer PRIMARY KEY CHECK (id=1), enabled boolean NOT NULL DEFAULT false, updated_at timestamptz NOT NULL DEFAULT now()
-);
---> statement-breakpoint
-ALTER TABLE book_knowledge_settings DROP COLUMN IF EXISTS base_url, DROP COLUMN IF EXISTS model, DROP COLUMN IF EXISTS embedding_model,
- DROP COLUMN IF EXISTS api_key, DROP COLUMN IF EXISTS reasoning;
---> statement-breakpoint
-INSERT INTO book_knowledge_settings(id) VALUES(1) ON CONFLICT DO NOTHING;
+DROP TABLE IF EXISTS book_knowledge_settings;
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS book_knowledge_cleanup (book_id integer PRIMARY KEY);
 --> statement-breakpoint

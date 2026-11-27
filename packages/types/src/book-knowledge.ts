@@ -84,13 +84,6 @@ export interface BookKnowledgeAskResponse extends BookKnowledgeScopeInfo {
   checks: BookKnowledgeChecks;
   passages: BookKnowledgePassage[];
 }
-/** Model calls go through the server's AI settings (feature `book-knowledge`, fast and careful slots). */
-export interface BookKnowledgeSettings {
-  enabled: boolean;
-}
-export interface UpdateBookKnowledgeSettings {
-  enabled?: boolean;
-}
 /** An upstream anchor plus `n`, the Book Knowledge sentence ordinal it was taken from. */
 export type BookKnowledgeXrayAnchor = StoryGuideAnchor & { n?: number };
 export type BookKnowledgeXraySub = "animal" | "god" | "spirit" | "title";

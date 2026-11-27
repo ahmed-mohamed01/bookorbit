@@ -21396,7 +21396,6 @@
     "busy": "The model is busy. Try again shortly.",
     "budget": "This month's AI budget is used up. Term lists, counts and passages still work.",
     "readerCap": "You have reached your Book Knowledge limit for this month. Term lists, counts and passages still work.",
-    "request": "Could not load Book Knowledge. Try again.",
     "retry": "Retry",
     "failed": "Indexing failed. Retry to build the index.",
     "notIndexed": "This book has not been indexed yet.",
@@ -21419,15 +21418,11 @@
     "noModel": "No model is configured. Term lists, counts and passages still work.",
     "adminHint": "Turn on Book Knowledge in the AI settings and choose a model for its fast slot.",
     "disabled": "Book Knowledge is turned off, so books are not indexed.",
-    "disabledHint": "Turn on the Enabled switch in the Book Knowledge section of the Text-to-Speech settings.",
+    "disabledHint": "Turn on Book Knowledge in the AI settings.",
     "wholeBook": "Show whole book",
     "spoilers": "Showing the whole book may reveal spoilers. This choice lasts only for this reader session.",
     "note": "Written by a model, can be wrong. Check the passages.",
     "passage": "Passage {number}",
-    "jump": "Jump to passage",
-    "enabled": "Enabled",
-    "modelHint": "Model calls use the server AI settings: the Book Knowledge feature and its fast and careful slots.",
-    "save": "Save",
-    "saved": "Settings saved."
+    "jump": "Jump to passage"
   }
 }

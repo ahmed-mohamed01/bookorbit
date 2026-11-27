@@ -15,7 +15,6 @@ import type { BookKnowledgeRepository } from './book-knowledge.repository';
 import type { BookKnowledgeService } from './book-knowledge.service';
 import type { BookKnowledgeTermsService } from './book-knowledge-terms.service';
 import { BOOK_KNOWLEDGE_AI_FEATURE, bookKnowledgeTuning, BookKnowledgeModelService } from './book-knowledge-model.service';
-import type { BookKnowledgeSettingsService } from './book-knowledge-settings.service';
 import type { Artifact } from './core/model';
 import { ARTIFACT_VERSION, TERMS_VERSION, TEXT_VERSION } from './core/versions';
 
@@ -24,8 +23,8 @@ const choice = { slot: 'fast' as const, connectionId: 4, model: 'fixture', price
 const reader = { id: 7 } as RequestUser;
 const call = { userId: reader.id, signal: new AbortController().signal };
 
-function setup(options: { enabled?: boolean; featureOn?: boolean; careful?: boolean } = {}) {
-  const { enabled = true, featureOn = true, careful = false } = options;
+function setup(options: { featureOn?: boolean; careful?: boolean } = {}) {
+  const { featureOn = true, careful = false } = options;
   const ai = {
     complete: vi.fn<AiClient['complete']>(() =>
       Promise.resolve({ text: '{"ok":true}', json: { ok: true }, usage: { input: 1, output: 1 }, finish: 'stop', model: 'fixture' }),
@@ -42,20 +41,17 @@ function setup(options: { enabled?: boolean; featureOn?: boolean; careful?: bool
     ),
   };
   const ledger = { readerSpend: vi.fn().mockResolvedValue({ requests: 3, costMicros: 1_000_000 }) };
-  const settings = { enabled: vi.fn(() => Promise.resolve(enabled)) };
   const service = new BookKnowledgeModelService(
     ai as unknown as AiClient,
     aiSettings as unknown as AiSettingsService,
-    settings as unknown as BookKnowledgeSettingsService,
     ledger as unknown as AiLedgerRepository,
   );
   return { service, ai, aiSettings, ledger };
 }
 
 describe('BookKnowledgeModelService', () => {
-  it('needs the Book Knowledge switch, the AI feature and a slot model', async () => {
+  it('needs the AI feature and a slot model', async () => {
     expect(await setup().service.choice()).toMatchObject({ slot: 'fast', model: 'fixture' });
-    expect(await setup({ enabled: false }).service.choice()).toBeNull();
     expect(await setup({ featureOn: false }).service.choice()).toBeNull();
     expect(await setup().service.choice('careful')).toBeNull();
   });

@@ -1,18 +1,15 @@
-import { Body, Controller, Get, HttpCode, Param, ParseIntPipe, Post, Put, Query, Res } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, ParseIntPipe, Post, Query, Res } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import { Permission } from '@bookorbit/types';
 import type { FastifyReply } from 'fastify';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ResolvesMergedBook } from '../../common/decorators/resolves-merged-book.decorator';
-import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import type { RequestUser } from '../../common/types/request-user';
-import { KnowledgeScopeDto, KnowledgeTermsDto, KnowledgeAskDto, KnowledgeBuildDto, KnowledgeSettingsDto } from './dto/book-knowledge.dto';
+import { KnowledgeScopeDto, KnowledgeTermsDto, KnowledgeAskDto, KnowledgeBuildDto } from './dto/book-knowledge.dto';
 import { KnowledgeTermKeyPipe } from './book-knowledge-term-key.pipe';
 import { BookKnowledgeService } from './book-knowledge.service';
 import { BookKnowledgeTermsService } from './book-knowledge-terms.service';
 import { BookKnowledgeCardService } from './book-knowledge-card.service';
 import { BookKnowledgeAskService } from './book-knowledge-ask.service';
-import { BookKnowledgeSettingsService } from './book-knowledge-settings.service';
 
 const ANSWER_THROTTLE = { default: { limit: 60, ttl: 60_000 } };
 
@@ -96,17 +93,5 @@ export class BookKnowledgeController {
     @Res({ passthrough: true }) reply: FastifyReply,
   ) {
     return withReaderSignal(reply, (signal) => this.questions.ask(bookId, user, body.question, query.scope, signal));
-  }
-}
-@Controller('book-knowledge/settings')
-@RequirePermission(Permission.ManageAppSettings)
-export class BookKnowledgeSettingsController {
-  constructor(private readonly settings: BookKnowledgeSettingsService) {}
-  @Get() get(@CurrentUser() _user: RequestUser) {
-    void _user;
-    return this.settings.get();
-  }
-  @Put() update(@CurrentUser() _user: RequestUser, @Body() body: KnowledgeSettingsDto) {
-    return this.settings.update(body, _user.id);
   }
 }

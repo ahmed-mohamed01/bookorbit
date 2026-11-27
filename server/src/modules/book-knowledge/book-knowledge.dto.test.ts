@@ -1,21 +1,11 @@
 import { ValidationPipe } from '@nestjs/common';
-import {
-  KnowledgeAskDto,
-  KnowledgeBuildDto,
-  KnowledgeScopeDto,
-  KnowledgeSettingsDto,
-  KnowledgeTermsDto,
-  KnowledgeXrayRunDto,
-} from './dto/book-knowledge.dto';
+import { KnowledgeAskDto, KnowledgeBuildDto, KnowledgeScopeDto, KnowledgeTermsDto, KnowledgeXrayRunDto } from './dto/book-knowledge.dto';
 import { KnowledgeTermKeyPipe } from './book-knowledge-term-key.pipe';
 describe('Book Knowledge DTOs', () => {
   const pipe = new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true });
-  it.each([KnowledgeAskDto, KnowledgeScopeDto, KnowledgeTermsDto, KnowledgeSettingsDto, KnowledgeBuildDto])(
-    'rejects unlisted fields in %s',
-    async (metatype) => {
-      await expect(pipe.transform({ question: 'What is light?', position: 1 }, { type: 'body', metatype })).rejects.toThrow();
-    },
-  );
+  it.each([KnowledgeAskDto, KnowledgeScopeDto, KnowledgeTermsDto, KnowledgeBuildDto])('rejects unlisted fields in %s', async (metatype) => {
+    await expect(pipe.transform({ question: 'What is light?', position: 1 }, { type: 'body', metatype })).rejects.toThrow();
+  });
   it('requires explicit full scope and bounds pagination', async () => {
     expect(await pipe.transform({}, { type: 'query', metatype: KnowledgeScopeDto })).toEqual({ scope: 'position' });
     expect(await pipe.transform({ scope: 'full' }, { type: 'query', metatype: KnowledgeScopeDto })).toEqual({ scope: 'full' });

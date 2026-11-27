@@ -2,7 +2,6 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BookKnowledgeStatus, BookKnowledgeTermDetail } from '@bookorbit/types'
 import BookKnowledgePanel from './BookKnowledgePanel.vue'
-import BookKnowledgeAdminSettings from './BookKnowledgeAdminSettings.vue'
 import { api } from '@/lib/api'
 
 vi.mock('@/lib/api', () => ({ api: vi.fn<typeof import('@/lib/api').api>() }))
@@ -194,24 +193,6 @@ describe('Book Knowledge', () => {
     expect(rows[1]).toContain('Section 6')
     expect(rows[1]).toContain('You are here')
   })
-  it('does not request or render settings without ManageAppSettings', async () => {
-    permissions.allowed = false
-    const wrapper = mount(BookKnowledgeAdminSettings)
-    wrappers.push(wrapper)
-    await flushPromises()
-    expect(api).not.toHaveBeenCalled()
-    expect(wrapper.find('form').exists()).toBe(false)
-  })
-  it('saves only the enabled switch', async () => {
-    vi.mocked(api).mockImplementation(async () => response({ enabled: true }))
-    const wrapper = mount(BookKnowledgeAdminSettings)
-    wrappers.push(wrapper)
-    await flushPromises()
-    await wrapper.get('form').trigger('submit')
-    await flushPromises()
-    const init = vi.mocked(api).mock.calls.at(-1)?.[1]
-    expect(JSON.parse(String(init?.body))).toEqual({ enabled: true })
-  })
   it.each([
     ['none', 'This book has not been indexed yet.'],
     ['failed', 'Indexing failed.'],
@@ -262,18 +243,18 @@ describe('Book Knowledge', () => {
     expect(wrapper.text()).toContain('AI budget is used up')
     expect(wrapper.text()).not.toContain('The model is busy.')
   })
-  it('hides Build and names the Enabled switch when Book Knowledge is turned off', async () => {
+  it('hides Build and points admins to the AI settings when Book Knowledge is turned off', async () => {
     mockReady({ ...ready, status: 'none', enabled: false })
     const wrapper = panel()
     await flushPromises()
     expect(wrapper.findAll('button').some((button) => button.text() === 'Build index')).toBe(false)
     expect(wrapper.text()).toContain('Book Knowledge is turned off')
-    expect(wrapper.text()).toContain('Enabled switch')
+    expect(wrapper.text()).toContain('Turn on Book Knowledge in the AI settings')
     permissions.allowed = false
     const reader = panel()
     await flushPromises()
     expect(reader.text()).toContain('Book Knowledge is turned off')
-    expect(reader.text()).not.toContain('Enabled switch')
+    expect(reader.text()).not.toContain('Turn on Book Knowledge in the AI settings')
   })
   it('keeps Ask available while a card is still loading', async () => {
     mockReady({ ...ready, modelConfigured: true })

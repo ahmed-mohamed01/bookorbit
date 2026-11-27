@@ -14,13 +14,13 @@ import { BookKnowledgeKindsService } from './book-knowledge-kinds.service';
 import { BookKnowledgeCardService } from './book-knowledge-card.service';
 import { BookKnowledgeAskService } from './book-knowledge-ask.service';
 import { BookKnowledgeBookConsolidationParticipant } from './book-knowledge-book-consolidation.participant';
-import { BookKnowledgeController, BookKnowledgeSettingsController } from './book-knowledge.controller';
+import { BookKnowledgeController } from './book-knowledge.controller';
 import { BookKnowledgeXrayController } from './book-knowledge-xray.controller';
 import { BookKnowledgeXrayService } from './book-knowledge-xray.service';
 @Module({
   imports: [ConfigModule.forFeature(bookKnowledgeConfig), AiModule, BookModule, BookConsolidationModule],
   exports: [BookKnowledgeXrayService, BookKnowledgeService],
-  controllers: [BookKnowledgeController, BookKnowledgeSettingsController, BookKnowledgeXrayController],
+  controllers: [BookKnowledgeController, BookKnowledgeXrayController],
   providers: [
     BookKnowledgeRepository,
     BookKnowledgeSchemaBootstrapService,

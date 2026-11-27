@@ -3,7 +3,7 @@ import { and, asc, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
-import { knowledgeIndex, knowledgeCards, knowledgeKindReviews, knowledgeSettings } from './schema/book-knowledge.schema';
+import { knowledgeIndex, knowledgeCards, knowledgeKindReviews } from './schema/book-knowledge.schema';
 @Injectable()
 export class BookKnowledgeRepository {
   constructor(@Inject(DB) private readonly db: NodePgDatabase<typeof schema>) {}
@@ -63,15 +63,6 @@ export class BookKnowledgeRepository {
         .orderBy(knowledgeIndex.updatedAt, knowledgeIndex.bookId)
         .limit(1)
     )[0];
-  }
-  async settings() {
-    return (await this.db.select().from(knowledgeSettings).where(eq(knowledgeSettings.id, 1)))[0]!;
-  }
-  async saveSettings(values: Partial<typeof knowledgeSettings.$inferInsert>) {
-    await this.db
-      .update(knowledgeSettings)
-      .set({ ...values, updatedAt: new Date() })
-      .where(eq(knowledgeSettings.id, 1));
   }
   async cached(
     identity: Pick<

@@ -7,9 +7,9 @@ import { AiError, isAiError, type AiRequest, type AiResult, type AiSlotChoice, t
 import { AiLedgerRepository } from '../ai/ai-ledger.repository';
 import { aiMonthKey } from '../ai/ai-month';
 import { AiSettingsService, type AiSettingsSnapshot } from '../ai/ai-settings.service';
-import { BookKnowledgeSettingsService } from './book-knowledge-settings.service';
+import { BOOK_KNOWLEDGE_AI_FEATURE } from './book-knowledge-settings.service';
 
-export const BOOK_KNOWLEDGE_AI_FEATURE = 'book-knowledge';
+export { BOOK_KNOWLEDGE_AI_FEATURE };
 export const READER_MODEL_TIMEOUT_MS = 60_000;
 const REQUEST_EFFORT: AiEffort = 'low';
 const GENERATE_MAX_OUTPUT_TOKENS = 1600;
@@ -50,17 +50,15 @@ export class BookKnowledgeModelService {
   constructor(
     private readonly ai: AiClient,
     private readonly aiSettings: AiSettingsService,
-    private readonly settings: BookKnowledgeSettingsService,
     private readonly ledger: AiLedgerRepository,
   ) {}
 
-  /** The slot's connection and model when Book Knowledge, its AI feature and the slot are all on; null otherwise. */
+  /** The slot's connection and model when Book Knowledge's AI feature and the slot are on; null otherwise. */
   async choice(slot: AiSlot = 'fast'): Promise<AiSlotChoice | null> {
     return (await this.choiceWithSnapshot(slot))?.choice ?? null;
   }
 
   async choiceWithSnapshot(slot: AiSlot = 'fast'): Promise<{ choice: AiSlotChoice; snapshot: AiSettingsSnapshot } | null> {
-    if (!(await this.settings.enabled())) return null;
     const snapshot = await this.aiSettings.snapshot();
     if (!snapshot.features[BOOK_KNOWLEDGE_AI_FEATURE]?.enabled) return null;
     const chosen = snapshot.slots[slot];

@@ -1848,13 +1848,16 @@ Initial overlay measured 2026-11-24 with `git diff -w HEAD --stat` on the uncomm
 (17 upstream source files, 91 lines added + removed). On 2026-11-25 the two file-selection hooks in
 `book.repository.ts` and `book-read.service.ts` moved into `BookKnowledgeRepository.knowledgeFileCandidates`,
 following upstream's `StoryGuidesRepository`, which also reads book tables from its own repository. Both upstream
-files are back to upstream for Book Knowledge; `book-read.service.ts` keeps 5 added lines for the separate edition sync hook.
+files are back to upstream for Book Knowledge; `book-read.service.ts` keeps 5 added lines for the separate edition sync hook. On 2026-11-27
+Book Knowledge's own on/off switch (the `book_knowledge_settings` row, set from a section inside `TtsAdminSettings.vue`)
+was removed: it defaulted to off on new servers and blocked story guides while the AI settings showed Book Knowledge on.
+Book Knowledge now follows its `book-knowledge` feature toggle in the AI settings alone, the bootstrap drops the table,
+and `TtsAdminSettings.vue` is back to upstream.
 
 | Upstream file                                                                                                                    | Hook                                                                                                                               | Footprint |
 | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------- |
 | `client/.../reader/ReaderView.vue`                                                                                               | import, template ref, `trackingEnabled` line, `closeAnyPanel` branch, toggle, render host                                          | 27 lines  |
 | `client/.../epub/components/ReaderHeader.vue`                                                                                    | `knowledgeAvailable` prop, `toggleKnowledge` emit and button                                                                       | 14 lines  |
-| `client/src/features/tts/TtsAdminSettings.vue`                                                                                   | admin settings section behind the `book-knowledge` feature flag                                                                    | 5 lines   |
 | `server/src/app.module.ts`                                                                                                       | module registration                                                                                                                | 2 lines   |
 | `server/src/config/env.validation.ts`, `server/.env.example`                                                                     | `BOOK_KNOWLEDGE_GLINER_THREADS` (read by the module's own config, not `config.ts`)                                                 | 3 lines   |
 | `server/package.json` (+ lockfile)                                                                                               | `onnxruntime-node` (1.31.1, see below), `tokenizers`, `wink-nlp`, `wink-eng-lite-web-model`                                        | 4 lines   |

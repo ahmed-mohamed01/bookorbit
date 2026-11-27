@@ -1,22 +1,13 @@
-import { Injectable, Logger } from '@nestjs/common';
-import type { BookKnowledgeSettings } from '@bookorbit/types';
-import { BookKnowledgeRepository } from './book-knowledge.repository';
-import { knowledgeOperation } from './book-knowledge-logging';
-import { KnowledgeSettingsDto } from './dto/book-knowledge.dto';
+import { Injectable } from '@nestjs/common';
+import { AiSettingsService } from '../ai/ai-settings.service';
+
+export const BOOK_KNOWLEDGE_AI_FEATURE = 'book-knowledge';
+
+/** Book Knowledge is on exactly when its feature is on in the server's AI settings. */
 @Injectable()
 export class BookKnowledgeSettingsService {
-  private readonly logger = new Logger(BookKnowledgeSettingsService.name);
-  constructor(private readonly repo: BookKnowledgeRepository) {}
-  async get(): Promise<BookKnowledgeSettings> {
-    return { enabled: await this.enabled() };
-  }
+  constructor(private readonly aiSettings: AiSettingsService) {}
   async enabled(): Promise<boolean> {
-    return (await this.repo.settings()).enabled;
-  }
-  async update(dto: KnowledgeSettingsDto, userId: number): Promise<BookKnowledgeSettings> {
-    return knowledgeOperation(this.logger, 'book_knowledge.settings', `userId=${userId}`, async () => {
-      if (dto.enabled !== undefined) await this.repo.saveSettings({ enabled: dto.enabled });
-      return this.get();
-    });
+    return (await this.aiSettings.features())[BOOK_KNOWLEDGE_AI_FEATURE]?.enabled === true;
   }
 }
