@@ -1,10 +1,12 @@
-import type { BookKnowledgeXrayEntity, BookKnowledgeXrayLink, StoryGuideChronicle } from "./book-knowledge";
+import type { BookKnowledgeXrayEntity, BookKnowledgeXrayLink, BookKnowledgeXrayMode, StoryGuideChronicle } from "./book-knowledge";
 import type { StoryGuideEntity, StoryGuidePayloadV1 } from "./story-guide-payload";
 
 export type ForkStoryGuidePayload = Omit<StoryGuidePayloadV1, "entities"> & {
   entities: (StoryGuideEntity & Partial<Pick<BookKnowledgeXrayEntity, "importance" | "count">>)[];
   links?: BookKnowledgeXrayLink[];
   chronicle?: StoryGuideChronicle;
+  /** Absent on guides built before the mode was recorded; those read as fiction. */
+  mode?: BookKnowledgeXrayMode;
 };
 
 export interface ForkStoryGuideCut {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chapterPage, isChapterOrder, isChapterPageSize } from './chapter-page'
+import { ALL_CHAPTERS, chapterPage, isChapterOrder, isChapterPageSize } from './chapter-page'
 
 const chapters = Array.from({ length: 34 }, (_, index) => ({ title: `Chapter ${index + 1}` }))
 const titles = (page: ReturnType<typeof chapterPage>) => page.chapters.map(({ title }) => title.replace('Chapter ', ''))
@@ -25,10 +25,18 @@ describe('chapter page', () => {
     expect(chapterPage([], 'newest', 10, 1)).toMatchObject({ chapters: [], page: 1, pages: 1, first: '', last: '', holdsReader: true })
   })
 
+  it('shows every chapter on one page for All', () => {
+    const all = chapterPage(chapters, 'newest', ALL_CHAPTERS, 1)
+    expect(all.chapters).toHaveLength(34)
+    expect(all).toMatchObject({ page: 1, pages: 1, first: 'Chapter 34', last: 'Chapter 1', holdsReader: true })
+    expect(chapterPage([], 'oldest', ALL_CHAPTERS, 1)).toMatchObject({ pages: 1, holdsReader: true })
+  })
+
   it('accepts only known orders and page sizes from storage', () => {
     expect(isChapterOrder('oldest')).toBe(true)
     expect(isChapterOrder('random')).toBe(false)
     expect(isChapterPageSize(20)).toBe(true)
     expect(isChapterPageSize(15)).toBe(false)
+    expect(isChapterPageSize(ALL_CHAPTERS)).toBe(true)
   })
 })

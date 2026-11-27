@@ -843,7 +843,7 @@ The Book Knowledge file-selection hooks in `book.repository.ts` and `book-read.s
 
 ### Web Story Guide tab
 
-Measured with `git diff -w --numstat upstream/main` on 2026-11-25. The feature column
+Measured with `git diff -w --numstat upstream/main` on 2026-11-27. The feature column
 isolates this tab's changes from earlier fork changes in the same files.
 
 | Upstream file                                                   | Feature added / removed | Total added / removed | Hook                                                                  |
@@ -852,7 +852,7 @@ isolates this tab's changes from earlier fork changes in the same files.
 | `client/src/features/book/components/detail/BookDetailTabs.vue` |                   5 / 1 |                 5 / 1 | Read the optional availability flag and insert the tab after Chapters |
 | `client/src/views/BookDetailView.vue`                           |                   7 / 1 |                21 / 7 | Provide availability, lazy-load the tab and fall back to Details      |
 | `packages/types/src/index.ts`                                   |                   1 / 0 |                13 / 0 | Re-export the fork recap contract                                     |
-| `client/src/locales/en.json`                                    |                 153 / 0 |             2880 / 56 | Tab, window title, section and unavailable-state copy                 |
+| `client/src/locales/en.json`                                    |                 167 / 0 |             2890 / 52 | Tab, window title, section, toolbar and unavailable-state copy        |
 
 The cut-based ranking lives entirely in the tab overlay and adds no upstream hooks.
 
@@ -1329,10 +1329,23 @@ on a strictly later percentage or the same CFI at the same percentage. An event 
 cut or a recap loads is held and applied once they settle, and a newer event aborts an older read. While a job runs the tab
 lists five steps (Reading the book, Finding names, Checking who's who, Writing descriptions, Finishing up)
 from the job's phase, with minutes left once Writing descriptions can estimate it. Previously (with an "All
-chapters" button) and the Timeline page their chapters 10, 20 or 50 at a time, newest or oldest
-first. Each list remembers its own order and page size per browser, newest first by default, so a
-long series stays bounded. The pager names the first and last chapter on the page. Ties show the chronicle's pair note for the two names,
+chapters" button) and the Timeline page their chapters 10, 20 or 50 at a time, or all of them, newest
+or oldest first. Both lists share one order and page size per browser, newest first and 10 by default,
+so a choice holds across sections; only the reader's own choice of All renders more than 50 chapters. The pager names the first and last chapter on the page. Ties show the chronicle's pair note for the two names,
 else the quote, both inside the cut. The constellation draws at most 120 links, strongest first.
+
+A bar under the position card holds the tab's tools, like the library and Watchlist bars: one search
+box, the People / Places / Terms kinds with counts, the shared order and page size (shown only where a
+list pages chapters: Story so far, Timeline and search results), and the guide's actions menu, which
+moved off the position card. From two letters, outside Characters, the search replaces the section with
+results at the cut: matching names first (six shown, the rest one click away in Characters), then
+Timeline notes that say the words or tag a matching name, paged like the Timeline, then chapter
+summaries that say them, all highlighted. The section list counts matches while a search is on. On
+Characters the box filters the cards in place and the kinds act as one switch, as the old in-section
+pills did; elsewhere the kinds toggle independently and hide the chips of a kind that is off.
+
+The section list calls the names section Concepts when the guide's `mode` is nonfiction, and Characters
+otherwise, including guides built before the mode was recorded.
 
 Characters, places and terms use the visible chronicle to rank at the reader's cut. Two or more
 visible rows covering at least a quarter of the distinct visible chapter rows rank Main. Zero or one
@@ -1346,10 +1359,13 @@ reader's chapter comes from the chronicle unit holding the cut, else the section
 no chapter number on either side the sheet keeps Now.
 An entry's sheet leads with a card ("Who they are" for characters and groups, "What it is" for the
 rest) holding the newest visible description, with the earlier ones folded under it in reading order.
-"In the story" follows as a node timeline of the entry's chronicle notes from the opening to the
-reader's chapter: the latest three show, each "Show earlier events" adds at most twenty more, and a
-search over notes and chapter titles and an order flip cover every note. Rows are built in reading
-order for both orders, so keyboard and screen-reader order match the screen.
+Below it, Timeline and Ties are tabs (Ties also holds "Often with"). The Timeline is a node list of
+the entry's chronicle notes from the first one to the reader's chapter. Collapsed, it fills the sheet
+from where it starts to the bottom of the screen (at least 240px), renders at most 40 notes, and ends
+in one "Display all" node that shows every note; there is no second expand or collapse. A list
+within 96px of fitting shows whole. Each chapter's title sits in bold above its notes. A search over
+notes and chapter titles and an order flip cover every note. Rows are built in reading order for both
+orders, so keyboard and screen-reader order match the screen.
 
 The recap uses the current user's EPUB CFI on the guide's own source file (progress on another file of
 the book does not move the cut) and returns the spine index and original quotes whose

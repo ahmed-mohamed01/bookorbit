@@ -1,5 +1,5 @@
 import { computed, nextTick, reactive, ref, watch, type WatchSource } from 'vue'
-import { useStorage } from '@vueuse/core'
+import { createSharedComposable, useStorage } from '@vueuse/core'
 import {
   chapterPage,
   DEFAULT_CHAPTER_PAGE_SIZE,
@@ -9,10 +9,15 @@ import {
   type ChapterPageSize,
 } from '../lib/chapter-page'
 
-/** `list` names the storage keys, so each list keeps its own order and page size per browser. */
-export function useChapterPages<T extends { title: string }>(list: string, chapters: () => readonly T[], resetOn: WatchSource) {
-  const storedOrder = useStorage<string>(`bookorbit:story-guide-${list}-order`, 'newest')
-  const storedSize = useStorage<number>(`bookorbit:story-guide-${list}-page-size`, DEFAULT_CHAPTER_PAGE_SIZE)
+/** One pair of refs for every pager, so lists follow a change even when the browser refuses to store it. */
+const useChapterPagePreferences = createSharedComposable(() => ({
+  storedOrder: useStorage<string>('bookorbit:story-guide-chapter-order', 'newest'),
+  storedSize: useStorage<number>('bookorbit:story-guide-chapter-page-size', DEFAULT_CHAPTER_PAGE_SIZE),
+}))
+
+/** Every chapter list in the Story Guide shares one order and page size per browser, so a choice holds across sections. */
+export function useChapterPages<T extends { title: string }>(chapters: () => readonly T[], resetOn: WatchSource) {
+  const { storedOrder, storedSize } = useChapterPagePreferences()
   const order = computed<ChapterOrder>({
     get: () => (isChapterOrder(storedOrder.value) ? storedOrder.value : 'newest'),
     set: (value) => (storedOrder.value = value),

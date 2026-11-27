@@ -58,36 +58,65 @@ describe('StoryGuideEntitySheet', () => {
     expect(earlier).toEqual(['As of Chapter 1: Part A traveler', 'As of Chapter 2: Part A visitor'])
   })
 
-  it('runs In the story from the opening to the reader, showing the latest few until expanded', async () => {
+  it('runs the Timeline from the first note to the reader', async () => {
     await openSheet()
-    expect(rows()).toEqual(['Ch 4 Event 4.', 'Ch 5 Event 5.', 'Ch 6 Event 6.'])
-    expect(dialog().querySelector('[data-testid=story-guide-note-more]')!.textContent).toContain('Show 3 earlier events')
+    expect(rows()).toEqual([
+      'Chapter 1: Part Event 1.',
+      'Chapter 2: Part Event 2.',
+      'Chapter 3: Part Event 3.',
+      'Chapter 4: Part Event 4.',
+      'Chapter 5: Part Event 5.',
+      'Chapter 6: Part Event 6.',
+    ])
     expect(dialog().querySelector('[data-testid=story-guide-in-story-here]')!.textContent).toContain('You are here, Chapter 8: Part')
-    await click('story-guide-note-more')
-    expect(rows()).toHaveLength(6)
-    expect(rows()[0]).toBe('Ch 1 Event 1.')
-    expect(dialog().querySelector('[data-testid=story-guide-note-more]')).toBeNull()
-    await click('story-guide-note-fewer')
-    expect(rows()).toHaveLength(3)
+    expect(dialog().querySelector('[data-testid=story-guide-display-all]')).toBeNull()
   })
 
-  it('flips the order and searches every note, not only the shown few', async () => {
+  it('offers one Display all node when the list is cut off, and shows everything after it', async () => {
+    const many = Array.from({ length: 50 }, (_, s) => ({ note: `Event ${s + 1}.`, at: quote(s % 6, `q${s}`), through: end(s % 6), chapter: null }))
+    const view = buildStoryGuideView(
+      { ...guide, chronicle: { ...guide.chronicle!, entities: { ana: { about: [], timeline: many } } } },
+      { s: 7, placedQuotes: [] },
+      'Opening',
+    )
+    wrapper = mount(StoryGuideEntitySheet, { props: { entity: view.byKey.get('ana'), view }, attachTo: document.body })
+    await flushPromises()
+    expect(dialog().querySelector('[data-testid=story-guide-display-all]')!.textContent).toContain('Display all 50 events')
+    expect(dialog().querySelector('[data-testid=story-guide-in-story-here]')).toBeNull()
+    await click('story-guide-display-all')
+    expect(dialog().querySelectorAll('[data-testid=story-guide-in-story-list] > div')).toHaveLength(50)
+    expect(dialog().querySelector('[data-testid=story-guide-display-all]')).toBeNull()
+    expect(dialog().querySelector('[data-testid=story-guide-in-story-here]')).not.toBeNull()
+  })
+
+  it('flips the order and searches every note', async () => {
     await openSheet()
     await click('story-guide-note-order')
-    expect(rows()).toEqual(['Ch 6 Event 6.', 'Ch 5 Event 5.', 'Ch 4 Event 4.'])
+    expect(rows()[0]).toBe('Chapter 6: Part Event 6.')
     await click('story-guide-note-search')
     const input = dialog().querySelector<HTMLInputElement>('input[type=search]')!
     expect(document.activeElement).toBe(input)
     input.value = 'event 1'
     input.dispatchEvent(new Event('input'))
     await flushPromises()
-    expect(rows()).toEqual(['Ch 1 Event 1.'])
+    expect(rows()).toEqual(['Chapter 1: Part Event 1.'])
     input.value = 'nothing like it'
     input.dispatchEvent(new Event('input'))
     await flushPromises()
     expect(dialog().textContent).toContain('Nothing matches.')
     await click('story-guide-note-search')
-    expect(rows()).toHaveLength(3)
+    expect(rows()).toHaveLength(6)
+  })
+
+  it('puts ties on their own tab', async () => {
+    await openSheet()
+    expect(dialog().querySelector('[data-testid=story-guide-ties]')!.hasAttribute('hidden')).toBe(true)
+    dialog()
+      .querySelector<HTMLElement>('[data-testid=story-guide-tab-ties]')!
+      .dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))
+    await flushPromises()
+    expect(dialog().querySelector('[data-testid=story-guide-ties]')!.hasAttribute('hidden')).toBe(false)
+    expect(dialog().querySelector('[data-testid=story-guide-in-story]')!.hasAttribute('hidden')).toBe(true)
   })
 
   it('calls a non-person entry What it is and leaves out In the story without notes', async () => {

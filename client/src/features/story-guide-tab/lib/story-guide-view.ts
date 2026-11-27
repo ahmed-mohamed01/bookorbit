@@ -421,7 +421,8 @@ export function buildStoryGuideView(guide: ForkStoryGuidePayload, cut: ForkStory
     return chapterOf(s)?.title ?? openingTitle
   }
 
-  return { chapters, chapterBySpine, currentChapter, chapterOf, chapterTitle, timeline, entities, groups, byKey, ties, links, details }
+  const nonfiction = guide.mode === 'nonfiction'
+  return { chapters, chapterBySpine, currentChapter, chapterOf, chapterTitle, timeline, entities, groups, byKey, ties, links, details, nonfiction }
 }
 
 export function previouslyByChapter(previously: ForkStoryRecap['previously'], view: StoryGuideView, openingTitle: string) {

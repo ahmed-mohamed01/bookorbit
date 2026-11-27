@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import { Select } from '@/components/ui/select'
-import { CHAPTER_PAGE_SIZES, isChapterOrder, isChapterPageSize, type ChapterOrder, type ChapterPageSize } from '../lib/chapter-page'
+import { ALL_CHAPTERS, CHAPTER_PAGE_SIZES, isChapterOrder, isChapterPageSize, type ChapterOrder, type ChapterPageSize } from '../lib/chapter-page'
 
 defineProps<{ order: ChapterOrder; size: ChapterPageSize; total: number }>()
 const emit = defineEmits<{ 'update:order': [order: ChapterOrder]; 'update:size': [size: ChapterPageSize] }>()
@@ -38,7 +38,11 @@ function changeSize(size: string | number) {
       @update:model-value="changeSize"
     >
       <option v-for="option in CHAPTER_PAGE_SIZES" :key="option" :value="option">
-        {{ t('book.detail.storyGuideTab.chapterPageSize.option', { count: option }) }}
+        {{
+          option === ALL_CHAPTERS
+            ? t('book.detail.storyGuideTab.chapterPageSize.all')
+            : t('book.detail.storyGuideTab.chapterPageSize.option', { count: option })
+        }}
       </option>
     </Select>
   </span>

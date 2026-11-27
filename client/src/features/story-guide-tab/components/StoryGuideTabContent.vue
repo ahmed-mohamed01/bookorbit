@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { refDebounced } from '@vueuse/core'
 import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
-  Ellipsis,
   FileText,
   Galaxy,
   List,
@@ -18,7 +18,6 @@ import {
 } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import type { BookDetail } from '@bookorbit/types'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { useCoverVersions } from '@/features/book/composables/useCoverVersions'
 import StoryGuideConfirmDialog from '@/features/story-guide/components/StoryGuideConfirmDialog.vue'
 import {
@@ -26,23 +25,24 @@ import {
   type StoryGuideConfirmation,
   type StoryGuideConfirmationChoice,
 } from '@/features/story-guide/lib/story-guide-confirmation'
-import { storyGuideActionLabel, storyGuideBuiltText } from '@/features/story-guide/lib/story-guide-copy'
+import { storyGuideBuiltText } from '@/features/story-guide/lib/story-guide-copy'
 import type { StoryGuideAction } from '@/features/story-guide/lib/story-guide-presentation'
 import { formatPercent } from '@/i18n/formatters'
 import { useStoryGuideTab, type GuideSection } from '../composables/useStoryGuideTab'
 import { useStoryGuideTabStatus } from '../composables/useStoryGuideTabStatus'
 import { storyGuideMenuActions } from '../lib/story-guide-tab-state'
-import { entityKindColor, entityKindIcon } from '../lib/entity-kind-icon'
-import { previouslyByChapter } from '../lib/story-guide-view'
+import { ENTITY_GROUPS, matchesName, MIN_STORY_SEARCH, searchStory } from '../lib/story-guide-search'
+import { previouslyByChapter, type EntityGroup } from '../lib/story-guide-view'
 import { useChapterPages } from '../composables/useChapterPages'
 import StoryGuideChapters from './StoryGuideChapters.vue'
 import StoryGuideCharacters from './StoryGuideCharacters.vue'
 import StoryGuideConstellation from './StoryGuideConstellation.vue'
 import StoryGuideEntitySheet from './StoryGuideEntitySheet.vue'
-import StoryGuideHereMark from './StoryGuideHereMark.vue'
-import StoryGuidePageControls from './StoryGuidePageControls.vue'
 import StoryGuidePager from './StoryGuidePager.vue'
+import StoryGuideSearchResults from './StoryGuideSearchResults.vue'
 import StoryGuideTabState from './StoryGuideTabState.vue'
+import StoryGuideTimelineChapters from './StoryGuideTimelineChapters.vue'
+import StoryGuideToolbar from './StoryGuideToolbar.vue'
 
 const props = defineProps<{ book: BookDetail }>()
 const { t } = useI18n()
@@ -78,25 +78,56 @@ const positionLabel = computed(() =>
     : t('book.detail.storyGuideTab.noSavedPosition'),
 )
 const laterChapters = computed(() => view.value?.chapters.filter(({ locked }) => locked).length ?? 0)
+const query = ref('')
+const searchQuery = refDebounced(query, 150)
+const kinds = ref<ReadonlySet<EntityGroup>>(new Set(ENTITY_GROUPS))
+const characterGroup = ref<EntityGroup>('people')
+const onCharacters = computed(() => section.value === 'characters')
+/** Matched from the debounced text only, so typing never rescans the guide; a box emptied below two letters hides them at once. */
+const searched = computed(() => (view.value && !onCharacters.value ? searchStory(view.value, searchQuery.value, kinds.value) : null))
+const found = computed(() => (query.value.trim().length >= MIN_STORY_SEARCH ? searched.value : null))
+const settled = computed(() => query.value.trim() === searchQuery.value.trim())
 const counts = computed(() => ({
   recap: null,
-  timeline: view.value?.timeline.length,
-  chapters: view.value ? `${view.value.chapters.length - laterChapters.value} / ${view.value.chapters.length}` : null,
-  characters: view.value?.entities.length,
+  timeline: found.value ? found.value.notes : view.value?.timeline.length,
+  chapters: found.value
+    ? found.value.summaries.length
+    : view.value
+      ? `${view.value.chapters.length - laterChapters.value} / ${view.value.chapters.length}`
+      : null,
+  characters: found.value ? found.value.names.length : view.value?.entities.length,
   constellation: null,
 }))
+const pressedKinds = computed<ReadonlySet<EntityGroup>>(() => (onCharacters.value ? new Set([characterGroup.value]) : kinds.value))
+const kindCounts = computed(() => {
+  const groups = view.value?.groups
+  if (found.value) return found.value.namesByGroup
+  const count = (group: EntityGroup) =>
+    onCharacters.value ? (groups?.[group].filter((entity) => matchesName(entity, query.value)).length ?? 0) : (groups?.[group].length ?? 0)
+  return { people: count('people'), places: count('places'), terms: count('terms') }
+})
+const searchPlaceholder = computed(() => t(onCharacters.value ? 'book.detail.storyGuideTab.search' : 'book.detail.storyGuideTab.searchBar'))
 const notesByChapter = computed(() => view.value?.chapters.filter(({ notes }) => notes.length) ?? [])
 const hereLabel = computed(() => t('book.detail.storyGuideTab.youAreHere', { percent: percent.value }))
 const timeline = useChapterPages(
-  'timeline',
   () => notesByChapter.value,
   () => props.book.id,
 )
 const previously = useChapterPages(
-  'previously',
   () => (view.value ? previouslyByChapter(recap.value?.previously ?? [], view.value, openingTitle.value) : []),
   () => props.book.id,
 )
+const results = useChapterPages(
+  () => found.value?.timeline ?? [],
+  () => [props.book.id, searchQuery.value, kinds.value],
+)
+/** Every pager shares one stored order and size, so the bar binds to the Timeline's and reads the total from the list on screen. */
+const pager = computed(() => {
+  if (found.value) return results
+  if (section.value === 'recap') return previously
+  if (section.value === 'timeline') return timeline
+  return null
+})
 const expandedPrevious = ref(new Set<number>())
 const stopLabel = computed(() => stopAt.value?.chapterTitle ?? chapterLabel.value)
 const stopPercent = computed(() => (stopAt.value ? formatPercent(stopAt.value.percentage / 100) : percent.value))
@@ -113,10 +144,19 @@ const stopMessage = computed(() => {
 const outdated = computed(() => !!(status.value?.guide?.outdated || status.value?.guide?.modelsChanged))
 const canUpdate = computed(() => presentation.value.menu.includes('update'))
 const menu = computed(() => storyGuideMenuActions(presentation.value))
+const actions = computed(() => (mayBuild.value ? menu.value : []))
+const timelineHere = computed(() => {
+  if (!timeline.page.holdsReader) return null
+  return timeline.order === 'newest' ? 'first' : 'last'
+})
 const noGuide = computed(() => !!status.value && !status.value.guide)
 const built = computed(() => (presentation.value.builtNote ? storyGuideBuiltText(presentation.value.builtNote) : null))
 const confirmation = ref<StoryGuideConfirmation | null>(null)
 const busyChoice = ref<string | null>(null)
+
+function sectionLabel(id: GuideSection) {
+  return t(`book.detail.storyGuideTab.sections.${id === 'characters' && view.value?.nonfiction ? 'concepts' : id}`)
+}
 
 function changeSection(id: GuideSection) {
   section.value = id
@@ -125,6 +165,27 @@ function changeSection(id: GuideSection) {
 
 function openEntity(key: string) {
   opening.value = key
+}
+
+function toggleKind(kind: EntityGroup) {
+  if (onCharacters.value) {
+    characterGroup.value = kind
+    return
+  }
+  const next = new Set(kinds.value)
+  if (next.has(kind)) next.delete(kind)
+  else next.add(kind)
+  kinds.value = next
+}
+
+function clearSearch() {
+  query.value = ''
+}
+
+function showAllNames() {
+  const first = settled.value ? ENTITY_GROUPS.find((group) => kinds.value.has(group) && found.value?.namesByGroup[group]) : undefined
+  if (first) characterGroup.value = first
+  changeSection('characters')
 }
 
 function closeEntity() {
@@ -258,24 +319,21 @@ async function chooseAction(choice: StoryGuideConfirmationChoice) {
             />
           </div>
         </div>
-        <DropdownMenu v-if="mayBuild && menu.length">
-          <DropdownMenuTrigger as-child>
-            <button
-              type="button"
-              class="shrink-0 rounded-md p-1.5 hover:bg-muted"
-              :aria-label="t('book.detail.storyGuide.menu')"
-              :disabled="!!pending"
-            >
-              <Ellipsis class="size-4" aria-hidden="true" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem v-for="action in menu" :key="action" @select="requestAction(action)">{{
-              storyGuideActionLabel(action)
-            }}</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
       </section>
+
+      <StoryGuideToolbar
+        v-model:query="query"
+        v-model:order="timeline.order"
+        v-model:size="timeline.size"
+        :placeholder="searchPlaceholder"
+        :kinds="pressedKinds"
+        :counts="kindCounts"
+        :paged-total="pager ? pager.page.total : null"
+        :actions="actions"
+        :pending="!!pending"
+        @toggle-kind="toggleKind"
+        @request="requestAction"
+      />
 
       <div class="grid gap-3 @[47.5rem]/book-detail:grid-cols-[11.5rem_minmax(0,1fr)] @[47.5rem]/book-detail:gap-5">
         <nav
@@ -297,7 +355,7 @@ async function chooseAction(choice: StoryGuideConfirmationChoice) {
             @click="changeSection(item.id)"
           >
             <component :is="item.icon" class="hidden size-4 shrink-0 @[47.5rem]/book-detail:block" aria-hidden="true" />
-            {{ t(`book.detail.storyGuideTab.sections.${item.id}`) }}
+            {{ sectionLabel(item.id) }}
             <span
               v-if="counts[item.id] != null"
               class="ms-auto hidden text-[10px] tabular-nums text-muted-foreground @[47.5rem]/book-detail:inline"
@@ -309,7 +367,23 @@ async function chooseAction(choice: StoryGuideConfirmationChoice) {
           </p>
         </nav>
 
-        <section v-if="section === 'recap'" class="min-w-0 space-y-3">
+        <StoryGuideSearchResults
+          v-if="found"
+          :view="view"
+          :search="found"
+          :page="results.page"
+          :query="searchQuery"
+          :kinds="kinds"
+          :percent="percent"
+          :characters-label="sectionLabel('characters')"
+          :set-top="results.setTop"
+          @open="openEntity"
+          @previous="results.previous"
+          @next="results.next"
+          @all-names="showAllNames"
+          @clear="clearSearch"
+        />
+        <section v-else-if="section === 'recap'" class="min-w-0 space-y-3">
           <header class="flex flex-wrap items-center gap-x-3 gap-y-1">
             <h2 class="text-base font-semibold">{{ t('book.detail.storyGuideTab.sections.recap') }}</h2>
             <span v-if="placed" class="text-xs text-muted-foreground">{{
@@ -348,12 +422,6 @@ async function chooseAction(choice: StoryGuideConfirmationChoice) {
               <button type="button" class="text-xs text-muted-foreground underline-offset-2 hover:underline" @click="showAllChapters">
                 {{ t('book.detail.storyGuideTab.allChapters') }}
               </button>
-              <StoryGuidePageControls
-                v-model:order="previously.order"
-                v-model:size="previously.size"
-                :total="previously.page.total"
-                class="ms-auto"
-              />
             </div>
             <ol class="divide-y divide-border rounded-xl border border-border bg-card" data-testid="story-guide-previously">
               <li v-for="chapter in previously.page.chapters" :key="chapter.s">
@@ -387,7 +455,6 @@ async function chooseAction(choice: StoryGuideConfirmationChoice) {
           <header :ref="timeline.setTop" class="flex scroll-mt-4 flex-wrap items-baseline gap-x-3 gap-y-1">
             <h2 class="text-base font-semibold">{{ t('book.detail.storyGuideTab.sections.timeline') }}</h2>
             <span class="text-xs text-muted-foreground">{{ t('book.detail.storyGuideTab.timelineAside', { percent }) }}</span>
-            <StoryGuidePageControls v-model:order="timeline.order" v-model:size="timeline.size" :total="timeline.page.total" class="ms-auto" />
           </header>
           <div v-if="lastTwo.length" class="space-y-1.5 rounded-xl border border-border bg-card p-3.5 text-sm">
             <h3 class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -395,50 +462,13 @@ async function chooseAction(choice: StoryGuideConfirmationChoice) {
             </h3>
             <p v-for="(item, index) in lastTwo" :key="index">{{ item.text }}</p>
           </div>
-          <div class="relative grid grid-cols-[minmax(0,1fr)] gap-4.5 ps-5.5" data-testid="story-guide-timeline">
-            <span class="absolute inset-y-1.5 start-1.25 w-px bg-border" aria-hidden="true" />
-            <StoryGuideHereMark
-              v-if="timeline.page.holdsReader && timeline.order === 'newest'"
-              :label="hereLabel"
-              data-testid="story-guide-cutmark"
-            />
-            <div v-for="chapter in timeline.page.chapters" :key="chapter.s" class="relative">
-              <span
-                class="absolute -start-5.25 top-1.25 size-2.25 rounded-full border-[1.5px]"
-                :class="chapter.current ? 'border-info bg-info' : 'border-muted-foreground bg-card'"
-                aria-hidden="true"
-              />
-              <h3 class="flex flex-wrap items-baseline gap-x-2 text-sm font-semibold">
-                {{ chapter.title }}
-                <span class="text-xs font-normal tabular-nums text-muted-foreground">{{ Math.round(chapter.start) }}%</span>
-                <span v-if="chapter.current" class="rounded-full bg-info/10 px-1.5 text-xs font-normal text-info">{{
-                  t('book.detail.storyGuideTab.reading')
-                }}</span>
-              </h3>
-              <ul class="mt-1.5 grid gap-1.5 [content-visibility:auto] [contain-intrinsic-size:auto_4.5rem]">
-                <li v-for="note in chapter.notes" :key="`${note.s}:${note.text}`" class="max-w-[70ch] text-[13.5px]/[1.55]">
-                  {{ note.text }}
-                  <span class="ms-1.5 inline-flex flex-wrap gap-1 align-[1px]">
-                    <button
-                      v-for="person in note.entities"
-                      :key="person.key"
-                      type="button"
-                      class="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-xs hover:bg-accent"
-                      @click="openEntity(person.key)"
-                    >
-                      <component :is="entityKindIcon(person.kind)" class="size-3 shrink-0" :class="entityKindColor(person.kind)" aria-hidden="true" />
-                      {{ person.name }}
-                    </button>
-                  </span>
-                </li>
-              </ul>
-            </div>
-            <StoryGuideHereMark
-              v-if="timeline.page.holdsReader && timeline.order === 'oldest'"
-              :label="hereLabel"
-              data-testid="story-guide-cutmark"
-            />
-          </div>
+          <StoryGuideTimelineChapters
+            :chapters="timeline.page.chapters"
+            :kinds="kinds"
+            :here="timelineHere"
+            :here-label="hereLabel"
+            @open="openEntity"
+          />
           <StoryGuidePager :range="timeline.page" @previous="timeline.previous" @next="timeline.next" />
           <p
             v-if="laterChapters || current"
@@ -451,7 +481,14 @@ async function chooseAction(choice: StoryGuideConfirmationChoice) {
         </section>
 
         <StoryGuideChapters v-else-if="section === 'chapters'" :chapters="view.chapters" />
-        <StoryGuideCharacters v-else-if="section === 'characters'" :view="view" :percent="percent" @open="openEntity" />
+        <StoryGuideCharacters
+          v-else-if="section === 'characters'"
+          :view="view"
+          :percent="percent"
+          :group="characterGroup"
+          :query="query"
+          @open="openEntity"
+        />
         <StoryGuideConstellation v-else :view="view" :percent="percent" @open="openEntity" />
         <StoryGuideEntitySheet :entity="entity" :view="view" @open="openEntity" @close="closeEntity" />
       </div>

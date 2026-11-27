@@ -102,6 +102,11 @@ function expectClamped(classes: string[], clamped: boolean) {
   expect(classes.includes('block')).toBe(!clamped)
 }
 
+async function openTiesTab() {
+  document.body.querySelector('[data-testid=story-guide-tab-ties]')?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }))
+  await flushPromises()
+}
+
 describe('StoryGuideTab', () => {
   it('opens at saved progress, requests the recap, and renders only cut chapter and entity content', async () => {
     const tab = await openTab()
@@ -121,7 +126,7 @@ describe('StoryGuideTab', () => {
     expect(tab.text()).toContain('Ana arrived.')
     expect(tab.text()).not.toContain('Future note')
     await button(tab, 'Ben').trigger('click')
-    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('In the story')
+    expect(document.body.querySelector('[data-testid=story-guide-tab-timeline]')?.textContent).toContain('Timeline')
     document.body.querySelector<HTMLButtonElement>('[aria-label="Close"]')?.click()
     await flushPromises()
 
@@ -165,6 +170,20 @@ describe('StoryGuideTab', () => {
     expect(tab.find('[data-testid=story-guide-pager]').exists()).toBe(false)
     expect(tab.get('[data-testid=story-guide-ahead]').text()).toBe('The rest of At the gate and one more chapter open as you read.')
     expect(tab.text()).not.toContain('Move')
+  })
+
+  it('labels the names section Characters for a guide without a mode', async () => {
+    expect((await openTab()).get('nav[aria-label="Story guide sections"]').text()).toContain('Characters')
+  })
+
+  it('labels the names section Concepts for a nonfiction guide', async () => {
+    vi.mocked(fetchStoryGuide).mockResolvedValue({ ...guideFixture, mode: 'nonfiction' })
+    const labels = (await openTab())
+      .get('nav[aria-label="Story guide sections"]')
+      .findAll('button')
+      .map((entry) => entry.text())
+    expect(labels.some((label) => label.startsWith('Concepts'))).toBe(true)
+    expect(labels.some((label) => label.startsWith('Characters'))).toBe(false)
   })
 
   it('locks every chapter without a saved position', async () => {
@@ -478,6 +497,13 @@ describe('StoryGuideTab', () => {
     expectClamped(chapter.get('span.mt-1').classes(), true)
     await chapter.trigger('click')
     expectClamped(chapter.get('span.mt-1').classes(), false)
+
+    await button(tab, 'Story so far').trigger('click')
+    await tab.get('[data-testid=story-guide-page-order]').setValue('oldest')
+    await button(tab, 'Timeline').trigger('click')
+    const orders = tab.findAll<HTMLSelectElement>('[data-testid=story-guide-page-order]')
+    expect(orders.length).toBeGreaterThan(0)
+    expect(orders.every((select) => select.element.value === 'oldest')).toBe(true)
   })
 
   it('labels a kept stop text with the position it was written for after progress moves forward', async () => {
@@ -528,9 +554,57 @@ describe('StoryGuideTab', () => {
     await button(tab, 'Characters').trigger('click')
     await button(tab, 'Ana').trigger('click')
     await flushPromises()
+    await openTiesTab()
     const sheet = document.body.querySelector('[role="dialog"]')!
     expect(sheet.textContent).toContain('Ana trusts Ben at the gate.')
     expect(sheet.textContent).not.toContain('Future pair note')
+  })
+
+  it('searches names, events and summaries from the bar, and clears back to the section', async () => {
+    const tab = await openTab()
+    await tab.get('[data-testid=story-guide-search]').setValue('annie')
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    await flushPromises()
+    const results = tab.get('[data-testid=story-guide-search-results]')
+    expect(results.text()).toContain('Results for “annie”')
+    expect(results.get('[data-testid=story-guide-search-names]').text()).toContain('Ana')
+    expect(results.get('[data-testid=story-guide-search-timeline]').text()).toContain('Ana arrived.')
+    expect(results.find('mark').text()).toBe('Annie')
+    await tab.get('[data-testid=story-guide-search]').setValue('a')
+    expect(tab.find('[data-testid=story-guide-search-results]').exists()).toBe(false)
+    await tab.get('[data-testid=story-guide-search]').setValue('annie')
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    await tab.get('[aria-label="Clear search"]').trigger('click')
+    expect(document.activeElement).toBe(tab.get('[data-testid=story-guide-search]').element)
+    await tab.get('[data-testid=story-guide-search]').setValue('Future')
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    await flushPromises()
+    expect(FUTURE.filter((text) => document.body.innerHTML.includes(text) && text !== 'Future')).toEqual([])
+    expect(tab.text()).toContain('matches “Future”')
+    await button(tab, 'Clear search').trigger('click')
+    await flushPromises()
+    expect(tab.find('[data-testid=story-guide-search-results]').exists()).toBe(false)
+    expect(tab.text()).toContain('They are at the gate.')
+  })
+
+  it('hides the chips of a kind switched off in the bar, and switches one kind on Characters', async () => {
+    const tab = await openTab()
+    await button(tab, 'Timeline').trigger('click')
+    const chips = () =>
+      tab
+        .get('[data-testid=story-guide-timeline]')
+        .findAll('button')
+        .map((chip) => chip.text())
+    expect(chips()).toContain('Ben')
+    await tab.get('[data-testid=story-guide-kinds]').findAll('button')[0]!.trigger('click')
+    expect(chips()).not.toContain('Ben')
+
+    await button(tab, 'Characters').trigger('click')
+    const kinds = tab.get('[data-testid=story-guide-kinds]').findAll('button')
+    expect(kinds.map((kind) => kind.attributes('aria-pressed'))).toEqual(['true', 'false', 'false'])
+    await kinds[1]!.trigger('click')
+    expect(tab.text()).toContain('The gate')
+    expect(tab.text()).not.toContain('A visitor')
   })
 
   it('keeps every future string out of the markup in every section and sheet', async () => {
@@ -545,6 +619,8 @@ describe('StoryGuideTab', () => {
       await tab.get(`g[aria-label="${key}"]`).trigger('click')
       await button(tab, 'Open').trigger('click')
       await flushPromises()
+      expect(leaks()).toEqual([])
+      await openTiesTab()
       expect(leaks()).toEqual([])
       document.body.querySelector<HTMLButtonElement>('[aria-label="Close"]')?.click()
       await flushPromises()
@@ -592,8 +668,7 @@ describe('StoryGuideTab', () => {
     await tab.get('[data-testid=story-guide-page-order]').setValue('oldest')
     expect(headings()[0]).toBe('Part 1')
     expect(pager().text()).toContain('Part 1 to Part 10Page 1 of 3')
-    expect(localStorage.getItem('bookorbit:story-guide-timeline-order')).toBe('oldest')
-    expect(localStorage.getItem('bookorbit:story-guide-previously-order')).toBe('newest')
+    expect(localStorage.getItem('bookorbit:story-guide-chapter-order')).toBe('oldest')
 
     await tab.get('[data-testid=story-guide-page-size]').setValue('50')
     expect(headings()).toHaveLength(25)

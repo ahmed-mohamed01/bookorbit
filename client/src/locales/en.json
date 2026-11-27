@@ -9864,6 +9864,7 @@
           "timeline": "Timeline",
           "chapters": "Chapters",
           "characters": "Characters",
+          "concepts": "Concepts",
           "constellation": "Constellation"
         },
         "sectionNav": "Story guide sections",
@@ -9917,7 +9918,8 @@
         },
         "chapterPageSize": {
           "label": "Chapters per page",
-          "option": "{count} chapters"
+          "option": "{count} chapters",
+          "all": "All chapters"
         },
         "chapterPages": "Chapter pages",
         "chapterRange": "{first} to {last}",
@@ -9964,6 +9966,19 @@
           "3": "Minor"
         },
         "search": "Search names",
+        "searchBar": "Search events, chapters and names",
+        "clearSearch": "Clear search",
+        "toolbar": "Story guide tools",
+        "kindsLabel": "Kinds",
+        "results": {
+          "heading": "Results for “{query}”",
+          "aside": "Up to {percent}: names, then events, then chapter summaries",
+          "names": "Names, {count}",
+          "allNames": "See all {count} in {section}",
+          "timeline": "In the timeline, {count}",
+          "summaries": "In chapter summaries, {count}",
+          "none": "Nothing up to {percent} matches “{query}”."
+        },
         "since": "Since {chapter}",
         "alsoKnownAs": "Also known as",
         "noProfile": "Nothing written about them yet at this point.",
@@ -9974,12 +9989,11 @@
         "whatItIs": "What it is",
         "asOf": "As of {chapter}",
         "earlierDescriptions": "{count, plural, one {One earlier description} other {# earlier descriptions}}",
-        "inTheStory": "In the story",
+        "entryTabs": "Entry sections",
         "searchStory": "Search the story",
         "showOldestFirst": "Show oldest first",
         "showNewestFirst": "Show newest first",
-        "showEarlierNotes": "{count, plural, one {Show one earlier event} other {Show # earlier events}}",
-        "showFewer": "Show fewer",
+        "displayAll": "{count, plural, one {Display all} other {Display all # events}}",
         "noNoteMatch": "Nothing matches.",
         "youAreIn": "You are here, {chapter}",
         "youAreHereShort": "You are here",
